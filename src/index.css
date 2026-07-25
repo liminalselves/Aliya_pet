@@ -1,0 +1,296 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "Avenir Next", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  color: #161821;
+  background: #edf6ff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f4f1f8;
+}
+
+button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-theme {
+  --theme-rgb: 154, 137, 192;
+  --theme-strong-rgb: 110, 93, 150;
+  --theme-on: #ffffff;
+  --theme-on-muted: rgba(255, 255, 255, 0.78);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(255, 255, 255, 0.96), transparent 28rem),
+    linear-gradient(
+      145deg,
+      rgba(var(--theme-rgb), 0.1) 0%,
+      rgba(var(--theme-rgb), 0.19) 48%,
+      rgba(var(--theme-rgb), 0.3) 100%
+    );
+  transition: background 320ms ease;
+}
+
+.theme-windy {
+  --theme-rgb: 246, 226, 193;
+  --theme-strong-rgb: 202, 166, 108;
+  --theme-on: #443626;
+  --theme-on-muted: rgba(68, 54, 38, 0.68);
+}
+
+.theme-accent-text {
+  color: rgb(var(--theme-strong-rgb));
+}
+
+.theme-accent-muted {
+  color: rgba(var(--theme-strong-rgb), 0.78);
+}
+
+.character-swipe {
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.glass {
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.28));
+  box-shadow:
+    0 20px 45px rgba(74, 94, 151, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+
+.glass-button {
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.glass-button:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.38));
+  box-shadow:
+    0 24px 48px rgba(74, 94, 151, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.glass-button:active {
+  transform: translateY(1px) scale(0.992);
+}
+
+.primary-button {
+  position: relative;
+  overflow: hidden;
+  color: var(--theme-on);
+  background: linear-gradient(
+    135deg,
+    rgb(var(--theme-rgb)) 0%,
+    rgb(var(--theme-strong-rgb)) 100%
+  );
+  box-shadow:
+    0 16px 28px rgba(var(--theme-strong-rgb), 0.32),
+    0 5px 0 rgb(var(--theme-strong-rgb)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.primary-subtitle {
+  color: var(--theme-on-muted);
+}
+
+.primary-button::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(112deg, rgba(255, 255, 255, 0.32), transparent 38%);
+  pointer-events: none;
+}
+
+.primary-button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 20px 34px rgba(var(--theme-strong-rgb), 0.38),
+    0 6px 0 rgb(var(--theme-strong-rgb)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.48);
+}
+
+.primary-button:active {
+  transform: translateY(4px);
+  box-shadow:
+    0 8px 18px rgba(var(--theme-strong-rgb), 0.28),
+    0 1px 0 rgb(var(--theme-strong-rgb)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.ambient-orb {
+  position: fixed;
+  border-radius: 999px;
+  filter: blur(4px);
+  pointer-events: none;
+}
+
+.ambient-orb-one {
+  top: 9%;
+  right: -6rem;
+  width: 16rem;
+  height: 16rem;
+  background: rgba(var(--theme-rgb), 0.28);
+}
+
+.ambient-orb-two {
+  bottom: 15%;
+  left: -7rem;
+  width: 19rem;
+  height: 19rem;
+  background: rgba(var(--theme-strong-rgb), 0.2);
+}
+
+.orbital-line {
+  position: fixed;
+  top: 14rem;
+  left: 50%;
+  width: 34rem;
+  height: 34rem;
+  transform: translateX(-50%) rotate(-18deg);
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.character-glow {
+  position: absolute;
+  top: 5.5rem;
+  left: 50%;
+  width: 15rem;
+  height: 15rem;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.9),
+    rgba(var(--theme-rgb), 0.28) 57%,
+    transparent 72%
+  );
+  filter: blur(1px);
+}
+
+.animate-rise {
+  opacity: 0;
+  animation: rise-in 700ms cubic-bezier(0.2, 0.82, 0.2, 1) forwards;
+}
+
+.animation-delay-100 {
+  animation-delay: 100ms;
+}
+
+.animation-delay-200 {
+  animation-delay: 200ms;
+}
+
+.animation-delay-300 {
+  animation-delay: 300ms;
+}
+
+.animation-delay-400 {
+  animation-delay: 400ms;
+}
+
+.pet-enter {
+  animation: pet-pop 560ms cubic-bezier(0.18, 0.84, 0.25, 1.18);
+  transform-origin: 50% 100%;
+}
+
+.pet-switch-from-left,
+.pet-switch-from-right {
+  transform-origin: 50% 100%;
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.18, 0.82, 0.2, 1);
+}
+
+.pet-switch-from-left {
+  animation-name: pet-switch-from-left;
+}
+
+.pet-switch-from-right {
+  animation-name: pet-switch-from-right;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pet-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.94);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-7px) scale(1.025);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pet-switch-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-72px) scale(0.96);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(6px) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes pet-switch-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(72px) scale(0.96);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(-6px) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

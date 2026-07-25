@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.npm-cache/
+*.log
+*.apk
+apk/.gradle/
+apk/app/build/
+apk/app/src/main/assets/www/
