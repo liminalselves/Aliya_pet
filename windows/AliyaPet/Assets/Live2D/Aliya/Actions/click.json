@@ -1,0 +1,28 @@
+{
+  "id": "click",
+  "duration": 0.45,
+  "priority": 30,
+  "interruptible": true,
+  "blendIn": 0.05,
+  "blendOut": 0.12,
+  "cooldown": 0.3,
+  "tags": ["interaction"],
+  "channels": [
+    { "parameter": "ParamEyeLOpen", "blendMode": "override", "weight": 0.9, "keyframes": [
+      { "time": 0.0, "value": 1.0, "easing": "easeIn" },
+      { "time": 0.10, "value": 0.05, "easing": "easeIn" },
+      { "time": 0.28, "value": 1.0, "easing": "easeOut" } ] },
+    { "parameter": "ParamEyeROpen", "blendMode": "override", "weight": 0.9, "keyframes": [
+      { "time": 0.0, "value": 1.0, "easing": "easeIn" },
+      { "time": 0.10, "value": 0.05, "easing": "easeIn" },
+      { "time": 0.28, "value": 1.0, "easing": "easeOut" } ] },
+    { "parameter": "ParamAngleZ", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeOut" },
+      { "time": 0.2, "value": -4, "easing": "easeInOut" },
+      { "time": 0.45, "value": 0, "easing": "easeOut" } ] }
+  ],
+  "events": [
+    { "time": 0.08, "type": "blink" },
+    { "time": 0.10, "type": "sound", "name": "click_soft" }
+  ]
+}

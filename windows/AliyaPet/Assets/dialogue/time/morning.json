@@ -1,0 +1,22 @@
+{
+  "characterId": "aliya",
+  "category": "time",
+  "scene": "morning",
+  "entries": [
+    {"id":"aliya_time_morning_001","text":"早上好，今天慢慢来","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_morning_002","text":"新的一天启动啦","weight":1.0,"minRepeatDays":7,"tags":["daily","bright"],"enabled":true},
+    {"id":"aliya_time_morning_003","text":"早安，愿你状态顺利","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_morning_004","text":"醒了吗，先缓一缓吧","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
+    {"id":"aliya_time_morning_005","text":"早安，设备巡检正常","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
+    {"id":"aliya_time_morning_006","text":"今天的恒星很漂亮","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","warm"],"enabled":true},
+    {"id":"aliya_time_morning_007","text":"先喝点水再出发吧","weight":1.0,"minRepeatDays":7,"tags":["daily","care"],"enabled":true},
+    {"id":"aliya_time_morning_008","text":"今天也慢慢处理吧","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_morning_009","text":"你今天醒得真早呀","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
+    {"id":"aliya_time_morning_010","text":"航行记录已经就绪","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
+    {"id":"aliya_time_morning_011","text":"今天会有小惊喜吗","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
+    {"id":"aliya_time_morning_012","text":"差点把记录当菜单","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","humor"],"enabled":true},
+    {"id":"aliya_time_morning_013","text":"先迈出第一步就好","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_morning_014","text":"今天适合探索新事物","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
+    {"id":"aliya_time_morning_015","text":"愿问题都轻松解决","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true}
+  ]
+}

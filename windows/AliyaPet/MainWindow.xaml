@@ -1,0 +1,187 @@
+<Window x:Class="AliyaPet.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Aliya Desktop Pet"
+        AutomationProperties.Name="Aliya Desktop Pet"
+        Width="440" Height="590"
+        MinWidth="280" MinHeight="340"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize">
+    <Window.Resources>
+        <Style x:Key="HoverActionButton" TargetType="{x:Type Button}">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Foreground" Value="#FF252A38"/>
+            <Setter Property="FontFamily" Value="Avenir Next, Microsoft YaHei UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#24FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#70FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Surface"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="13"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface"
+                                        Property="Background"
+                                        Value="#70FFFFFF"/>
+                                <Setter TargetName="Surface"
+                                        Property="BorderBrush"
+                                        Value="#D0FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Surface"
+                                        Property="Opacity"
+                                        Value="0.7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Border x:Name="SpeechBubble"
+                Panel.ZIndex="2"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Top"
+                Margin="8,2,8,0"
+                Padding="14,10"
+                CornerRadius="18"
+                BorderBrush="#D9FFFFFF"
+                BorderThickness="1"
+                Visibility="Collapsed">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#F5FFFFFF" Offset="0"/>
+                    <GradientStop Color="#E9F2EEFA" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.Effect>
+                <DropShadowEffect Color="#656681"
+                                  BlurRadius="20"
+                                  ShadowDepth="5"
+                                  Opacity="0.24"/>
+            </Border.Effect>
+            <TextBlock x:Name="SpeechText"
+                       MaxWidth="245"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       FontFamily="Avenir Next, Microsoft YaHei UI"
+                       FontSize="14"
+                       FontWeight="SemiBold"
+                       LineHeight="21"
+                       Foreground="#FF202431"/>
+        </Border>
+
+        <Image x:Name="PetImage"
+               Panel.ZIndex="1"
+               Margin="70,95,70,70"
+               Source="/Assets/aliya_pet.png"
+               Stretch="Uniform"
+               RenderTransformOrigin="0.5,1"
+               Cursor="Hand"
+               MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
+               MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
+               MouseMove="PetImage_MouseMove"
+               MouseEnter="PetImage_MouseEnter"
+               MouseLeave="PetImage_MouseLeave"
+               MouseRightButtonUp="PetImage_MouseRightButtonUp"
+               MouseWheel="PetImage_MouseWheel">
+            <Image.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="IdleScale" ScaleX="1" ScaleY="1"/>
+                    <TranslateTransform x:Name="IdleTranslate" Y="0"/>
+                    <ScaleTransform x:Name="ActionScale" ScaleX="1" ScaleY="1"/>
+                    <SkewTransform x:Name="ActionSkew" AngleX="0" AngleY="0"/>
+                    <RotateTransform x:Name="ActionRotate" Angle="0"/>
+                    <TranslateTransform x:Name="ActionTranslate" X="0" Y="0"/>
+                </TransformGroup>
+            </Image.RenderTransform>
+            </Image>
+
+        <Image x:Name="Live2DImage"
+               Panel.ZIndex="1"
+               Margin="70,95,70,70"
+               Stretch="Fill"
+               RenderOptions.BitmapScalingMode="Linear"
+               SnapsToDevicePixels="True"
+               Visibility="Collapsed"
+               Cursor="Hand"
+               IsHitTestVisible="True"
+               MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
+               MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
+               MouseMove="PetImage_MouseMove"
+               MouseEnter="PetImage_MouseEnter"
+               MouseLeave="PetImage_MouseLeave"
+               MouseRightButtonUp="PetImage_MouseRightButtonUp"
+               MouseWheel="PetImage_MouseWheel">
+        </Image>
+        <Popup x:Name="HoverQuickActionsPopup"
+               PlacementTarget="{Binding ElementName=PetImage}"
+               Placement="Bottom"
+               AllowsTransparency="True"
+               StaysOpen="True">
+            <Border x:Name="HoverQuickActions"
+                    Width="238"
+                    Height="50"
+                    Margin="0,10,0,0"
+                    Padding="7"
+                    CornerRadius="19"
+                    BorderBrush="#B8FFFFFF"
+                    BorderThickness="1"
+                    IsHitTestVisible="False"
+                    MouseEnter="HoverQuickActions_MouseEnter"
+                    MouseLeave="HoverQuickActions_MouseLeave">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#CCFFFFFF" Offset="0"/>
+                        <GradientStop Color="#B8E9E5F5" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect Color="#596079"
+                                      BlurRadius="20"
+                                      ShadowDepth="5"
+                                      Opacity="0.22"/>
+                </Border.Effect>
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="HoverQuickActionsTranslate" Y="6"/>
+                </Border.RenderTransform>
+                <StackPanel Orientation="Horizontal">
+                    <Button Style="{StaticResource HoverActionButton}"
+                            Content="天气"
+                            ToolTip="查询当地天气"
+                            Click="HoverWeather_Click"/>
+                    <Button Style="{StaticResource HoverActionButton}"
+                            Content="动作"
+                            ToolTip="随机做一个动作"
+                            Click="HoverAction_Click"/>
+                    <Button Style="{StaticResource HoverActionButton}"
+                            Content="说句话"
+                            ToolTip="随机说一句话"
+                            Click="HoverTalk_Click"/>
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</Window>
+
+

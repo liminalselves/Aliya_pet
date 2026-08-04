@@ -1,0 +1,32 @@
+{
+  "id": "fall",
+  "duration": 0.7,
+  "priority": 90,
+  "interruptible": false,
+  "blendIn": 0.05,
+  "blendOut": 0.15,
+  "tags": ["motion"],
+  "channels": [
+    { "parameter": "ParamBodyAngleZ", "blendMode": "override", "weight": 0.6, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeIn" },
+      { "time": 0.3, "value": 7, "easing": "easeIn" },
+      { "time": 0.7, "value": 8, "easing": "easeOut" } ] },
+    { "parameter": "ParamAngleZ", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeIn" },
+      { "time": 0.3, "value": 5, "easing": "easeIn" },
+      { "time": 0.7, "value": 6, "easing": "easeOut" } ] },
+    { "parameter": "ParamAngleX", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeIn" },
+      { "time": 0.35, "value": -6, "easing": "easeIn" },
+      { "time": 0.7, "value": -7, "easing": "easeOut" } ] },
+    { "parameter": "ParamEyeLOpen", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 1, "easing": "easeIn" },
+      { "time": 0.2, "value": 1, "easing": "easeIn" },
+      { "time": 0.7, "value": 1, "easing": "easeOut" } ] },
+    { "parameter": "ParamEyeROpen", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 1, "easing": "easeIn" },
+      { "time": 0.2, "value": 1, "easing": "easeIn" },
+      { "time": 0.7, "value": 1, "easing": "easeOut" } ] }
+  ],
+  "events": [ { "time": 0.1, "type": "sound", "name": "whoosh" } ]
+}

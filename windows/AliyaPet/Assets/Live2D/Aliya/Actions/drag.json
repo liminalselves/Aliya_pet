@@ -1,0 +1,20 @@
+{
+  "id": "drag",
+  "duration": 1.0,
+  "loop": true,
+  "priority": 80,
+  "interruptible": false,
+  "blendIn": 0.2,
+  "blendOut": 0.3,
+  "tags": ["state"],
+  "channels": [
+    { "parameter": "ParamBodyAngleZ", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeInOut" },
+      { "time": 0.5, "value": 3, "easing": "easeInOut" },
+      { "time": 1.0, "value": 0, "easing": "easeInOut" } ] },
+    { "parameter": "ParamAngleZ", "blendMode": "override", "weight": 0.4, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeInOut" },
+      { "time": 0.5, "value": 2, "easing": "easeInOut" },
+      { "time": 1.0, "value": 0, "easing": "easeInOut" } ] }
+  ]
+}

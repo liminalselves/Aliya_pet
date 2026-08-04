@@ -1,0 +1,22 @@
+{
+  "characterId": "aliya",
+  "category": "time",
+  "scene": "dinner",
+  "entries": [
+    {"id":"aliya_time_dinner_001","text":"差不多到晚饭时间啦","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_dinner_002","text":"辛苦啦，补充点能量吧","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_dinner_003","text":"晚饭已经安排好了吗","weight":1.0,"minRepeatDays":7,"tags":["meal","daily"],"enabled":true},
+    {"id":"aliya_time_dinner_004","text":"储备食物不太乐观","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
+    {"id":"aliya_time_dinner_005","text":"收个尾再去吃饭吧","weight":1.0,"minRepeatDays":7,"tags":["meal","work"],"enabled":true},
+    {"id":"aliya_time_dinner_006","text":"今晚要吃得舒服一点","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_dinner_007","text":"真羡慕热腾腾的晚饭","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true},
+    {"id":"aliya_time_dinner_008","text":"身体也需要维护哦","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
+    {"id":"aliya_time_dinner_009","text":"晚点吃也别忘记呀","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_dinner_010","text":"这次可别拖过饭点","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true},
+    {"id":"aliya_time_dinner_011","text":"今晚想尝试新口味吗","weight":1.0,"minRepeatDays":7,"tags":["meal","daily"],"enabled":true},
+    {"id":"aliya_time_dinner_012","text":"飞船和人都需要燃料","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
+    {"id":"aliya_time_dinner_013","text":"吃完再决定也可以","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_dinner_014","text":"试剂可不能放错位置","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","humor"],"enabled":true},
+    {"id":"aliya_time_dinner_015","text":"吃饭时让大脑歇会儿","weight":1.0,"minRepeatDays":7,"tags":["meal","rest"],"enabled":true}
+  ]
+}

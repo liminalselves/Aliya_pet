@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AliyaPet</AssemblyName>
+    <RootNamespace>AliyaPet</RootNamespace>
+    <ApplicationIcon>Assets\aliya_pet.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\aliya_pet.png" />
+    <Resource Include="Assets\aliya_pet_blink.png" />
+    <Resource Include="Assets\windy_pet.png" />
+    <Resource Include="Assets\windy_pet_blink.png" />
+    <Content Include="Assets\pet_touch.wav"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="Assets\dialogue\user_click.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="Assets\dialogue\time\*.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="Assets\Live2D\Aliya\**"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="FrameworkShaders\**"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+  </ItemGroup>
+
+  <!-- 复制原生 Live2D DLL 到输出/发布目录 -->
+  <PropertyGroup>
+    <NativeDllDir>$(MSBuildProjectDirectory)\..\..\build\native-x64-release\bin\AliyaLive2D.Native\Release</NativeDllDir>
+  </PropertyGroup>
+  <Target Name="CopyNativeDllsToOutput" AfterTargets="Build" Condition="'$(PublishDir)' == ''">
+    <Copy SourceFiles="$(NativeDllDir)\AliyaLive2D.Native.dll" SkipUnchangedFiles="true" DestinationFolder="$(OutDir)" Condition="Exists('$(NativeDllDir)\AliyaLive2D.Native.dll')" />
+    <Copy SourceFiles="$(NativeDllDir)\Live2DCubismCore.dll" SkipUnchangedFiles="true" DestinationFolder="$(OutDir)" Condition="Exists('$(NativeDllDir)\Live2DCubismCore.dll')" />
+    <Message Text="已复制原生 DLL 到 $(OutDir)" Importance="high" Condition="Exists('$(NativeDllDir)\AliyaLive2D.Native.dll')" />
+  </Target>
+  <Target Name="CopyNativeDllsToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(NativeDllDir)\AliyaLive2D.Native.dll" SkipUnchangedFiles="true" DestinationFolder="$(PublishDir)" Condition="Exists('$(NativeDllDir)\AliyaLive2D.Native.dll')" />
+    <Copy SourceFiles="$(NativeDllDir)\Live2DCubismCore.dll" SkipUnchangedFiles="true" DestinationFolder="$(PublishDir)" Condition="Exists('$(NativeDllDir)\Live2DCubismCore.dll')" />
+    <Message Text="已复制原生 DLL 到 $(PublishDir)" Importance="high" Condition="Exists('$(NativeDllDir)\AliyaLive2D.Native.dll')" />
+  </Target>
+</Project>

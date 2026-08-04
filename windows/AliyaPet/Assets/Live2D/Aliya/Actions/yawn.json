@@ -1,0 +1,38 @@
+{
+  "id": "yawn",
+  "duration": 1.9,
+  "priority": 40,
+  "interruptible": true,
+  "blendIn": 0.2,
+  "blendOut": 0.3,
+  "tags": ["comfort"],
+  "channels": [
+    { "parameter": "ParamMouthOpenY", "blendMode": "override", "weight": 0.9, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeOut" },
+      { "time": 0.5, "value": 1.0, "easing": "easeInOut" },
+      { "time": 1.2, "value": 0.6, "easing": "easeInOut" },
+      { "time": 1.7, "value": 0.1, "easing": "easeOut" },
+      { "time": 1.9, "value": 0, "easing": "easeOut" } ] },
+    { "parameter": "ParamEyeLOpen", "blendMode": "override", "weight": 0.8, "keyframes": [
+      { "time": 0.0, "value": 1, "easing": "easeOut" },
+      { "time": 0.4, "value": 0.1, "easing": "easeInOut" },
+      { "time": 1.1, "value": 0.15, "easing": "easeInOut" },
+      { "time": 1.7, "value": 0.9, "easing": "easeOut" },
+      { "time": 1.9, "value": 1, "easing": "easeOut" } ] },
+    { "parameter": "ParamEyeROpen", "blendMode": "override", "weight": 0.8, "keyframes": [
+      { "time": 0.0, "value": 1, "easing": "easeOut" },
+      { "time": 0.4, "value": 0.1, "easing": "easeInOut" },
+      { "time": 1.1, "value": 0.15, "easing": "easeInOut" },
+      { "time": 1.7, "value": 0.9, "easing": "easeOut" },
+      { "time": 1.9, "value": 1, "easing": "easeOut" } ] },
+    { "parameter": "ParamAngleX", "blendMode": "override", "weight": 0.5, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeOut" },
+      { "time": 0.45, "value": -10, "easing": "easeInOut" },
+      { "time": 1.2, "value": -6, "easing": "easeInOut" },
+      { "time": 1.9, "value": 0, "easing": "easeOut" } ] }
+  ],
+  "events": [
+    { "time": 0.5, "type": "blink" },
+    { "time": 0.55, "type": "sound", "name": "yawn" }
+  ]
+}

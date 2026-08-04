@@ -1,0 +1,27 @@
+{
+  "id": "sway",
+  "duration": 1.4,
+  "priority": 30,
+  "interruptible": true,
+  "blendIn": 0.12,
+  "blendOut": 0.2,
+  "tags": ["dance"],
+  "channels": [
+    { "parameter": "ParamBodyAngleZ", "blendMode": "override", "weight": 0.6, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeInOut" },
+      { "time": 0.3, "value": 6, "easing": "easeInOut" },
+      { "time": 0.7, "value": -6, "easing": "easeInOut" },
+      { "time": 1.1, "value": 2, "easing": "easeInOut" },
+      { "time": 1.4, "value": 0, "easing": "easeOut" } ] },
+    { "parameter": "ParamBodyAngleX", "blendMode": "override", "weight": 0.4, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeInOut" },
+      { "time": 0.35, "value": -2, "easing": "easeInOut" },
+      { "time": 0.75, "value": 2, "easing": "easeInOut" },
+      { "time": 1.4, "value": 0, "easing": "easeOut" } ] },
+    { "parameter": "ParamAngleZ", "blendMode": "override", "weight": 0.35, "keyframes": [
+      { "time": 0.0, "value": 0, "easing": "easeInOut" },
+      { "time": 0.3, "value": 3, "easing": "easeInOut" },
+      { "time": 0.7, "value": -3, "easing": "easeInOut" },
+      { "time": 1.4, "value": 0, "easing": "easeOut" } ] }
+  ]
+}

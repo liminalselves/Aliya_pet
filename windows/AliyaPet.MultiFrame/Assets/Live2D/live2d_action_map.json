@@ -1,0 +1,26 @@
+{
+  "idle": {
+    "motionGroup": "Idle",
+    "motionIndex": -1,
+    "loop": true,
+    "fallback": "idle_parameter"
+  },
+  "click": {
+    "motionGroup": "TapBody",
+    "motionIndex": -1,
+    "loop": false,
+    "fallback": "click_parameter"
+  },
+  "sleep": {
+    "motionGroup": "Sleep",
+    "motionIndex": 0,
+    "loop": true,
+    "fallback": "sleep_parameter"
+  },
+  "wake": {
+    "motionGroup": "Wake",
+    "motionIndex": 0,
+    "loop": false,
+    "fallback": "wake_parameter"
+  }
+}
