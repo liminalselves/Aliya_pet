@@ -1,12 +1,3 @@
-node_modules/
-dist/
-.npm-cache/
-*.log
-*.apk
-apk/.gradle/
-apk/app/build/
-apk/app/src/main/assets/www/
-
 # Windows 构建输出
 bin/
 obj/
@@ -46,45 +37,6 @@ vc140.pdb
 *.7z
 *.rar
 
-# 根目录构建产物（obj 文件）
-/*.obj
-
-# 非 Windows 项目文件（此分支仅包含 windows/ 项目）
-/android/
-/apk/
-/src/
-/public/
-/art/
-/scripts/
-/docs/
-/style-branches/
-/.vite/
-/.agents/
-/.remember/
-/.runtime-smoke/
-/.publish/
-
-# 根目录 Web 项目文件
-/index.html
-/package.json
-/package-lock.json
-/vite.config.js
-
-# 根目录文档（非 Windows 项目必需）
-/CHANGELOG.md
-/VALIDATION.txt
-/README.md
-
-# 交付报告（内部文档）
-/交付报告*.txt
-
-# 第三方 SDK（许可限制，需用户自行下载）
-# Live2D Cubism SDK 需从 https://www.live2d.com/en/sdk/download/native/ 下载
-# 并放置到 third_party/CubismSdkForNative-5-r.5/ 目录
-third_party/
-
-# Native 构建产物（由 CMake 生成，源码在 windows/AliyaLive2D.Native/）
-
 # NuGet 缓存
 *.nupkg
 
@@ -94,3 +46,8 @@ windows/AliyaPet.MultiFrame/Live2DWeb/dist/
 
 # WebView2 运行时缓存
 **/WebView2/
+
+# 第三方 SDK（许可限制，需用户自行下载）
+# Live2D Cubism SDK 需从 https://www.live2d.com/en/sdk/download/native/ 下载
+# 并放置到 third_party/CubismSdkForNative-5-r.5/ 目录
+third_party/
