@@ -33,7 +33,7 @@
 
   <!-- 复制原生 Live2D DLL 到输出/发布目录 -->
   <PropertyGroup>
-    <NativeDllDir>$(MSBuildProjectDirectory)\..\..\build\native-x64-release\bin\AliyaLive2D.Native\Release</NativeDllDir>
+    <NativeDllDir>$(MSBuildProjectDirectory)\..\build\native-x64-release\bin\AliyaLive2D.Native\Release</NativeDllDir>
   </PropertyGroup>
   <Target Name="CopyNativeDllsToOutput" AfterTargets="Build" Condition="'$(PublishDir)' == ''">
     <Copy SourceFiles="$(NativeDllDir)\AliyaLive2D.Native.dll" SkipUnchangedFiles="true" DestinationFolder="$(OutDir)" Condition="Exists('$(NativeDllDir)\AliyaLive2D.Native.dll')" />
