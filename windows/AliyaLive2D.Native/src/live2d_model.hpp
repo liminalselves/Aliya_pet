@@ -51,6 +51,10 @@ public:
 
     Live2DParameterController& Controller() { return controller_; }
 
+    // 底层 CubismModel 访问（供 Host 读取参数真实范围）
+    Live2D::Cubism::Framework::CubismModel* GetModel() { return userModel_ ? userModel_->GetModel() : nullptr; }
+    const Live2D::Cubism::Framework::CubismModel* GetModel() const { return userModel_ ? userModel_->GetModel() : nullptr; }
+
     int ParameterCount() const { return parameterCount_; }
     int DrawableCount() const { return drawableCount_; }
     int TextureCount() const { return textureCount_; }
@@ -84,6 +88,92 @@ public:
     void ResetPhysicsAccumulator() { physicsAccum_ = 0.0f; }
     void SetPhysicsEnabled(bool enabled) { physicsEnabled_ = enabled; }
     bool PhysicsEnabled() const { return physicsEnabled_; }
+
+    // ---- 说话嘴型覆盖通道（独立于动作/表情/Idle/LipSync） ----
+    // 启用后每帧在控制器合成与物理步进之后、model->Update() 之前以最终值写入嘴部参数。
+    void SetMouthOverride(bool enabled, float openY, float form)
+    {
+        mouthOverrideEnabled_ = enabled;
+        mouthOpenY_ = openY;
+        mouthForm_ = form;
+    }
+    bool MouthOverrideEnabled() const { return mouthOverrideEnabled_; }
+    bool HasMouthOpenY() const { return idMouthOpenYIdx_ >= 0; }
+    bool HasMouthForm() const { return idMouthFormIdx_ >= 0; }
+    void GetMouthParamMeta(float& openYMin, float& openYMax, float& formMin, float& formMax) const
+    {
+        auto* m = userModel_ ? userModel_->GetModel() : nullptr;
+        using CsmUint32 = Live2D::Cubism::Framework::csmUint32;
+        if (m)
+        {
+            openYMin = (idMouthOpenYIdx_ >= 0) ? m->GetParameterMinimumValue(static_cast<CsmUint32>(idMouthOpenYIdx_)) : 0.0f;
+            openYMax = (idMouthOpenYIdx_ >= 0) ? m->GetParameterMaximumValue(static_cast<CsmUint32>(idMouthOpenYIdx_)) : 1.0f;
+            formMin = (idMouthFormIdx_ >= 0) ? m->GetParameterMinimumValue(static_cast<CsmUint32>(idMouthFormIdx_)) : 0.0f;
+            formMax = (idMouthFormIdx_ >= 0) ? m->GetParameterMaximumValue(static_cast<CsmUint32>(idMouthFormIdx_)) : 1.0f;
+        }
+        else
+        {
+            openYMin = 0.0f; openYMax = 1.0f; formMin = 0.0f; formMax = 1.0f;
+        }
+    }
+
+    // ---- 人物互动通道（独立于 Controller/Physics/MouthOverride）----
+    // 在 controller 合成与物理之后、mouth override 之前应用；均为临时附加值，不改变基础参数。
+    void SetInteractionOffsets(float angleX, float angleY, float angleZ, float bodyAngleX)
+    {
+        interAngleX_ = angleX;
+        interAngleY_ = angleY;
+        interAngleZ_ = angleZ;
+        interBodyAngleX_ = bodyAngleX;
+    }
+    // 互动眼覆盖：left/right 为模型真实范围内的目标值（通常 0=闭眼 1=睁眼）
+    void SetEyeOverride(bool enabled, float leftOpen, float rightOpen)
+    {
+        eyeOverrideEnabled_ = enabled;
+        eyeLeft_ = leftOpen;
+        eyeRight_ = rightOpen;
+    }
+    // 猫耳根部互动：只允许控制左右各一个经确认的根部旋转参数
+    // （默认 Param_Angle_Rotation_1_CAT_Ear_L/R，需实测确认），
+    // 其余 Rotation_2/3 交给模型原有 Physics 与父子变形器处理，避免图层割裂。
+    void SetEarInteraction(bool enabled, float leftNorm, float rightNorm)
+    {
+        earInteractionEnabled_ = enabled;
+        if (enabled)
+        {
+            earLeft_ = leftNorm;
+            earRight_ = rightNorm;
+        }
+        else
+        {
+            // 传入 enabled=false 时必须清零所有耳朵互动偏移
+            earLeft_ = 0.0f;
+            earRight_ = 0.0f;
+        }
+    }
+    bool HasEyeLeft() const { return idEyeLIdx_ >= 0; }
+    bool HasEyeRight() const { return idEyeRIdx_ >= 0; }
+    bool HasEarRootParams() const { return idEarLeftRoot_ >= 0 || idEarRightRoot_ >= 0; }
+    bool EarRootPhysics() const { return earRootPhysics_; }
+    int EarLeftRootIndex() const { return idEarLeftRoot_; }
+    int EarRightRootIndex() const { return idEarRightRoot_; }
+    void GetEarRootRanges(float& lMin, float& lMax, float& rMin, float& rMax) const
+    {
+        lMin = earLeftRootMin_; lMax = earLeftRootMax_;
+        rMin = earRightRootMin_; rMax = earRightRootMax_;
+    }
+    // 互动通道参数索引（供 Host 读取真实范围）
+    int AngleXIndex() const { return idAngleXIdx_; }
+    int AngleYIndex() const { return idAngleYIdx_; }
+    int AngleZIndex() const { return idAngleZIdx_; }
+    int BodyAngleXIndex() const { return idBodyAngleXIdx_; }
+    int EyeLIndex() const { return idEyeLIdx_; }
+    int EyeRIndex() const { return idEyeRIdx_; }
+    void GetEyeRanges(float& lMin, float& lMax, float& rMin, float& rMax) const
+    {
+        lMin = eyeLMin_; lMax = eyeLMax_; rMin = eyeRMin_; rMax = eyeRMax_;
+    }
+    void ListEarParams(std::string& out) const;
 
     // 物理测试输入模式（编辑器等价性测试）：
     // 启用后每帧在参数控制器合成完成后，将 4 个输入参数强制覆盖为测试值，
@@ -123,6 +213,12 @@ private:
     // 按模型 Min/Max Clamp 虚拟输入
     float ClampParam(int index, float v);
     void TracePhysicsDiagnostics(float delta);
+    // 扫描模型真实猫耳根部参数（默认 Rotation_1_CAT_Ear_L/R，供互动通道使用）
+    void DetectEarRootParams();
+    // 应用猫耳根部互动偏移（final = 本帧当前值 + 归一化偏移 × 安全幅度，Clamp 到真实范围）
+    void ApplyEarRootInteraction(Live2D::Cubism::Framework::CubismModel* m);
+    // 应用人物互动通道（controller 与物理之后、mouth override 之前）
+    void ApplyInteractionChannels(Live2D::Cubism::Framework::CubismModel* m);
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
@@ -174,6 +270,31 @@ private:
     bool physicsTestInput_ = false;
     float testAngleX_ = 0.0f, testAngleZ_ = 0.0f;
     float testBodyX_ = 0.0f, testBodyZ_ = 0.0f;
+
+    // 说话嘴型覆盖通道状态（索引在 Load 时缓存）
+    int idMouthOpenYIdx_ = -1;
+    int idMouthFormIdx_ = -1;
+    bool mouthOverrideEnabled_ = false;
+    float mouthOpenY_ = 0.0f;
+    float mouthForm_ = 0.0f;
+
+    // ---- 人物互动通道状态 ----
+    int idEyeLIdx_ = -1, idEyeRIdx_ = -1;
+    float eyeLMin_ = 0.0f, eyeLMax_ = 1.0f, eyeRMin_ = 0.0f, eyeRMax_ = 1.0f;
+    int idAngleYIdx_ = -1;
+    float interAngleX_ = 0.0f, interAngleY_ = 0.0f, interAngleZ_ = 0.0f, interBodyAngleX_ = 0.0f;
+    bool eyeOverrideEnabled_ = false;
+    float eyeLeft_ = 1.0f, eyeRight_ = 1.0f;
+    // 猫耳根部互动：只保存左右各一个根部参数索引/范围/是否 Physics 输出
+    int idEarLeftRoot_ = -1, idEarRightRoot_ = -1;
+    float earLeftRootMin_ = -45.0f, earLeftRootMax_ = 45.0f;
+    float earRightRootMin_ = -45.0f, earRightRootMax_ = 45.0f;
+    bool earRootPhysics_ = false;   // 根部参数是否为 Physics 输出
+    bool earInteractionEnabled_ = false;
+    float earLeft_ = 0.0f, earRight_ = 0.0f;  // 归一化 -1..1
+    int lastEarRootWriteIdx_ = -1;            // 本帧上一个被写根部参数索引（重复写入断言）
+    // 抚摸互动安全幅度（度）：不使用完整 ±45 范围
+    static constexpr float kEarRootMaxOffset = 2.0f;
 
     std::vector<ID3D11ShaderResourceView*> textureSrvs_;
 

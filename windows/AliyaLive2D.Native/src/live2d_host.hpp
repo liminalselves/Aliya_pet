@@ -98,6 +98,16 @@ bool SetLookTarget(float x01, float y01);
 bool SetLipSyncValue(float value);
     // 模型是否包含 ParamMouthOpenY（口型可用性）
     bool LipSyncSupported() const;
+    // 说话嘴型覆盖通道：独立写入，最终值在 model->Update() 前应用
+    bool SetMouthOverride(bool enabled, float openY, float form);
+    bool MouthParamInfo(AliyaLive2DMouthParamInfo* out) const;
+    // 人物互动通道：头部/身体临时附加偏移、抚摸闭眼、猫耳附加偏移
+    bool SetInteractionOffsets(float angleX, float angleY, float angleZ, float bodyAngleX);
+    bool SetEyeOverride(bool enabled, float leftOpen, float rightOpen);
+    bool SetEarInteraction(bool enabled, float leftNorm, float rightNorm);
+    bool SetPettingLookAtReduction(bool enabled);
+    bool InteractionParamInfo(AliyaLive2DInteractionParamInfo* out) const;
+    bool ListEarParams(char* out, int outSize) const;
     bool HitTest(float xPx, float yPx) const;
     bool GetInfo(AliyaLive2DModelInfo* info) const;
     bool ProfileStages(std::string& outText);

@@ -673,6 +673,123 @@ bool Live2DHost::LipSyncSupported() const
     return model_ && model_->HasLipSync();
 }
 
+bool Live2DHost::SetMouthOverride(bool enabled, float openY, float form)
+{
+    if (!Ready() || !model_)
+        return false;
+    if (!std::isfinite(openY) || !std::isfinite(form))
+        return false;
+    model_->SetMouthOverride(enabled, openY, form);
+    return true;
+}
+
+bool Live2DHost::MouthParamInfo(AliyaLive2DMouthParamInfo* out) const
+{
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!Ready() || !model_)
+        return false;
+    out->hasOpenY = model_->HasMouthOpenY() ? 1 : 0;
+    out->hasForm = model_->HasMouthForm() ? 1 : 0;
+    float oyMin = 0.0f, oyMax = 1.0f, fmMin = 0.0f, fmMax = 1.0f;
+    model_->GetMouthParamMeta(oyMin, oyMax, fmMin, fmMax);
+    out->openYMin = oyMin;
+    out->openYMax = oyMax;
+    out->formMin = fmMin;
+    out->formMax = fmMax;
+    return true;
+}
+
+bool Live2DHost::SetInteractionOffsets(float angleX, float angleY, float angleZ, float bodyAngleX)
+{
+    if (!Ready() || !model_)
+        return false;
+    if (!std::isfinite(angleX) || !std::isfinite(angleY) || !std::isfinite(angleZ) || !std::isfinite(bodyAngleX))
+        return false;
+    model_->SetInteractionOffsets(angleX, angleY, angleZ, bodyAngleX);
+    return true;
+}
+
+bool Live2DHost::SetEyeOverride(bool enabled, float leftOpen, float rightOpen)
+{
+    if (!Ready() || !model_)
+        return false;
+    if (!std::isfinite(leftOpen) || !std::isfinite(rightOpen))
+        return false;
+    model_->SetEyeOverride(enabled, leftOpen, rightOpen);
+    return true;
+}
+
+bool Live2DHost::SetEarInteraction(bool enabled, float leftNorm, float rightNorm)
+{
+    if (!Ready() || !model_)
+        return false;
+    if (!std::isfinite(leftNorm) || !std::isfinite(rightNorm))
+        return false;
+    model_->SetEarInteraction(enabled, leftNorm, rightNorm);
+    return true;
+}
+
+bool Live2DHost::SetPettingLookAtReduction(bool enabled)
+{
+    if (!Ready() || !model_)
+        return false;
+    model_->Controller().SetPettingLookAtReduction(enabled);
+    return true;
+}
+
+bool Live2DHost::InteractionParamInfo(AliyaLive2DInteractionParamInfo* out) const
+{
+    if (!out)
+        return false;
+    memset(out, 0, sizeof(*out));
+    if (!Ready() || !model_)
+        return false;
+    using CsmUint32 = Live2D::Cubism::Framework::csmUint32;
+    auto* m = model_->GetModel();
+    if (m)
+    {
+        auto range = [&](int idx, int& has, float& mn, float& mx) {
+            if (idx >= 0)
+            {
+                has = 1;
+                mn = m->GetParameterMinimumValue(static_cast<CsmUint32>(idx));
+                mx = m->GetParameterMaximumValue(static_cast<CsmUint32>(idx));
+            }
+        };
+        range(model_->AngleXIndex(), out->hasAngleX, out->angleXMin, out->angleXMax);
+        range(model_->AngleYIndex(), out->hasAngleY, out->angleYMin, out->angleYMax);
+        range(model_->AngleZIndex(), out->hasAngleZ, out->angleZMin, out->angleZMax);
+        range(model_->BodyAngleXIndex(), out->hasBodyAngleX, out->bodyXMin, out->bodyXMax);
+        range(model_->EyeLIndex(), out->hasEyeL, out->eyeLMin, out->eyeLMax);
+        range(model_->EyeRIndex(), out->hasEyeR, out->eyeRMin, out->eyeRMax);
+    }
+    out->leftEarRootMin = 0; out->leftEarRootMax = 1; out->rightEarRootMin = 0; out->rightEarRootMax = 1;
+    out->hasLeftEarRoot = model_->EarLeftRootIndex() >= 0 ? 1 : 0;
+    out->hasRightEarRoot = model_->EarRightRootIndex() >= 0 ? 1 : 0;
+    out->earRootPhysics = model_->EarRootPhysics() ? 1 : 0;
+    float lMin = 0, lMax = 1, rMin = 0, rMax = 1;
+    model_->GetEarRootRanges(lMin, lMax, rMin, rMax);
+    out->leftEarRootMin = lMin;
+    out->leftEarRootMax = lMax;
+    out->rightEarRootMin = rMin;
+    out->rightEarRootMax = rMax;
+    return true;
+}
+
+bool Live2DHost::ListEarParams(char* out, int outSize) const
+{
+    if (!out || outSize <= 0 || !model_)
+        return false;
+    std::string json;
+    model_->ListEarParams(json);
+    int n = std::min(static_cast<int>(json.size()), outSize - 1);
+    if (n > 0) memcpy(out, json.c_str(), static_cast<size_t>(n));
+    out[n] = 0;
+    return true;
+}
+
 bool Live2DHost::HitTest(float xPx, float yPx) const
 {
     if (!Ready() || !model_)

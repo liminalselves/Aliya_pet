@@ -92,8 +92,73 @@ internal static class Live2DInterop
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int AliyaLive2D_SetLookAtEnabled(IntPtr handle, int enabled);
 
-    [DllImport(DllName, EntryPoint = "AliyaLive2D_SetLipSyncValue", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetLipSyncValue", ExactSpelling = true)]
     public static extern int AliyaLive2D_SetLipSyncValue(IntPtr handle, double value);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetMouthOverride", ExactSpelling = true)]
+    public static extern int AliyaLive2D_SetMouthOverride(IntPtr handle, int enabled, double openY, double form);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_GetMouthParamInfo", ExactSpelling = true)]
+    public static extern int AliyaLive2D_GetMouthParamInfo(IntPtr handle, out AliyaLive2DMouthParamInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AliyaLive2DMouthParamInfo
+    {
+        public int HasOpenY;
+        public int HasForm;
+        public float OpenYMin;
+        public float OpenYMax;
+        public float FormMin;
+        public float FormMax;
+    }
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetInteractionOffsets", ExactSpelling = true)]
+    public static extern int AliyaLive2D_SetInteractionOffsets(IntPtr handle, double angleX, double angleY, double angleZ, double bodyAngleX);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetEyeOverride", ExactSpelling = true)]
+    public static extern int AliyaLive2D_SetEyeOverride(IntPtr handle, int enabled, double leftOpen, double rightOpen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetEarInteraction", ExactSpelling = true)]
+    public static extern int AliyaLive2D_SetEarInteraction(IntPtr handle, int enabled, double leftValue, double rightValue);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_SetPettingLookAtReduction", ExactSpelling = true)]
+    public static extern int AliyaLive2D_SetPettingLookAtReduction(IntPtr handle, int enabled);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_GetInteractionParamInfo", ExactSpelling = true)]
+    public static extern int AliyaLive2D_GetInteractionParamInfo(IntPtr handle, out AliyaLive2DInteractionParamInfo info);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "AliyaLive2D_ListEarParams", ExactSpelling = true)]
+    public static extern int AliyaLive2D_ListEarParams(IntPtr handle, StringBuilder buffer, int bufferSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AliyaLive2DInteractionParamInfo
+    {
+        public int HasAngleX;
+        public int HasAngleY;
+        public int HasAngleZ;
+        public int HasBodyAngleX;
+        public float AngleXMin;
+        public float AngleXMax;
+        public float AngleYMin;
+        public float AngleYMax;
+        public float AngleZMin;
+        public float AngleZMax;
+        public float BodyXMin;
+        public float BodyXMax;
+        public int HasEyeL;
+        public int HasEyeR;
+        public float EyeLMin;
+        public float EyeLMax;
+        public float EyeRMin;
+        public float EyeRMax;
+        public int HasLeftEarRoot;
+        public int HasRightEarRoot;
+        public float LeftEarRootMin;
+        public float LeftEarRootMax;
+        public float RightEarRootMin;
+        public float RightEarRootMax;
+        public int EarRootPhysics;
+    }
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int AliyaLive2D_SetGazeSpeed(IntPtr handle, double multiplier);
@@ -555,6 +620,13 @@ internal static class Live2DInterop
         "AliyaLive2D_ClearLookTarget",
         "AliyaLive2D_SetLookAtEnabled",
         "AliyaLive2D_SetLipSyncValue",
+        "AliyaLive2D_SetMouthOverride",
+        "AliyaLive2D_GetMouthParamInfo",
+        "AliyaLive2D_SetInteractionOffsets",
+        "AliyaLive2D_SetEyeOverride",
+        "AliyaLive2D_SetEarInteraction",
+        "AliyaLive2D_GetInteractionParamInfo",
+        "AliyaLive2D_ListEarParams",
         "AliyaLive2D_SetGazeSpeed",
         "AliyaLive2D_SetPhysicsStrength",
         "AliyaLive2D_GetPhysicsStrength",

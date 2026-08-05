@@ -555,6 +555,151 @@ public sealed class Live2DCharacterRenderer : ICharacterRenderer
         }
     }
 
+    /// <summary>
+    /// 检测当前模型真实嘴部参数（ParamMouthOpenY / ParamMouthForm）及其范围。
+    /// 旧版 Native 无对应导出时回退为 GetParameterValue 检测，不抛错。
+    /// </summary>
+    public (bool hasOpenY, bool hasForm, double openYMin, double openYMax, double formMin, double formMax) GetMouthParamInfo()
+    {
+        if (_handle == IntPtr.Zero)
+            return (false, false, 0, 1, -1, 1);
+        try
+        {
+            if (Live2DInterop.AliyaLive2D_GetMouthParamInfo(_handle, out var info) == Live2DInterop.OK)
+                return (info.HasOpenY != 0, info.HasForm != 0, info.OpenYMin, info.OpenYMax, info.FormMin, info.FormMax);
+        }
+        catch
+        {
+            // 旧 Native 缺少导出：走 GetParameterValue 检测
+        }
+        bool hasOpenY = GetParameterValue("ParamMouthOpenY", out _);
+        bool hasForm = GetParameterValue("ParamMouthForm", out _);
+        return (hasOpenY, hasForm, 0, 1, -1, 1);
+    }
+
+    /// <summary>
+    /// 设置说话嘴型覆盖通道（独立通道，Native 在动作/表情/Idle/LipSync 合成与物理之后、
+    /// model->Update 之前以最终值写入）。旧 Native 无该导出时返回 false（口型禁用，不影响气泡）。
+    /// </summary>
+    public bool SetMouthOverride(bool enabled, double openY, double form)
+    {
+        if (_handle == IntPtr.Zero)
+            return false;
+        try
+        {
+            return Live2DInterop.AliyaLive2D_SetMouthOverride(_handle, enabled ? 1 : 0, openY, form)
+                   == Live2DInterop.OK;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>人物互动：头部/身体临时附加偏移（角度）。全部 0 复位。</summary>
+    public bool SetInteractionOffsets(double angleX, double angleY, double angleZ, double bodyAngleX)
+    {
+        if (_handle == IntPtr.Zero)
+            return false;
+        try
+        {
+            return Live2DInterop.AliyaLive2D_SetInteractionOffsets(_handle, angleX, angleY, angleZ, bodyAngleX)
+                   == Live2DInterop.OK;
+        }
+        catch (EntryPointNotFoundException) { return false; }
+        catch (DllNotFoundException) { return false; }
+    }
+
+    /// <summary>抚摸闭眼覆盖：enabled=1 时写入 ParamEyeLOpen/R（自动眨眼暂停）。</summary>
+    public bool SetEyeOverride(bool enabled, double leftOpen, double rightOpen)
+    {
+        if (_handle == IntPtr.Zero)
+            return false;
+        try
+        {
+            return Live2DInterop.AliyaLive2D_SetEyeOverride(_handle, enabled ? 1 : 0, leftOpen, rightOpen)
+                   == Live2DInterop.OK;
+        }
+        catch (EntryPointNotFoundException) { return false; }
+        catch (DllNotFoundException) { return false; }
+    }
+
+    /// <summary>猫耳互动附加偏移（归一化 -1..1）。</summary>
+    public bool SetEarInteraction(bool enabled, double left, double right)
+    {
+        if (_handle == IntPtr.Zero)
+            return false;
+        try
+        {
+            return Live2DInterop.AliyaLive2D_SetEarInteraction(_handle, enabled ? 1 : 0, left, right)
+                   == Live2DInterop.OK;
+        }
+        catch (EntryPointNotFoundException) { return false; }
+        catch (DllNotFoundException) { return false; }
+    }
+
+    /// <summary>抚摸期间降低 LookAt 对头部/身体角度权重（避免抵消抚摸转动）。</summary>
+    public bool SetPettingLookAtReduction(bool enabled)
+    {
+        if (_handle == IntPtr.Zero)
+            return false;
+        try
+        {
+            return Live2DInterop.AliyaLive2D_SetPettingLookAtReduction(_handle, enabled ? 1 : 0)
+                   == Live2DInterop.OK;
+        }
+        catch (EntryPointNotFoundException) { return false; }
+        catch (DllNotFoundException) { return false; }
+    }
+
+    /// <summary>读取人物互动参数真实范围与猫耳根部参数信息。</summary>
+    public (bool hasAngleX, bool hasAngleY, bool hasAngleZ, bool hasBodyX,
+            double angleXMin, double angleXMax, double angleYMin, double angleYMax,
+            double angleZMin, double angleZMax, double bodyXMin, double bodyXMax,
+            bool hasEyeL, bool hasEyeR, double eyeLMin, double eyeLMax, double eyeRMin, double eyeRMax,
+            bool hasLeftEarRoot, bool hasRightEarRoot, double leftEarRootMin, double leftEarRootMax,
+            double rightEarRootMin, double rightEarRootMax, bool earRootPhysics) GetInteractionParamInfo()
+    {
+        var empty = (false, false, false, false,
+            0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d,
+            false, false, 0d, 1d, 0d, 1d,
+            false, false, -45d, 45d, -45d, 45d, false);
+        if (_handle == IntPtr.Zero)
+            return empty;
+        try
+        {
+            if (Live2DInterop.AliyaLive2D_GetInteractionParamInfo(_handle, out var info) == Live2DInterop.OK)
+                return (info.HasAngleX != 0, info.HasAngleY != 0, info.HasAngleZ != 0, info.HasBodyAngleX != 0,
+                    info.AngleXMin, info.AngleXMax, info.AngleYMin, info.AngleYMax,
+                    info.AngleZMin, info.AngleZMax, info.BodyXMin, info.BodyXMax,
+                    info.HasEyeL != 0, info.HasEyeR != 0, info.EyeLMin, info.EyeLMax, info.EyeRMin, info.EyeRMax,
+                    info.HasLeftEarRoot != 0, info.HasRightEarRoot != 0,
+                    info.LeftEarRootMin, info.LeftEarRootMax, info.RightEarRootMin, info.RightEarRootMax,
+                    info.EarRootPhysics != 0);
+        }
+        catch { }
+        return empty;
+    }
+
+    /// <summary>列出检测到的猫耳参数（JSON 数组），供诊断日志。</summary>
+    public string ListEarParams()
+    {
+        if (_handle == IntPtr.Zero)
+            return "[]";
+        var sb = new StringBuilder(4096);
+        try
+        {
+            if (Live2DInterop.AliyaLive2D_ListEarParams(_handle, sb, sb.Capacity) == Live2DInterop.OK)
+                return sb.ToString();
+        }
+        catch { }
+        return "[]";
+    }
+
     public void SetGazeIdleTimeout(double seconds)
     {
         if (_handle != IntPtr.Zero)

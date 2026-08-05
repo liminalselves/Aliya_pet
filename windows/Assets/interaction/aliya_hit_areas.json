@@ -1,0 +1,15 @@
+{
+  "character": "aliya",
+  "coordinateSpace": "character_viewport_normalized",
+  "areas": [
+    { "id": "head", "type": "ellipse", "x": 0.50, "y": 0.20, "width": 0.36, "height": 0.26, "priority": 40 },
+    { "id": "face", "type": "ellipse", "x": 0.50, "y": 0.42, "width": 0.30, "height": 0.22, "priority": 50 },
+    { "id": "ear_left", "type": "ellipse", "x": 0.32, "y": 0.16, "width": 0.14, "height": 0.18, "priority": 60 },
+    { "id": "ear_right", "type": "ellipse", "x": 0.68, "y": 0.16, "width": 0.14, "height": 0.18, "priority": 60 },
+    { "id": "hair", "type": "ellipse", "x": 0.50, "y": 0.12, "width": 0.38, "height": 0.18, "priority": 30 },
+    { "id": "body", "type": "ellipse", "x": 0.50, "y": 0.70, "width": 0.60, "height": 0.42, "priority": 10 },
+    { "id": "hand", "type": "ellipse", "x": 0.28, "y": 0.60, "width": 0.16, "height": 0.22, "priority": 20 },
+    { "id": "tablet", "type": "ellipse", "x": 0.72, "y": 0.62, "width": 0.14, "height": 0.18, "priority": 20 },
+    { "id": "head_pet_zone", "type": "ellipse", "x": 0.50, "y": 0.15, "width": 0.42, "height": 0.24, "priority": 30 }
+  ]
+}

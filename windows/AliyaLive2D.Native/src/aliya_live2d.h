@@ -244,6 +244,76 @@ ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetLookAtEnabled(AliyaLive2DHandl
  * 返回 ERR_UNSUPPORTED（托管层应据此禁用本次运行的 lip-sync）。
  */
 ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetLipSyncValue(AliyaLive2DHandle handle, double value) noexcept;
+
+/* 嘴部参数可用性信息（模型真实参数范围）。hasOpenY/hasForm 表示是否存在。 */
+typedef struct AliyaLive2DMouthParamInfo {
+    int hasOpenY;
+    int hasForm;
+    float openYMin;
+    float openYMax;
+    float formMin;
+    float formMax;
+} AliyaLive2DMouthParamInfo;
+
+/**
+ * 设置说话嘴型覆盖通道（独立于动作/表情/Idle/Breath/LookAt/眨眼）。
+ * 启用后每个 Update 帧在动作与表情计算完成、物理步进之后、最终 model->Update()
+ * 之前以最终值写入 ParamMouthOpenY / ParamMouthForm（若模型存在），
+ * 不会被同帧的 Motion/Expression/Idle/LipSync 覆盖。disabled=0 时恢复默认嘴型处理。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetMouthOverride(AliyaLive2DHandle handle, int enabled, double openY, double form) noexcept;
+
+/**
+ * 读取嘴部参数可用性与真实范围（启动时检测，勿写死）。
+ * 返回 ERR_NOT_READY 表示模型未就绪。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_GetMouthParamInfo(AliyaLive2DHandle handle, AliyaLive2DMouthParamInfo* outInfo) noexcept;
+
+/* 人物互动参数信息（真实范围，勿写死）。 */
+typedef struct AliyaLive2DInteractionParamInfo {
+    int hasAngleX, hasAngleY, hasAngleZ, hasBodyAngleX;
+    float angleXMin, angleXMax, angleYMin, angleYMax, angleZMin, angleZMax;
+    float bodyXMin, bodyXMax;
+    int hasEyeL, hasEyeR;
+    float eyeLMin, eyeLMax, eyeRMin, eyeRMax;
+    int hasLeftEarRoot, hasRightEarRoot;   /* 左右耳根部参数是否存在（只操作根部） */
+    float leftEarRootMin, leftEarRootMax, rightEarRootMin, rightEarRootMax;
+    int earRootPhysics;                    /* 猫耳根部是否为 Physics 输出参数 */
+} AliyaLive2DInteractionParamInfo;
+
+/**
+ * 设置人物互动头部/身体临时附加偏移（角度，单位与模型参数一致）。
+ * 叠加在 Controller 合成结果之上并 Clamp 到模型真实范围，不改变基础参数。
+ * 全部传 0 即复位。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetInteractionOffsets(AliyaLive2DHandle handle,
+    double angleX, double angleY, double angleZ, double bodyAngleX) noexcept;
+
+/**
+ * 抚摸闭眼覆盖：enabled=1 时按目标值直接写入 ParamEyeLOpen/ParamEyeROpen
+ * （自动眨眼与卡死检测暂停）。leftOpen/rightOpen 为模型真实范围内目标值。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetEyeOverride(AliyaLive2DHandle handle,
+    int enabled, double leftOpen, double rightOpen) noexcept;
+
+/**
+ * 猫耳根部互动附加偏移：enabled=1 时按归一化 -1..1 只对左右耳【根部】参数做偏移
+ * （内部按安全幅度映射并 Clamp 到真实范围，不写入 Rotation_2/3）。
+ * 平滑值由托管层提供。enabled=0 复位。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetEarInteraction(AliyaLive2DHandle handle,
+    int enabled, double leftValue, double rightValue) noexcept;
+
+/**
+ * 读取人物互动参数真实范围与猫耳参数数量（启动时检测）。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_GetInteractionParamInfo(AliyaLive2DHandle handle,
+    AliyaLive2DInteractionParamInfo* outInfo) noexcept;
+
+/**
+ * 列出检测到的猫耳参数（JSON 数组：id/范围/physics），供诊断日志。
+ */
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_ListEarParams(AliyaLive2DHandle handle, char* out, int outSize) noexcept;
 /**
  * 设置视线跟随速度倍率（1.0 = 默认，最高 5.0）。作用于视线弹簧响应速度。
  */

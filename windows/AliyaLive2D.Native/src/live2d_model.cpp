@@ -302,6 +302,37 @@ bool Live2DModel::Load(const std::string& utf8ModelJsonPath, std::string& error)
     hasEyeBlink_ = (controller_.EyeLOpenIndex() >= 0 || controller_.EyeROpenIndex() >= 0);
     hasLipSync_ = controller_.MouthIndex() >= 0;
 
+    // 缓存嘴型覆盖通道参数索引（用于 model->Update() 前最终写入）
+    {
+        CubismIdManager* idm = CubismFramework::GetIdManager();
+        CubismModel* m = userModel_->GetModel();
+        idMouthOpenYIdx_ = m->GetParameterIndex(idm->GetId("ParamMouthOpenY"));
+        idMouthFormIdx_ = m->GetParameterIndex(idm->GetId("ParamMouthForm"));
+    }
+
+    // 缓存人物互动通道参数索引与真实范围（不假定眼睛范围一定为 0..1）
+    {
+        CubismIdManager* idm = CubismFramework::GetIdManager();
+        CubismModel* m = userModel_->GetModel();
+        idEyeLIdx_ = m->GetParameterIndex(idm->GetId("ParamEyeLOpen"));
+        idEyeRIdx_ = m->GetParameterIndex(idm->GetId("ParamEyeROpen"));
+        if (idEyeLIdx_ >= 0)
+        {
+            eyeLMin_ = m->GetParameterMinimumValue(static_cast<csmUint32>(idEyeLIdx_));
+            eyeLMax_ = m->GetParameterMaximumValue(static_cast<csmUint32>(idEyeLIdx_));
+        }
+        if (idEyeRIdx_ >= 0)
+        {
+            eyeRMin_ = m->GetParameterMinimumValue(static_cast<csmUint32>(idEyeRIdx_));
+            eyeRMax_ = m->GetParameterMaximumValue(static_cast<csmUint32>(idEyeRIdx_));
+        }
+        idAngleXIdx_ = m->GetParameterIndex(idm->GetId("ParamAngleX"));
+        idAngleYIdx_ = m->GetParameterIndex(idm->GetId("ParamAngleY"));
+        idAngleZIdx_ = m->GetParameterIndex(idm->GetId("ParamAngleZ"));
+        idBodyAngleXIdx_ = m->GetParameterIndex(idm->GetId("ParamBodyAngleX"));
+    }
+    DetectEarRootParams();
+
     QueryPerformanceCounter(&tl1);
     NativeLog::Instance().Info("LoadTiming: 总耗时(至加载成功)=%.1f ms", (double)(tl1.QuadPart - tl0.QuadPart) * 1000.0 / tlf.QuadPart);
     NativeLog::Instance().Info("Live2DModel: 加载成功 canvas=(%f,%f) params=%d drawables=%d textures=%d physics=%d",
@@ -389,10 +420,20 @@ void Live2DModel::Update(float delta)
     if (!userModel_)
         return;
 
+    // 0. 互动眼覆盖激活时暂停控制器自动眨眼（抚摸闭眼；卡死检测同步暂停）
+    controller_.SetEyeOverrideActive(eyeOverrideEnabled_);
+
+    // 0.5 帧内根部写入索引清零（重复写入断言：同一帧同一根部参数被 Interaction 写入超过一次）
+    lastEarRootWriteIdx_ = -1;
+
     // 1. 参数控制器先写业务参数（可见姿态：动作/Idle/Gaze/Blink/Breath/LipSync，渲染帧率）
     controller_.Update(userModel_->GetModel(), delta);
 
-    // 1.5 物理测试输入模式：覆盖 4 个输入参数为固定测试序列（编辑器等价性测试专用）
+    // 1.5 猫耳根部为 Physics 输入参数时：在 Physics 前应用（Physics 会把该值作为输入读取）
+    if (earInteractionEnabled_ && !earRootPhysics_)
+        ApplyEarRootInteraction(userModel_->GetModel());
+
+    // 1.6 物理测试输入模式：覆盖 4 个输入参数为固定测试序列（编辑器等价性测试专用）
     if (physicsTestInput_)
     {
         auto* m = userModel_->GetModel();
@@ -410,6 +451,26 @@ void Live2DModel::Update(float delta)
 
     // 2.5 覆盖检测：model->Update() 前记录头部参数（若小于 Gaze 写入后值说明被覆盖）
     controller_.RecordModelUpdateSnapshot(userModel_->GetModel());
+
+    // 2.6 人物互动通道：controller 合成与物理之后、mouth override 之前应用。
+    //     InteractionOffsets 为头部/身体临时附加值（不改变基础参数）；
+    //     EyeOverride 为抚摸闭眼。
+    ApplyInteractionChannels(userModel_->GetModel());
+
+    // 2.7 猫耳根部为 Physics 输出参数时：在 Physics 后应用（覆盖在本帧 Physics 结果上）
+    if (earInteractionEnabled_ && earRootPhysics_)
+        ApplyEarRootInteraction(userModel_->GetModel());
+
+    // 2.8 说话嘴型覆盖通道：独立通道，在动作/表情/Idle/LipSync 合成与物理之后、
+    //     model->Update() 之前以最终值写入嘴部参数（不会被同帧其他模块覆盖）。
+    if (mouthOverrideEnabled_)
+    {
+        auto* m = userModel_->GetModel();
+        if (idMouthOpenYIdx_ >= 0)
+            m->SetParameterValue(static_cast<csmUint32>(idMouthOpenYIdx_), mouthOpenY_, 1.0f);
+        if (idMouthFormIdx_ >= 0)
+            m->SetParameterValue(static_cast<csmUint32>(idMouthFormIdx_), mouthForm_, 1.0f);
+    }
 
     // 3. 更新模型（应用参数到变形）
     userModel_->GetModel()->Update();
@@ -689,6 +750,165 @@ void Live2DModel::TracePhysicsDiagnostics(float delta)
         lastDrive_.physicsFps,
         lastClampedParams_.empty() ? "(none)" : lastClampedParams_.c_str());
     lastClampedParams_.clear();
+}
+
+// 检测猫耳根部参数：默认选择 Param_Angle_Rotation_1_CAT_Ear_L/R（Rotation_1 为根部惯例，
+// physics3.json 中 Rotation_1 的 Scale 最大=1.5，根部驱动量最大）。
+// 若该参数不存在，回退到该侧第一个 CAT_Ear 参数。其余 Rotation_2/3 一律不写入。
+void Live2DModel::DetectEarRootParams()
+{
+    idEarLeftRoot_ = -1;
+    idEarRightRoot_ = -1;
+    earRootPhysics_ = false;
+    if (!userModel_)
+        return;
+
+    CubismModel* m = userModel_->GetModel();
+    CubismIdManager* idm = CubismFramework::GetIdManager();
+
+    auto pickRoot = [&](const char* preferredId, const char* sideSub) -> int {
+        int idx = m->GetParameterIndex(idm->GetId(preferredId));
+        if (idx >= 0)
+            return idx;
+        // 回退：扫描该侧第一个 CAT_Ear 参数
+        csmInt32 count = m->GetParameterCount();
+        for (csmInt32 i = 0; i < count; i++)
+        {
+            CubismIdHandle idHandle = m->GetParameterId(i);
+            const char* idStr = idHandle ? idHandle->GetString().GetRawString() : "";
+            if (idStr && strstr(idStr, "CAT_Ear") && strstr(idStr, sideSub))
+                return i;
+        }
+        return -1;
+    };
+
+    idEarLeftRoot_ = pickRoot("Param_Angle_Rotation_1_CAT_Ear_L", "CAT_Ear_L");
+    idEarRightRoot_ = pickRoot("Param_Angle_Rotation_1_CAT_Ear_R", "CAT_Ear_R");
+
+    auto setRange = [&](int idx, float& mn, float& mx) {
+        if (idx >= 0)
+        {
+            mn = m->GetParameterMinimumValue(static_cast<csmUint32>(idx));
+            mx = m->GetParameterMaximumValue(static_cast<csmUint32>(idx));
+        }
+    };
+    setRange(idEarLeftRoot_, earLeftRootMin_, earLeftRootMax_);
+    setRange(idEarRightRoot_, earRightRootMin_, earRightRootMax_);
+
+    std::vector<int> physicsIndices = controller_.PhysicsOutputIndices();
+    auto isPhysics = [&](int idx) {
+        for (int p : physicsIndices)
+            if (p == idx) return true;
+        return false;
+    };
+    earRootPhysics_ = (idEarLeftRoot_ >= 0 && isPhysics(idEarLeftRoot_))
+                   || (idEarRightRoot_ >= 0 && isPhysics(idEarRightRoot_));
+
+    if (idEarLeftRoot_ < 0 && idEarRightRoot_ < 0)
+    {
+        NativeLog::Instance().Warn("Live2DModel: 未检测到猫耳根部参数，抚摸时耳朵反馈跳过");
+        return;
+    }
+    NativeLog::Instance().Info("Live2DModel: 猫耳根部 left=%d(%s) right=%d(%s) physics=%d",
+        idEarLeftRoot_, idEarLeftRoot_ >= 0 ? m->GetParameterId(static_cast<csmUint32>(idEarLeftRoot_))->GetString().GetRawString() : "none",
+        idEarRightRoot_, idEarRightRoot_ >= 0 ? m->GetParameterId(static_cast<csmUint32>(idEarRightRoot_))->GetString().GetRawString() : "none",
+        earRootPhysics_ ? 1 : 0);
+}
+
+void Live2DModel::ListEarParams(std::string& out) const
+{
+    out.clear();
+    if (!userModel_)
+    {
+        out = "[]";
+        return;
+    }
+    auto append = [&](int idx, const char* side, float mn, float mx, bool physics) {
+        if (idx < 0)
+            return;
+        if (out.size() > 1) out += ",";   // 已输出 "[" 之后才加逗号
+        out += "{\"side\":\"";
+        out += side;
+        out += "\",\"id\":\"";
+        out += userModel_->GetModel()->GetParameterId(static_cast<csmUint32>(idx))->GetString().GetRawString();
+        out += "\",\"min\":";
+        out += std::to_string(mn);
+        out += ",\"max\":";
+        out += std::to_string(mx);
+        out += ",\"physics\":";
+        out += physics ? "true" : "false";
+        out += ",\"root\":true}";
+    };
+    out += "[";
+    append(idEarLeftRoot_, "left", earLeftRootMin_, earLeftRootMax_, earRootPhysics_);
+    append(idEarRightRoot_, "right", earRightRootMin_, earRightRootMax_, earRootPhysics_);
+    out += "]";
+}
+
+// 应用猫耳根部互动偏移：final = 本帧当前值 + 归一化偏移 × 安全幅度，Clamp 到真实范围。
+// 只写左右各一个根部参数；不做 current += offset 的持续累加（基于本帧结果计算）。
+void Live2DModel::ApplyEarRootInteraction(Live2D::Cubism::Framework::CubismModel* m)
+{
+    if (!m)
+        return;
+    auto apply = [&](int idx, float mn, float mx, float norm) {
+        if (idx < 0)
+            return;
+        // 同一帧同一根部参数被 Interaction 写入超过一次：记录一次（正式版本只记一次，不刷日志）
+        if (lastEarRootWriteIdx_ == idx)
+            NativeLog::Instance().Warn("EAR_PARAMETER_MULTIPLE_WRITE idx=%d", idx);
+        lastEarRootWriteIdx_ = idx;
+        float current = m->GetParameterValue(static_cast<csmUint32>(idx)); // 本帧 Physics/Controller 结果
+        float offset = norm * kEarRootMaxOffset;
+        float v = std::max(mn, std::min(mx, current + offset));
+        m->SetParameterValue(static_cast<csmUint32>(idx), v, 1.0f);
+    };
+    apply(idEarLeftRoot_, earLeftRootMin_, earLeftRootMax_, earLeft_);
+    apply(idEarRightRoot_, earRightRootMin_, earRightRootMax_, earRight_);
+}
+
+// 应用人物互动通道：头部/身体临时附加值、抚摸闭眼、猫耳附加偏移。
+// 所有写入都 Clamp 到模型真实 Min/Max；均为临时值，不改变基础参数。
+void Live2DModel::ApplyInteractionChannels(Live2D::Cubism::Framework::CubismModel* m)
+{
+    if (!m)
+        return;
+
+    auto addClamped = [&](int idx, float offset) {
+        if (idx < 0)
+            return;
+        float mn = m->GetParameterMinimumValue(static_cast<csmUint32>(idx));
+        float mx = m->GetParameterMaximumValue(static_cast<csmUint32>(idx));
+        float cur = m->GetParameterValue(static_cast<csmUint32>(idx));
+        float v = std::max(mn, std::min(mx, cur + offset));
+        m->SetParameterValue(static_cast<csmUint32>(idx), v, 1.0f);
+    };
+
+    // 头部互动偏移：临时附加值（叠加在 Controller 结果上，之后 Clamp 到模型范围）
+    if (interAngleX_ != 0.0f || interAngleY_ != 0.0f || interAngleZ_ != 0.0f)
+    {
+        addClamped(idAngleXIdx_, interAngleX_);
+        addClamped(idAngleYIdx_, interAngleY_);
+        addClamped(idAngleZIdx_, interAngleZ_);
+    }
+    if (interBodyAngleX_ != 0.0f)
+        addClamped(idBodyAngleXIdx_, interBodyAngleX_);
+
+    // 抚摸闭眼：直接写入眼睛真实范围内目标值（自动眨眼已暂停）
+    if (eyeOverrideEnabled_)
+    {
+        if (idEyeLIdx_ >= 0)
+        {
+            float v = std::max(eyeLMin_, std::min(eyeLMax_, eyeLeft_));
+            m->SetParameterValue(static_cast<csmUint32>(idEyeLIdx_), v, 1.0f);
+        }
+        if (idEyeRIdx_ >= 0)
+        {
+            float v = std::max(eyeRMin_, std::min(eyeRMax_, eyeRight_));
+            m->SetParameterValue(static_cast<csmUint32>(idEyeRIdx_), v, 1.0f);
+        }
+    }
+    // 注意：猫耳根部互动已拆分为 ApplyEarRootInteraction（仅根部参数，Physics 前/后按需调用）
 }
 
 void Live2DModel::Render(int viewportW, int viewportH)

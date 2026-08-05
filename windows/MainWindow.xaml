@@ -10,7 +10,9 @@
         Background="Transparent"
         ShowInTaskbar="False"
         Topmost="True"
-        ResizeMode="NoResize">
+        ResizeMode="NoResize"
+        DpiChanged="Window_DpiChanged"
+        PreviewMouseLeftButtonDown="Window_PreviewMouseLeftButtonDown">
     <Window.Resources>
         <Style x:Key="HoverActionButton" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="36"/>
@@ -56,10 +58,94 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="HeadPettingToggleButton" TargetType="{x:Type ToggleButton}">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Foreground" Value="#FF252A38"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#24FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#70FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                        <Border x:Name="Surface"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="13"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="#70FFFFFF"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="#D0FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Surface" Property="Opacity" Value="0.7"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="#8FE0F0FF"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="#FF9FC4E8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
-    <Grid>
+    <Grid x:Name="RootLayout">
+        <!-- 人物显示层（缩放/旋转/倾斜/帧尺寸变化只作用于本层，工具栏独立于本层） -->
+        <Grid x:Name="CharacterContainer"
+              Panel.ZIndex="10"
+              Margin="70,95,70,70">
+            <Image x:Name="PetImage"
+                   Source="/Assets/aliya_pet.png"
+                   Stretch="Uniform"
+                   RenderTransformOrigin="0.5,1"
+                   Cursor="Hand"
+                   MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
+                   MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
+                   MouseMove="PetImage_MouseMove"
+                   MouseEnter="PetImage_MouseEnter"
+                   MouseLeave="PetImage_MouseLeave"
+                   MouseRightButtonUp="PetImage_MouseRightButtonUp"
+                   MouseWheel="PetImage_MouseWheel">
+                <Image.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="IdleScale" ScaleX="1" ScaleY="1"/>
+                        <TranslateTransform x:Name="IdleTranslate" Y="0"/>
+                        <ScaleTransform x:Name="ActionScale" ScaleX="1" ScaleY="1"/>
+                        <SkewTransform x:Name="ActionSkew" AngleX="0" AngleY="0"/>
+                        <RotateTransform x:Name="ActionRotate" Angle="0"/>
+                        <TranslateTransform x:Name="ActionTranslate" X="0" Y="0"/>
+                    </TransformGroup>
+                </Image.RenderTransform>
+            </Image>
+            <Image x:Name="Live2DImage"
+                   Stretch="Fill"
+                   RenderOptions.BitmapScalingMode="Linear"
+                   SnapsToDevicePixels="True"
+                   Visibility="Collapsed"
+                   Cursor="Hand"
+                   IsHitTestVisible="True"
+                   MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
+                   MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
+                   MouseMove="PetImage_MouseMove"
+                   MouseEnter="PetImage_MouseEnter"
+                   MouseLeave="PetImage_MouseLeave"
+                   MouseRightButtonUp="PetImage_MouseRightButtonUp"
+                   MouseWheel="PetImage_MouseWheel">
+            </Image>
+        </Grid>
+
+        <!-- 气泡层 -->
         <Border x:Name="SpeechBubble"
-                Panel.ZIndex="2"
+                Panel.ZIndex="30"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Top"
                 Margin="8,2,8,0"
@@ -91,62 +177,56 @@
                        Foreground="#FF202431"/>
         </Border>
 
-        <Image x:Name="PetImage"
-               Panel.ZIndex="1"
-               Margin="70,95,70,70"
-               Source="/Assets/aliya_pet.png"
-               Stretch="Uniform"
-               RenderTransformOrigin="0.5,1"
-               Cursor="Hand"
-               MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
-               MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
-               MouseMove="PetImage_MouseMove"
-               MouseEnter="PetImage_MouseEnter"
-               MouseLeave="PetImage_MouseLeave"
-               MouseRightButtonUp="PetImage_MouseRightButtonUp"
-               MouseWheel="PetImage_MouseWheel">
-            <Image.RenderTransform>
-                <TransformGroup>
-                    <ScaleTransform x:Name="IdleScale" ScaleX="1" ScaleY="1"/>
-                    <TranslateTransform x:Name="IdleTranslate" Y="0"/>
-                    <ScaleTransform x:Name="ActionScale" ScaleX="1" ScaleY="1"/>
-                    <SkewTransform x:Name="ActionSkew" AngleX="0" AngleY="0"/>
-                    <RotateTransform x:Name="ActionRotate" Angle="0"/>
-                    <TranslateTransform x:Name="ActionTranslate" X="0" Y="0"/>
-                </TransformGroup>
-            </Image.RenderTransform>
-            </Image>
+        <!-- 命中区域调试层（不参与命中测试） -->
+        <Canvas x:Name="HitAreaDebugOverlay"
+                Panel.ZIndex="60"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+        </Canvas>
 
-        <Image x:Name="Live2DImage"
-               Panel.ZIndex="1"
-               Margin="70,95,70,70"
-               Stretch="Fill"
-               RenderOptions.BitmapScalingMode="Linear"
-               SnapsToDevicePixels="True"
-               Visibility="Collapsed"
-               Cursor="Hand"
-               IsHitTestVisible="True"
-               MouseLeftButtonDown="PetImage_MouseLeftButtonDown"
-               MouseLeftButtonUp="PetImage_MouseLeftButtonUp"
-               MouseMove="PetImage_MouseMove"
-               MouseEnter="PetImage_MouseEnter"
-               MouseLeave="PetImage_MouseLeave"
-               MouseRightButtonUp="PetImage_MouseRightButtonUp"
-               MouseWheel="PetImage_MouseWheel">
-        </Image>
-        <Popup x:Name="HoverQuickActionsPopup"
-               PlacementTarget="{Binding ElementName=PetImage}"
-               Placement="Bottom"
-               AllowsTransparency="True"
-               StaysOpen="True">
+        <!-- 手掌覆盖层（当前默认禁用，IsHitTestVisible=False，不参与命中） -->
+        <Canvas x:Name="PettingPalmCursor"
+                Panel.ZIndex="50"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+            <Path x:Name="PettingPalmShape"
+                  Width="38"
+                  Height="40"
+                  Fill="#EEFFFFFF"
+                  Stroke="#FF253A54"
+                  StrokeThickness="1.6"
+                  Stretch="Uniform"
+                  RenderOptions.BitmapScalingMode="HighQuality"
+                  RenderTransformOrigin="0.5,0.5">
+                <Path.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="PettingPalmScale" ScaleX="1" ScaleY="1"/>
+                        <RotateTransform x:Name="PettingPalmRotate" Angle="0"/>
+                    </TransformGroup>
+                </Path.RenderTransform>
+            </Path>
+        </Canvas>
+
+        <!-- 工具栏层：独立 Canvas，由 UpdateCharacterToolbarPlacement 定位（DIP，父级=RootLayout） -->
+        <Canvas x:Name="CharacterToolbarLayer"
+                Panel.ZIndex="40">
+            <!-- 人物与工具栏之间的透明连接走廊：只覆盖人物底部到工具栏顶部的间隙，不覆盖按钮 -->
+            <Rectangle x:Name="ToolbarHoverBridge"
+                       Panel.ZIndex="35"
+                       Fill="Transparent"
+                       IsHitTestVisible="True"
+                       Visibility="Collapsed"
+                       MouseEnter="ToolbarHoverBridge_MouseEnter"
+                       MouseLeave="ToolbarHoverBridge_MouseLeave"/>
             <Border x:Name="HoverQuickActions"
-                    Width="238"
+                    Panel.ZIndex="41"
+                    Width="318"
                     Height="50"
-                    Margin="0,10,0,0"
-                    Padding="7"
+                    Padding="10,7"
                     CornerRadius="19"
                     BorderBrush="#B8FFFFFF"
                     BorderThickness="1"
+                    Visibility="Collapsed"
                     IsHitTestVisible="False"
                     MouseEnter="HoverQuickActions_MouseEnter"
                     MouseLeave="HoverQuickActions_MouseLeave">
@@ -163,25 +243,36 @@
                                       Opacity="0.22"/>
                 </Border.Effect>
                 <Border.RenderTransform>
-                    <TranslateTransform x:Name="HoverQuickActionsTranslate" Y="6"/>
+                    <TranslateTransform x:Name="HoverQuickActionsTranslate" Y="0"/>
                 </Border.RenderTransform>
                 <StackPanel Orientation="Horizontal">
+                    <ToggleButton x:Name="HeadPettingButton"
+                                  Style="{StaticResource HeadPettingToggleButton}"
+                                  ToolTip="进入头部抚摸模式"
+                                  Click="HeadPettingButton_Click">
+                        <Image Source="/Assets/interaction/Icons/HeadPettingOpenHand_64.png"
+                               Width="18"
+                               Height="18"
+                               MaxWidth="20"
+                               MaxHeight="20"
+                               Stretch="Uniform"
+                               SnapsToDevicePixels="True"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </ToggleButton>
                     <Button Style="{StaticResource HoverActionButton}"
                             Content="天气"
-                            ToolTip="查询当地天气"
+                            ToolTip="查询当前天气"
                             Click="HoverWeather_Click"/>
                     <Button Style="{StaticResource HoverActionButton}"
                             Content="动作"
-                            ToolTip="随机做一个动作"
+                            ToolTip="播放一个随机动作"
                             Click="HoverAction_Click"/>
                     <Button Style="{StaticResource HoverActionButton}"
-                            Content="说句话"
-                            ToolTip="随机说一句话"
+                            Content="说话"
+                            ToolTip="让宠物说一句话"
                             Click="HoverTalk_Click"/>
                 </StackPanel>
             </Border>
-        </Popup>
+        </Canvas>
     </Grid>
 </Window>
-
-

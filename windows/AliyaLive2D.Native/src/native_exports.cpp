@@ -540,6 +540,142 @@ ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetLipSyncValue(AliyaLive2DHandle
     ALIYA_GUARD_END
 }
 
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetMouthOverride(AliyaLive2DHandle handle, int enabled, double openY, double form) noexcept
+{
+    if (!handle)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    if (!std::isfinite(openY) || !std::isfinite(form))
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    host->SetMouthOverride(enabled != 0, static_cast<float>(openY), static_cast<float>(form));
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_GetMouthParamInfo(AliyaLive2DHandle handle, AliyaLive2DMouthParamInfo* outInfo) noexcept
+{
+    if (!handle || !outInfo)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->MouthParamInfo(outInfo))
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetInteractionOffsets(AliyaLive2DHandle handle,
+    double angleX, double angleY, double angleZ, double bodyAngleX) noexcept
+{
+    if (!handle)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    if (!std::isfinite(angleX) || !std::isfinite(angleY) || !std::isfinite(angleZ) || !std::isfinite(bodyAngleX))
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    host->SetInteractionOffsets(static_cast<float>(angleX), static_cast<float>(angleY),
+                                static_cast<float>(angleZ), static_cast<float>(bodyAngleX));
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetEyeOverride(AliyaLive2DHandle handle,
+    int enabled, double leftOpen, double rightOpen) noexcept
+{
+    if (!handle)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    if (!std::isfinite(leftOpen) || !std::isfinite(rightOpen))
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    host->SetEyeOverride(enabled != 0, static_cast<float>(leftOpen), static_cast<float>(rightOpen));
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetEarInteraction(AliyaLive2DHandle handle,
+    int enabled, double leftValue, double rightValue) noexcept
+{
+    if (!handle)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    if (!std::isfinite(leftValue) || !std::isfinite(rightValue))
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    host->SetEarInteraction(enabled != 0, static_cast<float>(leftValue), static_cast<float>(rightValue));
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_SetPettingLookAtReduction(AliyaLive2DHandle handle, int enabled) noexcept
+{
+    if (!handle)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    host->SetPettingLookAtReduction(enabled != 0);
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_GetInteractionParamInfo(AliyaLive2DHandle handle,
+    AliyaLive2DInteractionParamInfo* outInfo) noexcept
+{
+    if (!handle || !outInfo)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->InteractionParamInfo(outInfo))
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
+ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_ListEarParams(AliyaLive2DHandle handle, char* out, int outSize) noexcept
+{
+    if (!handle || !out || outSize <= 0)
+        return ALIYA_LIVE2D_ERR_INVALID_ARG;
+    ALIYA_GUARD_BEGIN
+    aliya::Live2DHost* host = GetHost(handle);
+    if (!host || host->GetState() == aliya::HostState::Destroyed)
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->Ready())
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    if (!host->ListEarParams(out, outSize))
+        return ALIYA_LIVE2D_ERR_NOT_READY;
+    return ALIYA_LIVE2D_OK;
+    ALIYA_GUARD_END
+}
+
 ALIYA_LIVE2D_API AliyaLive2DResult AliyaLive2D_GetParameterValue(AliyaLive2DHandle handle, const char* id, double* outValue) noexcept
 {
     if (!handle || !id || !outValue)

@@ -8,10 +8,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using AliyaPet.Models.Interaction;
 using AliyaPet.Rendering;
 
 namespace AliyaPet;
@@ -73,7 +75,14 @@ public partial class MainWindow
     private void InitializeLive2D()
     {
         _longPressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(LongPressMilliseconds) };
-        _longPressTimer.Tick += (_, _) => OnLongPressFired();
+        _longPressTimer.Tick += (_, _) =>
+        {
+            if (_interaction.CheckLongPressFired())
+            {
+                _longPressTimer.Stop();
+                OnLongPressFired();
+            }
+        };
 
         _lookAtTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _lookAtTimer.Tick += (_, _) => UpdateLookAtTarget();
@@ -86,6 +95,8 @@ public partial class MainWindow
         {
             if (_rendererMode == CharacterRenderMode.Live2D && _live2D is not null)
                 ResizeLive2D();
+            // 窗口尺寸变化后统一重定位工具栏（Loaded 优先级，避免在布局前读取旧值）
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateCharacterToolbarPlacement));
         };
 
         SourceInitialized += (_, _) =>
@@ -105,6 +116,15 @@ public partial class MainWindow
             int screenX = (short)(lParam.ToInt64() & 0xFFFF);
             int screenY = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
             var client = PointFromScreen(new Point(screenX, screenY));
+
+            // 工具栏及其交互区域（工具栏矩形 + 连接走廊 + 容错扩展）：
+            // 绝不穿透，必须让 WPF 正常命中按钮（否则工具栏无法点击/选中）。
+            if (IsPointInToolbarInputZone(client))
+            {
+                handled = false;
+                return IntPtr.Zero;
+            }
+
             var origin = Live2DImage.TranslatePoint(new Point(0, 0), this);
             if (client.X >= origin.X
                 && client.Y >= origin.Y
@@ -113,11 +133,34 @@ public partial class MainWindow
             {
                 if (_live2D.HitTest(client.X - origin.X, client.Y - origin.Y))
                     return IntPtr.Zero;
+                // 人物矩形内未命中模型（透明部分）→ 穿透
+                handled = true;
+                return new IntPtr(HtTransparent);
             }
-            handled = true;
-            return new IntPtr(HtTransparent);
+            // 人物矩形之外（含工具栏下方空白）：默认处理，不穿透
+            return IntPtr.Zero;
         }
         return IntPtr.Zero;
+    }
+
+    /// <summary>判断窗口坐标点是否位于工具栏输入区域（工具栏矩形/连接走廊/容错扩展）。</summary>
+    private bool IsPointInToolbarInputZone(Point windowPoint)
+    {
+        var toolbar = ToolbarRect();
+        if (toolbar.Contains(windowPoint))
+            return true;
+        var inflated = toolbar;
+        inflated.Inflate(12, 12);
+        if (inflated.Contains(windowPoint))
+            return true;
+        if (ToolbarHoverBridge.Visibility == Visibility.Visible)
+        {
+            double bLeft = Canvas.GetLeft(ToolbarHoverBridge);
+            double bTop = Canvas.GetTop(ToolbarHoverBridge);
+            if (new Rect(bLeft, bTop, ToolbarHoverBridge.ActualWidth, ToolbarHoverBridge.ActualHeight).Contains(windowPoint))
+                return true;
+        }
+        return false;
     }
 
     private async Task ApplyInitialRendererModeAsync()
@@ -133,6 +176,23 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>后台预加载 Live2D：创建 Host/加载模型/检测参数，但绝不切换当前可见人物模式（保持 PNG）。</summary>
+    private async Task PreloadLive2DInternalAsync()
+    {
+        if (_appExiting)
+            return;
+        try
+        {
+            await ActivateLive2DAsync(applyUi: false);
+            AppLog.Info("LIVE2D_PRELOADED ready={0}", _live2D is { IsReady: true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("LIVE2D_PRELOAD_FAILED error={0}", ex.Message);
+            _live2DLoadFailed = true;
+        }
+    }
+
     private (int wDip, int hDip) GetLive2DViewportDip()
     {
         int wDip = (int)Math.Max(1, Width - HorizontalAnimationPadding * 2);
@@ -140,10 +200,15 @@ public partial class MainWindow
         return (wDip, hDip);
     }
 
-    private async Task<bool> ActivateLive2DAsync()
+    /// <summary>
+    /// 激活 Live2D。applyUi=true：创建渲染器并切换显示为 Live2D；
+    /// applyUi=false（后台预加载）：创建渲染器并检测参数，但不切换当前可见人物模式（保持 PNG）。
+    /// </summary>
+    private async Task<bool> ActivateLive2DAsync(bool applyUi = true)
     {
         try
         {
+            CancelDialogue("reload_live2d");
             var hwnd = new WindowInteropHelper(this).Handle;
             var modelPath = Live2DInterop.ModelJsonPath;
             AppLog.Info("加载模型: {0}", modelPath);
@@ -161,8 +226,11 @@ public partial class MainWindow
             }
             _live2D = renderer;
 
-            _rendererMode = CharacterRenderMode.Live2D;
-            _switchState = RendererSwitchState.Live2D;
+            if (applyUi)
+            {
+                _rendererMode = CharacterRenderMode.Live2D;
+                _switchState = RendererSwitchState.Live2D;
+            }
 
             var info = new Live2DInterop.AliyaLive2DModelInfo();
             Live2DInterop.AliyaLive2D_GetInfo(_live2D.Handle, out info);
@@ -174,28 +242,47 @@ public partial class MainWindow
             _live2D.SetPhysicsStrength(_physicsStrength);
             _live2D.SetGazeIdleTimeout(_gazeIdleTimeoutSeconds);
             _live2D.SetScale(1.0);
-            _live2D.SetOpacity(0);
             ApplyLive2DRuntimeSettings();
 
-            PetImage.Visibility = Visibility.Collapsed;
-            Live2DImage.Visibility = Visibility.Visible;
-            _live2D.Start();
+            if (applyUi)
+            {
+                _live2D.SetOpacity(0);
+                PetImage.Visibility = Visibility.Collapsed;
+                Live2DImage.Visibility = Visibility.Visible;
+                _live2D.Start();
 
-            _live2D.SetState(CharacterState.Entrance, 0);
-            Live2DImage.BeginAnimation(OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(420))
-                {
-                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-                });
-            await Task.Delay(430);
-            _live2D.SetOpacity(1);
-            _live2D.SetState(CharacterState.Idle, 0);
+                _live2D.SetState(CharacterState.Entrance, 0);
+                Live2DImage.BeginAnimation(OpacityProperty,
+                    new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(420))
+                    {
+                        EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                    });
+                await Task.Delay(430);
+                _live2D.SetOpacity(1);
+                _live2D.SetState(CharacterState.Idle, 0);
 
-            SyncRendererState();
-            _lookAtTimer?.Start();
-            _actionEventTimer?.Start();
+                SyncRendererState();
+                _lookAtTimer?.Start();
+                _actionEventTimer?.Start();
+            }
+
             _live2DLoadFailed = false;
-            AppLog.Info("Live2D 模式已激活");
+            // 模型重载：退出抚摸模式并重置互动参数检测
+            _interaction.OnModelReloaded();
+            // 启动时检测当前模型真实嘴部参数（模型重载后重新检测）
+            _mouthController.ResetDetection();
+            _ = _mouthController.IsAvailable;
+
+            if (applyUi)
+            {
+                AppLog.Info("Live2D 模式已激活");
+                // 等待 Live2D 首帧与布局完成后再定位工具栏
+                InvalidateCharacterLayout();
+            }
+            else
+            {
+                AppLog.Info("Live2D 预加载完成（保持 PNG 模式）");
+            }
             return true;
         }
         catch (Exception ex)
@@ -213,6 +300,7 @@ public partial class MainWindow
     {
         try
         {
+            _interaction.OnModelReloaded();
             _lookAtTimer?.Stop();
             _actionEventTimer?.Stop();
             if (_live2D is not null)
@@ -235,6 +323,8 @@ public partial class MainWindow
             _rendererMode = CharacterRenderMode.Existing;
             _switchState = RendererSwitchState.Existing;
             ApplyPetRunningState();
+            // 切回 PNG 后重新定位工具栏
+            InvalidateCharacterLayout();
             AppLog.Info("已切换回原有模式");
         }
     }
@@ -242,6 +332,8 @@ public partial class MainWindow
     private void DisposeLive2DForExit()
     {
         _appExiting = true;
+        CancelDialogue("app_exit");
+        _mouthRunner?.StopNow();
         _lookAtTimer?.Stop();
         _actionEventTimer?.Stop();
         try
@@ -270,6 +362,9 @@ public partial class MainWindow
 
         try
         {
+            CancelDialogue("switch_render_mode");
+            // 切换模式：结束当前抚摸会话（ModeChanged）
+            _interaction.ExitPettingMode("mode_changed");
             if (mode == CharacterRenderMode.Live2D)
             {
                 if (_live2D is { IsReady: true })
@@ -293,11 +388,16 @@ public partial class MainWindow
                         _actionEventTimer?.Start();
                         SaveSettings();
                         Speak("已切换到 Live2D 模式。");
+                        InvalidateCharacterLayout();
+
+                        ApplyPettingCursorState(_interaction.IsPettingModeActive);
                     }
                     catch (Exception ex)
                     {
                         AppLog.Error("快速切换 Live2D 失败: {0}", ex);
                         DeactivateLive2D();
+
+                        ApplyPettingCursorState(_interaction.IsPettingModeActive);
                     }
                     return;
                 }
@@ -325,17 +425,23 @@ public partial class MainWindow
                     SaveSettings();
                     Speak("Live2D 模式加载失败，已恢复原有模式。");
                 }
+
+                ApplyPettingCursorState(_interaction.IsPettingModeActive);
             }
             else
             {
                 DeactivateLive2D();
                 SaveSettings();
                 Speak("已切换到原有模式。");
+
+                ApplyPettingCursorState(_interaction.IsPettingModeActive);
             }
         }
         finally
         {
             _rendererSwitchLock.Release();
+            // 成功/失败/取消统一恢复工具栏交互状态
+            RestoreToolbarAfterCharacterModeSwitch();
         }
     }
 
@@ -436,6 +542,14 @@ public partial class MainWindow
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_LAYERED = 0x00080000;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
     {
@@ -472,7 +586,10 @@ public partial class MainWindow
     private async Task HandleClickAsync()
     {
         var now = DateTime.UtcNow;
-        if (_lastClickUtc.HasValue && (now - _lastClickUtc.Value).TotalMilliseconds < DoubleClickMilliseconds)
+        // Live2D 模式下取消双击调节人物大小：双击一律按普通单击处理
+        if (_rendererMode != CharacterRenderMode.Live2D
+            && _lastClickUtc.HasValue
+            && (now - _lastClickUtc.Value).TotalMilliseconds < DoubleClickMilliseconds)
         {
             _lastClickUtc = null;
             _pendingClickCancelled = true;
@@ -494,6 +611,12 @@ public partial class MainWindow
         await PlayRandomActionAsync(true);
         if (_rendererMode == CharacterRenderMode.Live2D)
             SyncRendererState();
+
+        // 互动单击（区域反应/连续点击/点击冷却）；冷却或疑惑时不播放常规点击台词
+        var clickCtx = BuildInteractionContext(Mouse.GetPosition(this), pressed: false);
+        bool suppressClickDialogue = _interaction.OnClick(clickCtx, wasDrag: false);
+        if (!suppressClickDialogue)
+            PlayDialogue(UserClickScene);
     }
 
     private void TogglePetSize()
@@ -1062,8 +1185,585 @@ public partial class MainWindow
         DeactivateLive2D();
     }
 
-    // 测试替身：模拟缺失的口型导出符号。
-    // 通过 Live2DCharacterRenderer.SimulateMissingLipSyncExport 触发与真实
+    private async Task RunMouthParamTestAsync()
+    {
+        bool ok = await ActivateLive2DAsync();
+        if (!ok)
+        {
+            AppLog.Error("MOUTH_PARAM_TEST_RESULT FAIL activate_failed");
+            return;
+        }
+        var handler = _live2D;
+        if (handler is null)
+        {
+            AppLog.Error("MOUTH_PARAM_TEST_RESULT FAIL no_renderer");
+            return;
+        }
+
+        var info = handler.GetMouthParamInfo();
+        AppLog.Info("MOUTH_PARAM_TEST_DETECT hasOpenY={0} hasForm={1} openYRange={2:0.###}~{3:0.###} formRange={4:0.###}~{5:0.###}",
+            info.hasOpenY ? 1 : 0, info.hasForm ? 1 : 0, info.openYMin, info.openYMax, info.formMin, info.formMax);
+        if (!info.hasOpenY)
+        {
+            AppLog.Info("MOUTH_PARAM_TEST_RESULT SKIP no_mouth_param");
+            DeactivateLive2D();
+            return;
+        }
+
+        // 写入 0.8 -> 放帧 -> 回读 ParamMouthOpenY 应接近 0.8
+        handler.SetMouthOverride(true, 0.8, 0.0);
+        for (int i = 0; i < 30; i++)
+            handler.Update(1.0 / 60.0);
+        bool readOk = handler.GetParameterValue("ParamMouthOpenY", out double value);
+        AppLog.Info("MOUTH_PARAM_TEST_WRITE readOk={0} value={1:0.###}", readOk, value);
+        bool passWrite = readOk && Math.Abs(value - 0.8) < 0.15;
+
+        // 关闭覆盖 -> 放帧 -> 应回到 0
+        handler.SetMouthOverride(false, 0, 0);
+        for (int i = 0; i < 30; i++)
+            handler.Update(1.0 / 60.0);
+        bool readOk2 = handler.GetParameterValue("ParamMouthOpenY", out double value2);
+        AppLog.Info("MOUTH_PARAM_TEST_CLOSE readOk={0} value={1:0.###}", readOk2, value2);
+        bool passClose = readOk2 && value2 < 0.15;
+
+        AppLog.Info("MOUTH_PARAM_TEST_RESULT {0} write={1} close={2}",
+            passWrite && passClose ? "PASS" : "FAIL", passWrite ? 1 : 0, passClose ? 1 : 0);
+        DeactivateLive2D();
+    }
+
+    private async Task RunDialogueSmokeTestAsync()
+    {
+        await ActivateLive2DAsync();
+
+        var resolved = _dialoguePlayback.ResolveScene(UserClickScene);
+        if (resolved is null)
+        {
+            AppLog.Error("DIALOGUE_SMOKE_RESULT FAIL no_resolved");
+            Close();
+            return;
+        }
+        AppLog.Info("DIALOGUE_SMOKE resolved id={0} pages={1} mouthMs={2} text={3}",
+            resolved.Entry.Id, resolved.Pages.Count, resolved.MouthTotalMilliseconds, resolved.FinalText);
+
+        var cts = new CancellationTokenSource();
+        var playTask = _dialoguePlayback.PlayAsync(resolved, cts.Token);
+        AppLog.Info("DIALOGUE_SMOKE bubble_visible={0} page0={1}",
+            SpeechBubble.Visibility == Visibility.Visible, resolved.Pages[0].Text);
+
+        // 等待完整会话结束（台词时长 + 气泡保留 + 预留缓冲）
+        int waitMs = resolved.MouthTotalMilliseconds + 2000;
+        var completed = await Task.WhenAny(playTask, Task.Delay(Math.Max(3000, waitMs)));
+        bool finished = completed == playTask;
+        AppLog.Info("DIALOGUE_SMOKE finished={0} bubble_visible={1}",
+            finished, SpeechBubble.Visibility == Visibility.Visible);
+
+        // 模拟一次打断：再次播放新台词应正常取消旧会话
+        var cts2 = new CancellationTokenSource();
+        var resolved2 = _dialoguePlayback.ResolveScene(UserClickScene);
+        var playTask2 = resolved2 is null ? null : _dialoguePlayback.PlayAsync(resolved2, cts2.Token);
+        await Task.Delay(300);
+        cts2.Cancel();
+        if (playTask2 is not null)
+        {
+            try { await playTask2; } catch { }
+        }
+        AppLog.Info("DIALOGUE_SMOKE_interrupt ok bubble_visible={0}", SpeechBubble.Visibility == Visibility.Visible);
+
+        // 无嘴型参数（PNG 模式）冒烟：切换回原有模式后播放不应崩溃
+        SetRendererModeAsync(CharacterRenderMode.Existing);
+        await Task.Delay(300);
+        var cts3 = new CancellationTokenSource();
+        var resolved3 = _dialoguePlayback.ResolveScene(UserClickScene);
+        if (resolved3 is not null)
+        {
+            var t3 = _dialoguePlayback.PlayAsync(resolved3, cts3.Token);
+            await Task.Delay(400);
+            cts3.Cancel();
+            try { await t3; } catch { }
+        }
+        AppLog.Info("DIALOGUE_SMOKE_RESULT PASS");
+    }
+
+    /// <summary>工具栏定位验收测试：连续切换 PNG/Live2D 20 次，验证工具栏不漂移、不落到左上角。</summary>
+    /// <summary>
+    /// 猫耳图层割裂严格 A/B 对照测试（--ear-ab-test）：
+    ///   A = 禁用耳朵互动 + 只 Idle/Physics
+    ///   B = 禁用耳朵互动 + 抚摸头部运动（耳朵由 Physics 自然带动）
+    ///   C = 左耳根部固定 +1，右耳禁用
+    ///   D = 右耳根部固定 +1，左耳禁用
+    /// splitObserved 需人工在画面观察记录。
+    /// </summary>
+    /// <summary>
+    /// 人物模式切换验收测试（--mode-switch-test）：
+    /// 启动保持 PNG → 后台预加载完成仍为 PNG → 手动切 Live2D → 切回 PNG → 连续手动切换 20 次。
+    /// </summary>
+    /// <summary>
+    /// 工具栏命中测试（--toolbar-hit-test）：显示工具栏后对 HeadPettingButton /
+    /// CharacterModeButton 中心执行 WPF 命中测试，验证最上层命中元素为按钮自身或其子元素。
+    /// </summary>
+    /// <summary>
+    /// 工具栏输入诊断（--toolbar-input-debug）：PNG / Live2D / 切回 PNG 三种状态下输出
+    /// 窗口扩展样式、按钮中心命中元素、鼠标直上/捕获、按钮父级链、各层 Bounds。
+    /// </summary>
+    private async Task RunToolbarInputDebugAsync()
+    {
+        await Task.Delay(400);
+        LogToolbarInputDiagnostics("PNG");
+
+        SetRendererModeAsync(CharacterRenderMode.Live2D);
+        await WaitForSwitchIdleAsync();
+        await Task.Delay(500);
+        LogToolbarInputDiagnostics("Live2D");
+
+        SetRendererModeAsync(CharacterRenderMode.Existing);
+        await WaitForSwitchIdleAsync();
+        await Task.Delay(500);
+        LogToolbarInputDiagnostics("PNG_after");
+
+        Close();
+    }
+
+    private void LogToolbarInputDiagnostics(string mode)
+    {
+        try
+        {
+            // 窗口扩展样式
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt32();
+            AppLog.Info("WINDOW_EXSTYLE_AUDIT mode={0} exStyle=0x{1:X8} wsExTransparent={2} wsExNoActivate={3} wsExLayered={4}",
+                mode, exStyle, (exStyle & WS_EX_TRANSPARENT) != 0,
+                (exStyle & WS_EX_NOACTIVATE) != 0, (exStyle & WS_EX_LAYERED) != 0);
+
+            // 按钮中心命中（Visual + Input + DirectlyOver）
+            var center = GetElementWindowCenter(HeadPettingButton);
+            var visualHit = VisualTreeHelper.HitTest(this, center)?.VisualHit;
+            var inputHit = this.InputHitTest(center);
+            var over = Mouse.DirectlyOver;
+            AppLog.Info("LIVE2D_TOOLBAR_HIT_TEST button=HeadPettingButton mode={0} windowPoint=({1:0.#},{2:0.#}) visualHit={3} inputHit={4} mouseDirectlyOver={5} originalSource={6} capturedElement={7}",
+                mode, center.X, center.Y, visualHit?.GetType().Name ?? "null",
+                inputHit?.GetType().Name ?? "null", over?.GetType().Name ?? "null",
+                over?.GetType().Name ?? "null", Mouse.Captured?.GetType().Name ?? "null");
+
+            // 父级链
+            LogToolbarParentChain(HeadPettingButton, mode);
+
+            // 各层 Bounds
+            var l2d = Live2DImage.TranslatePoint(new Point(0, 0), this);
+            var tb = ToolbarRect();
+            AppLog.Info("LIVE2D_LAYER_BOUNDS mode={0} live2DImage=({1:0.#},{2:0.#},{3:0.#},{4:0.#}) toolbar=({5:0.#},{6:0.#},{7:0.#},{8:0.#}) bridge=({9:0.#},{10:0.#},{11:0.#},{12:0.#}) bridgeVisible={13}",
+                mode, l2d.X, l2d.Y, Live2DImage.ActualWidth, Live2DImage.ActualHeight,
+                tb.X, tb.Y, tb.Width, tb.Height,
+                Canvas.GetLeft(ToolbarHoverBridge), Canvas.GetTop(ToolbarHoverBridge),
+                ToolbarHoverBridge.ActualWidth, ToolbarHoverBridge.ActualHeight,
+                ToolbarHoverBridge.Visibility);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("TOOLBAR_INPUT_DEBUG_FAILED mode={0} error={1}", mode, ex.Message);
+        }
+    }
+
+    private void LogToolbarParentChain(FrameworkElement el, string mode)
+    {
+        DependencyObject? current = el;
+        var sb = new System.Text.StringBuilder();
+        while (current != null)
+        {
+            var fe = current as FrameworkElement;
+            var ui = current as UIElement;
+            int z = current is UIElement uiEl ? Panel.GetZIndex(uiEl) : 0;
+            sb.Append($"[{fe?.Name ?? "?"}|{current.GetType().Name}] vis={fe?.Visibility} op={fe?.Opacity:0.##} en={ui?.IsEnabled} hit={ui?.IsHitTestVisible} z={z} w={fe?.ActualWidth:0.#} h={fe?.ActualHeight:0.#}; ");
+            current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+        }
+        AppLog.Info("LIVE2D_TOOLBAR_PARENT_CHAIN mode={0} {1}", mode, sb);
+    }
+
+    /// <summary>
+    /// 抚摸会话验收测试（--petting-session-test）：
+    /// 进入抚摸 → 闭眼 → 移出容错区 → Finishing → 睁眼恢复 → Armed；
+    /// 连续 20 次移出操作后眼睛必须恢复睁开（不残留闭眼）。
+    /// </summary>
+    private async Task RunPettingSessionTestAsync()
+    {
+        await ActivateLive2DAsync();
+        await Task.Delay(300);
+        _interaction.TogglePettingMode();
+        // 主流程：停止安全兜底（合成事件未真实按下鼠标，兜底会立即误判左键松开）
+        _pettingSafetyTimer?.Stop();
+
+        // 1. 按下 head zone
+        bool down = _interaction.OnPointerDown(MakeCtx(new Point(0.5, 0.15)));
+        AppLog.Info("PETTING_TEST down={0} state={1}", down, _interaction.HeadPetting.State);
+        if (!down)
+            AppLog.Error("PETTING_TEST_RESULT FAIL down");
+
+        // 2. 左右往返移动（反转）形成 Petting
+        double px = 200;
+        for (int i = 0; i < 6; i++) { px += 10; _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, px, 200)); }
+        for (int i = 0; i < 6; i++) { px -= 10; _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, px, 200)); }
+        for (int i = 0; i < 6; i++) { px += 10; _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, px, 200)); }
+        AppLog.Info("PETTING_TEST after move state={0}", _interaction.HeadPetting.State);
+        await Task.Delay(500);
+
+        // 2.5 头部应有明显转动（持续移动保持运动目标，让头部跟上后读取）
+        for (int k = 0; k < 6; k++)
+        {
+            px += 10;
+            _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, px, 200));
+            await Task.Delay(40);
+        }
+        _live2D!.GetParameterValue("ParamAngleX", out double headX);
+        AppLog.Info("PETTING_TEST headAngleX={0:0.##}（期望 |v| >= 1.5，持续移动有明显反馈）", headX);
+        bool headOk = Math.Abs(headX) >= 1.5 && Math.Abs(headX) <= 8.5;
+
+        // 3. 眼睛应闭合（等待闭合到位）
+        await Task.Delay(600);
+        _live2D.GetParameterValue("ParamEyeLOpen", out double closed);
+        AppLog.Info("PETTING_TEST eyes_closed_value={0:0.##}（<0.2 视为闭合）", closed);
+        bool closedOk = closed < 0.2;
+
+        // 4. 移出容错区 → 应立即进入 Finishing 并睁眼恢复
+        CheckPettingToleranceExit(new Point(-200, -200));
+        AppLog.Info("PETTING_TEST after exit state={0}（期望 Finishing）", _interaction.HeadPetting.State);
+        bool exitOk = _interaction.HeadPetting.State == PettingState.Finishing;
+
+        // 5. 等待睁眼恢复完成 → Armed
+        await Task.Delay(900);
+        AppLog.Info("PETTING_TEST after finish state={0}（期望 Armed）", _interaction.HeadPetting.State);
+        _live2D.GetParameterValue("ParamEyeLOpen", out double opened);
+        AppLog.Info("PETTING_TEST eyes_opened_value={0:0.##}（>0.8 视为睁开）", opened);
+        bool openedOk = opened > 0.8;
+
+        // 6. 连续 20 次移出操作，最终眼睛必须睁开
+        for (int i = 1; i <= 20; i++)
+        {
+            _interaction.HeadPetting.OnPointerDown(MakeCtx(new Point(0.5, 0.15)));
+            for (int j = 0; j < 4; j++)
+                _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, 240, 200));
+            CheckPettingToleranceExit(new Point(-200, -200));
+            await Task.Delay(700);
+        }
+        _live2D.GetParameterValue("ParamEyeLOpen", out double finalEye);
+        AppLog.Info("PETTING_TEST final_eye={0:0.##} state={1}", finalEye, _interaction.HeadPetting.State);
+        bool noResidual = finalEye > 0.8 && _interaction.HeadPetting.State != PettingState.Petting;
+
+        // 7. 单独验证安全兜底：合成按下但真实鼠标未按 → 兜底应在 150ms 内结束会话
+        _pettingSafetyTimer?.Start();
+        _interaction.HeadPetting.OnPointerDown(MakeCtx(new Point(0.5, 0.15)));
+        await Task.Delay(400);
+        AppLog.Info("PETTING_TEST safety state={0}（期望 Finishing/Armed，兜底结束）", _interaction.HeadPetting.State);
+        bool safetyOk = _interaction.HeadPetting.State is PettingState.Finishing or PettingState.Armed;
+
+        bool pass = closedOk && exitOk && openedOk && noResidual && headOk && safetyOk;
+        AppLog.Info("PETTING_TEST_RESULT {0} headOk={1} closedOk={2} exitOk={3} openedOk={4} noResidual={5} safetyOk={6}",
+            pass ? "PASS" : "FAIL", headOk, closedOk, exitOk, openedOk, noResidual, safetyOk);
+        Close();
+    }
+
+    private async Task RunToolbarHitTestAsync()
+    {
+        await Task.Delay(400);
+        ShowQuickActions();
+        await Task.Delay(400);
+
+        var tb = ToolbarRect();
+        AppLog.Info("TOOLBAR_LAYOUT_STATE toolbarBounds={0} visibility={1} opacity={2} hitTest={3} enabled={4} toolbarZ={5}",
+            tb, HoverQuickActions.Visibility, HoverQuickActions.Opacity,
+            HoverQuickActions.IsHitTestVisible, HoverQuickActions.IsEnabled,
+            Panel.GetZIndex(HoverQuickActions));
+
+        // HeadPettingButton 中心命中
+        var center = GetElementWindowCenter(HeadPettingButton);
+        var hit = VisualTreeHelper.HitTest(this, center);
+        var el = hit?.VisualHit as FrameworkElement;
+        AppLog.Info("TOOLBAR_HIT_TEST point={0} hitElement={1} elementType={2} elementName={3} isHitTestVisible={4} zIndex={5}",
+            center, el?.GetType().Name ?? "null", el?.GetType().FullName ?? "",
+            el?.Name ?? "", el is UIElement ui && ui.IsHitTestVisible, Panel.GetZIndex(el ?? this));
+
+        bool pass = el is not null && FindToolbarAncestor(el);
+        AppLog.Info("TOOLBAR_HIT_TEST_RESULT {0} headPetting={1}",
+            pass ? "PASS" : "FAIL", pass);
+        Close();
+    }
+
+    private bool FindToolbarAncestor(DependencyObject? source)
+    {
+        DependencyObject? current = source;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, HoverQuickActions))
+                return true;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return false;
+    }
+
+    private static Point GetElementWindowCenter(FrameworkElement el)
+    {
+        double x = el.ActualWidth > 0 ? el.ActualWidth / 2 : 0;
+        double y = el.ActualHeight > 0 ? el.ActualHeight / 2 : 0;
+        return el.TranslatePoint(new Point(x, y), Application.Current.MainWindow);
+    }
+
+    private async Task RunModeSwitchTestAsync()
+    {
+        // 1. 启动后应为 PNG
+        AppLog.Info("MODE_TEST start mode={0}（期望 Existing）", _rendererMode);
+        if (_rendererMode != CharacterRenderMode.Existing)
+            AppLog.Error("MODE_TEST_RESULT FAIL start_not_png");
+        await Task.Delay(400);
+
+        // 2. 等待后台预加载完成，模式应仍为 PNG（不自动切换）
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        while (_live2D is null && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        bool preloaded = _live2D is { IsReady: true };
+        AppLog.Info("MODE_TEST preload done live2DReady={0} mode={1}（期望仍 Existing）", preloaded, _rendererMode);
+        if (preloaded && _rendererMode != CharacterRenderMode.Existing)
+            AppLog.Error("MODE_TEST_RESULT FAIL preload_switched");
+
+        // 3. 手动切 Live2D
+        AppLog.Info("MODE_TEST before_live2d live2D={0} ready={1} loadFailed={2}",
+            _live2D != null, _live2D?.IsReady ?? false, _live2DLoadFailed);
+        SetRendererModeAsync(CharacterRenderMode.Live2D);
+        await WaitForSwitchIdleAsync();
+        await Task.Delay(500);
+        AppLog.Info("MODE_TEST toLive2D mode={0}", _rendererMode);
+        if (_rendererMode != CharacterRenderMode.Live2D)
+            AppLog.Error("MODE_TEST_RESULT FAIL manual_switch_live2d");
+
+        // 4. 切回 PNG
+        SetRendererModeAsync(CharacterRenderMode.Existing);
+        await WaitForSwitchIdleAsync();
+        await Task.Delay(500);
+        AppLog.Info("MODE_TEST toPng mode={0}", _rendererMode);
+        if (_rendererMode != CharacterRenderMode.Existing)
+            AppLog.Error("MODE_TEST_RESULT FAIL manual_switch_png");
+
+        // 5. 连续手动切换 20 次（每轮往返），切换完成后工具栏必须位于人物下方且不落在左上角
+        //    先标准化窗口尺寸，避免历史 settings 缩放过小导致工具栏居中超界 clamp
+        SetPetSize(300);
+        await Task.Delay(400);
+        bool stable = true;
+        for (int i = 1; i <= 20; i++)
+        {
+            SetRendererModeAsync(i % 2 == 1 ? CharacterRenderMode.Live2D : CharacterRenderMode.Existing);
+            await WaitForSwitchIdleAsync();
+            await Task.Delay(400);
+            var expected = i % 2 == 1 ? CharacterRenderMode.Live2D : CharacterRenderMode.Existing;
+            if (_rendererMode != expected)
+            {
+                stable = false;
+                AppLog.Error("MODE_TEST_RESULT FAIL round_{0} mode={1} expected={2}", i, _rendererMode, expected);
+            }
+            var bounds = GetCharacterVisualBounds();
+            double left = Canvas.GetLeft(HoverQuickActions);
+            double top = Canvas.GetTop(HoverQuickActions);
+            if (!IsValidBounds(bounds))
+            {
+                stable = false;
+                AppLog.Error("MODE_TEST_RESULT FAIL round_{0} bounds_invalid", i);
+                continue;
+            }
+            double expectedLeft = bounds.Left + bounds.Width / 2 - DefaultToolbarWidth / 2;
+            double expectedTop = bounds.Top + bounds.Height + ToolbarGap;
+            bool atOrigin = left < 1 && top < 1;                          // 飞到左上角 (0,0)
+            if (atOrigin || Math.Abs(left - expectedLeft) > 10 || Math.Abs(top - expectedTop) > 10)
+            {
+                stable = false;
+                AppLog.Error("MODE_TEST_RESULT FAIL round_{0} toolbar=({1:0.#},{2:0.#}) expected=({3:0.#},{4:0.#}) atOrigin={5}",
+                    i, left, top, expectedLeft, expectedTop, atOrigin);
+            }
+        }
+        AppLog.Info("MODE_TEST_RESULT {0}", stable ? "PASS" : "FAIL");
+        Close();
+    }
+
+    private async Task RunEarAbTestAsync()
+    {
+        await ActivateLive2DAsync();
+        await Task.Delay(300);
+        var info = _live2D!.GetInteractionParamInfo();
+        string leftRoot = info.hasLeftEarRoot ? "Param_Angle_Rotation_1_CAT_Ear_L" : "(none)";
+        string rightRoot = info.hasRightEarRoot ? "Param_Angle_Rotation_1_CAT_Ear_R" : "(none)";
+
+        // Test A：禁用耳朵 + 只 Idle/Physics，观察 5 秒
+        _live2D.SetEarInteraction(false, 0, 0);
+        AppLog.Info("EAR_SPLIT_AB_TEST test=A earInteractionEnabled=false headInteractionEnabled=false leftRootParam={0} rightRootParam={1} splitObserved=CHECK",
+            leftRoot, rightRoot);
+        await Task.Delay(5000);
+
+        // Test B：禁用耳朵 + 抚摸头部运动 5 秒（左右摆动），耳朵由原 Physics 带动
+        _interaction.TogglePettingMode();
+        var zone = new Point(0.5, 0.15);
+        _interaction.OnPointerDown(MakeCtx(zone));
+        double px = 200;
+        for (int i = 0; i < 60; i++)
+        {
+            px += 10;
+            _interaction.OnPointerMove(MakeCtxViewport(0.5, 0.15, px, 200));
+            if (i % 30 == 0)
+                AppLog.Info("EAR_SPLIT_AB_TEST test=B earInteractionEnabled=false headInteractionEnabled=true leftRootParam={0} rightRootParam={1} headVel={2:0.#} splitObserved=CHECK",
+                    leftRoot, rightRoot, _interaction.SmoothedVelocityXPxPerSec);
+            await Task.Delay(40);
+        }
+        _interaction.OnPointerUp(MakeCtx(zone));
+        await Task.Delay(1000);
+        AppLog.Info("EAR_SPLIT_AB_TEST test=B earInteractionEnabled=false headInteractionEnabled=true leftRootParam={0} rightRootParam={1} splitObserved=CHECK",
+            leftRoot, rightRoot);
+
+        // Test C：左耳根部固定 +1（不随速度变化），右耳禁用
+        _live2D.SetEarInteraction(true, 1.0, 0);
+        AppLog.Info("EAR_SPLIT_AB_TEST test=C earInteractionEnabled=true(head_left=+1) headInteractionEnabled=false leftRootParam={0} rightRootParam={1} splitObserved=CHECK",
+            leftRoot, rightRoot);
+        await Task.Delay(5000);
+        _live2D.SetEarInteraction(false, 0, 0);
+
+        // Test D：右耳根部固定 +1，左耳禁用
+        _live2D.SetEarInteraction(true, 0, 1.0);
+        AppLog.Info("EAR_SPLIT_AB_TEST test=D earInteractionEnabled=true(head_right=+1) headInteractionEnabled=false leftRootParam={0} rightRootParam={1} splitObserved=CHECK",
+            leftRoot, rightRoot);
+        await Task.Delay(5000);
+        _live2D.SetEarInteraction(false, 0, 0);
+
+        // 恢复：退出抚摸并回到禁用耳朵状态
+        _interaction.OnEsc();
+        AppLog.Info("EAR_SPLIT_AB_TEST_RESULT done（请人工核对各阶段 splitObserved）");
+        Close();
+    }
+
+    private async Task RunToolbarPlacementTestAsync()
+    {
+        // 确保从 PNG 模式开始
+        if (_rendererMode == CharacterRenderMode.Live2D)
+        {
+            SetRendererModeAsync(CharacterRenderMode.Existing);
+            await WaitForSwitchIdleAsync();
+            await Task.Delay(300);
+        }
+        await Task.Delay(400);
+
+        var pngBounds = GetCharacterVisualBounds();
+        double pngLeft = Canvas.GetLeft(HoverQuickActions);
+        double pngTop = Canvas.GetTop(HoverQuickActions);
+        AppLog.Info("TOOLBAR_TEST png_bounds={0} toolbar=({1:0.#},{2:0.#})", pngBounds, pngLeft, pngTop);
+        if (!IsValidBounds(pngBounds))
+            AppLog.Error("TOOLBAR_TEST_RESULT FAIL png_bounds_invalid");
+
+        bool stable = true;
+        double firstLiveLeft = double.NaN, firstLiveTop = double.NaN;
+        for (int i = 1; i <= 20; i++)
+        {
+            SetRendererModeAsync(CharacterRenderMode.Live2D);
+            await WaitForSwitchIdleAsync();
+            await Task.Delay(250);
+            var b = GetCharacterVisualBounds();
+            double left = Canvas.GetLeft(HoverQuickActions);
+            double top = Canvas.GetTop(HoverQuickActions);
+            AppLog.Info("TOOLBAR_TEST round={0} live_bounds={1} toolbar=({2:0.#},{3:0.#})", i, b, left, top);
+            if (!IsValidBounds(b))
+            {
+                stable = false;
+                AppLog.Error("TOOLBAR_TEST_RESULT FAIL round_{0}_bounds_invalid", i);
+            }
+            if (!double.IsFinite(left) || !double.IsFinite(top) || left < -1 || top < -1)
+            {
+                stable = false;
+                AppLog.Error("TOOLBAR_TEST_RESULT FAIL round_{0}_pos_at_origin", i);
+            }
+            if (i == 1)
+            {
+                firstLiveLeft = left;
+                firstLiveTop = top;
+            }
+            else if (double.IsFinite(firstLiveLeft)
+                     && (Math.Abs(left - firstLiveLeft) > 2 || Math.Abs(top - firstLiveTop) > 2))
+            {
+                stable = false;
+                AppLog.Error("TOOLBAR_TEST_RESULT FAIL round_{0}_drift delta=({1:0.#},{2:0.#})",
+                    i, left - firstLiveLeft, top - firstLiveTop);
+            }
+
+            SetRendererModeAsync(CharacterRenderMode.Existing);
+            await WaitForSwitchIdleAsync();
+            await Task.Delay(250);
+            var pb = GetCharacterVisualBounds();
+            if (!IsValidBounds(pb))
+            {
+                stable = false;
+                AppLog.Error("TOOLBAR_TEST_RESULT FAIL round_{0}_png_bounds_invalid", i);
+            }
+        }
+
+        AppLog.Info("TOOLBAR_TEST_RESULT {0}", stable ? "PASS" : "FAIL");
+        Close();
+    }
+
+    private async Task RunInteractionSmokeTestAsync()
+    {
+        await ActivateLive2DAsync();
+        await Task.Delay(200);
+
+        // 1. 进入抚摸模式
+        _interaction.TogglePettingMode();
+        bool armed = _interaction.HeadPetting.State == PettingState.Armed;
+        AppLog.Info("INTERACTION_SMOKE enter armed={0} cursorVisible={1}", armed, PettingPalmCursor.Visibility == Visibility.Visible);
+        if (!armed)
+            AppLog.Error("INTERACTION_SMOKE_RESULT FAIL enter");
+
+        // 2. 头区域按下 → 移动（抚摸）→ 松开
+        var headZone = new Point(0.5, 0.15); // head_pet_zone 中心（归一化）
+        bool downConsumed = _interaction.OnPointerDown(MakeCtx(headZone));
+        bool pressed = _interaction.HeadPetting.State == PettingState.Pressed;
+        AppLog.Info("INTERACTION_SMOKE down consumed={0} state={1}", downConsumed, _interaction.HeadPetting.State);
+        if (!downConsumed || !pressed)
+            AppLog.Error("INTERACTION_SMOKE_RESULT FAIL down");
+
+        // 左右往返抚摸
+        double px = 200;
+        for (int i = 0; i < 4; i++) { px += 10; _interaction.OnPointerMove(MakeCtxViewport(headZone.X, headZone.Y, px, 200)); }
+        for (int i = 0; i < 4; i++) { px -= 10; _interaction.OnPointerMove(MakeCtxViewport(headZone.X, headZone.Y, px, 200)); }
+        for (int i = 0; i < 4; i++) { px += 10; _interaction.OnPointerMove(MakeCtxViewport(headZone.X, headZone.Y, px, 200)); }
+        bool petting = _interaction.HeadPetting.State == PettingState.Petting;
+        AppLog.Info("INTERACTION_SMOKE move state={0} vel={1:0.#}", _interaction.HeadPetting.State, _interaction.SmoothedVelocityXPxPerSec);
+        if (!petting)
+            AppLog.Error("INTERACTION_SMOKE_RESULT FAIL petting_state");
+
+        bool upConsumed = _interaction.OnPointerUp(MakeCtx(headZone));
+        AppLog.Info("INTERACTION_SMOKE up consumed={0} state={1}", upConsumed, _interaction.HeadPetting.State);
+
+        await Task.Delay(700); // 等待 Finishing → Armed
+        AppLog.Info("INTERACTION_SMOKE finish state={0}", _interaction.HeadPetting.State);
+
+        // 3. 身体区域按下不接管（不得误判抚摸）
+        bool bodyConsumed = _interaction.OnPointerDown(MakeCtx(new Point(0.5, 0.80)));
+        AppLog.Info("INTERACTION_SMOKE body down consumed={0}", bodyConsumed);
+        if (bodyConsumed)
+            AppLog.Error("INTERACTION_SMOKE_RESULT FAIL body_press");
+        _interaction.OnPointerUp(MakeCtx(new Point(0.5, 0.80)));
+
+        // 4. Esc 退出
+        _interaction.OnEsc();
+        bool inactive = _interaction.HeadPetting.State == PettingState.Inactive;
+        AppLog.Info("INTERACTION_SMOKE esc inactive={0} cursorVisible={1}", inactive, PettingPalmCursor.Visibility == Visibility.Visible);
+        if (!inactive)
+            AppLog.Error("INTERACTION_SMOKE_RESULT FAIL esc");
+
+        // 5. 抚摸台词可解析
+        var startDialogue = _dialoguePlayback.ResolveSceneTag("head_petting", "petting_start");
+        AppLog.Info("INTERACTION_SMOKE dialogue_start resolved={0} pages={1}",
+            startDialogue != null, startDialogue?.Pages.Count ?? -1);
+
+        bool pass = armed && pressed && petting && upConsumed && !bodyConsumed && inactive && startDialogue != null;
+        AppLog.Info("INTERACTION_SMOKE_RESULT {0}", pass ? "PASS" : "FAIL");
+    }
+
+    private static InteractionContext MakeCtx(Point norm) => new(norm.X, norm.Y, norm.X * 400, norm.Y * 400, 0.033, true);
+
+    private static InteractionContext MakeCtxViewport(double nx, double ny, double px, double py)
+        => new(nx, ny, px, py, 0.033, true);
+
+    // 测试替身：模拟缺失的口型导出符号。    // 通过 Live2DCharacterRenderer.SimulateMissingLipSyncExport 触发与真实
     // EntryPointNotFoundException 相同的托管容错路径，验证口型缺失不影响
     // 模式切换、气泡与台词。
     private async Task RunLipSyncMissingExportTestAsync()
@@ -2401,6 +3101,7 @@ public partial class MainWindow
         DeactivateLive2D();
     }
 }
+
 
 
 

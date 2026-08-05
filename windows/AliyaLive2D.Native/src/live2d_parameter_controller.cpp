@@ -971,6 +971,12 @@ void Live2DParameterController::UpdateGaze(CubismModel* model, float delta)
         targetHeadWeight = 0.0f;
         targetBodyWeight = 0.0f;
     }
+    // 抚摸期间降低 LookAt 权重（避免抵消抚摸头部转动；闭眼时眼珠权重无需保留）
+    if (pettingLookAtReduction_)
+    {
+        targetHeadWeight *= 0.25f;   // HeadLookAtWeight ≈ 0.25
+        targetBodyWeight *= 0.50f;
+    }
     headGazeWeight_ = Lerp(headGazeWeight_, targetHeadWeight, weightLerp);
     bodyGazeWeight_ = Lerp(bodyGazeWeight_, targetBodyWeight, weightLerp);
 
@@ -1153,6 +1159,9 @@ void Live2DParameterController::RecoverBlinkSafe()
 
 void Live2DParameterController::UpdateBlink(CubismModel* model, float delta)
 {
+    if (eyeOverrideActive_)
+        return; // 互动眼覆盖（抚摸闭眼）期间：自动眨眼与卡死检测全部暂停
+
     if (!blinkEnabled_)
         return;
 

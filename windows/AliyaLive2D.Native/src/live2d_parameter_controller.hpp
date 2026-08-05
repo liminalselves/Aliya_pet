@@ -178,6 +178,13 @@ public:
     void SetLipSyncValue(float value);
     void SetPaused(bool paused);
     bool IsPaused() const { return paused_; }
+    // 互动眼覆盖激活时暂停自动眨眼（抚摸闭眼用）：UpdateBlink 直接跳过，
+    // 卡死检测同步暂停，避免把互动闭眼误判为卡死强行睁开。
+    void SetEyeOverrideActive(bool active) { eyeOverrideActive_ = active; }
+    bool EyeOverrideActive() const { return eyeOverrideActive_; }
+    // 抚摸期间降低 LookAt 对头部/身体角度权重，避免 LookAt 抵消抚摸转动
+    void SetPettingLookAtReduction(bool enabled) { pettingLookAtReduction_ = enabled; }
+    bool PettingLookAtReduction() const { return pettingLookAtReduction_; }
 
     // ---- 眨眼控制（诊断 / 测试）----
     void ForceBlink();
@@ -389,6 +396,12 @@ private:
     float breathNextMax_ = 0.85f;
 
     bool paused_ = false;
+
+    // 互动眼覆盖（抚摸闭眼期间为 true，自动眨眼跳过）
+    bool eyeOverrideActive_ = false;
+
+    // 抚摸期间 LookAt 头部/身体权重降低（避免抵消抚摸转动）
+    bool pettingLookAtReduction_ = false;
 
     // ---- Live2D 动作库 ----
     Live2DActionLibrary actionLibrary_;

@@ -12,12 +12,17 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using System.Windows.Interop;
+using AliyaPet.Models.Dialogue;
 using AliyaPet.Rendering;
+using AliyaPet.Services.Dialogue;
+using AliyaPet.Services.Mouth;
+using AliyaPet.Services.Interaction;
+using AliyaPet.Models.Interaction;
 using Windows.Devices.Geolocation;
 
 namespace AliyaPet;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IDialogueDisplay, IPettingDialogueHost
 {
     private const double DragThreshold = 5;
     private const double EdgeSnapThreshold = 160;
@@ -33,6 +38,9 @@ public partial class MainWindow : Window
     private const int DefaultRandomSpeechIntervalMinutes = 15;
     private const string AliyaCharacter = "Aliya";
     private const string WindyCharacter = "Windy";
+    private const string UserClickScene = "user_click";
+    /// <summary>自定义抚摸指针开关：当前禁用（只显示普通 Windows 鼠标，不显示任何手掌/抚摸覆盖图标）。</summary>
+    private static readonly bool UseCustomPettingCursor = false;
     private readonly DispatcherTimer _idleTimer;
     private readonly DispatcherTimer _speechTimer;
     private readonly DispatcherTimer _randomSpeechTimer;
@@ -42,7 +50,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _blinkTimer;
     private readonly DispatcherTimer _openEyesTimer;
     private readonly Random _random = new();
-    private readonly Queue<string> _aliyaClickBag = new();
     private readonly MediaPlayer _touchSoundPlayer = new();
     private static readonly HttpClient WeatherClient = new()
     {
@@ -81,21 +88,23 @@ public partial class MainWindow : Window
     private string? _weatherGreeting;
     private DateTime _weatherUpdatedAt;
 
-    private readonly string[] _generalPhrases =
-    {
-        "今天也要认真工作呀。",
-        "COSMOS 正在待命。",
-        "要记得休息一下。",
-        "我会一直陪着你。",
-        "点击我会做随机动作。",
-        "双击可以改变大小。",
-        "拖动后我会贴近屏幕边缘。",
-        "桌面宠物已连接。",
-        "任务完成后也要休息一下。",
-        "要不要一起发会儿呆？"
-    };
-    private readonly string[] _aliyaClickPhrases;
-    private readonly Dictionary<GreetingPeriod, string[]> _timeGreetingPhrases;
+    // ---- 台词与嘴型服务 ----
+    private DialogueRepository _dialogueRepository = null!;
+    private TimeSceneService _timeSceneService = null!;
+    private DialogueVariableService _dialogueVariables = null!;
+    private DialogueSelectionService _dialogueSelection = null!;
+    private DialoguePaginationService _dialoguePagination = null!;
+    private DialoguePlaybackService _dialoguePlayback = null!;
+    private PinyinMouthMapper _pinyinMapper = null!;
+    private TextMouthTimelineBuilder _mouthTimelineBuilder = null!;
+    private Live2DMouthController _mouthController = null!;
+    private MouthAnimationRunner _mouthRunner = null!;
+    private CancellationTokenSource? _dialogueCts;
+
+    // ---- 人物互动 ----
+    private InteractionService _interaction = null!;
+    private double _palmRotateCurrent;
+    private DispatcherTimer? _pettingSafetyTimer;
 
     private sealed class PetSettings
     {
@@ -146,12 +155,13 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             AppContext.BaseDirectory,
             "Assets",
             "pet_touch.wav");
-        _aliyaClickPhrases = LoadAliyaClickPhrases();
-        _timeGreetingPhrases = LoadTimeGreetingPhrases();
-
+        InitializeDialogueServices();
         Loaded += MainWindow_Loaded;
         Closing += (_, _) =>
         {
+            _interaction.OnWindowClosed();
+            CancelDialogue("app_closing");
+            _mouthRunner?.StopNow();
             SaveSettings();
             _touchSoundPlayer.Close();
             DisposeLive2DForExit();
@@ -172,18 +182,20 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         {
             _randomSpeechTimer.Stop();
             if (_petRunning && _randomSpeechEnabled && !_dragging && !_actionRunning)
-                SpeakGeneralRandom();
+                PlayDialogueRandom();
             ScheduleNextRandomSpeech();
         };
 
         _greetingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _greetingTimer.Tick += async (_, _) => await CheckScheduledGreetingAsync();
 
-        _hoverHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
+        _hoverHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ToolbarHideDelayMilliseconds) };
         _hoverHideTimer.Tick += (_, _) =>
         {
             _hoverHideTimer.Stop();
-            HideQuickActions();
+            // 只有倒计时结束且鼠标不在任何相关区域时才隐藏工具栏
+            if (!IsPointerInsideToolbarInteractionRegion() && !IsToolbarPinned())
+                HideQuickActions();
         };
 
         _openEyesTimer = new DispatcherTimer
@@ -228,6 +240,455 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             ScheduleNextAutoAction();
         };
         InitializeLive2D();
+    }
+
+    /// <summary>初始化台词与嘴型服务（相对路径加载 Assets/dialogue 全部 JSON）。</summary>
+    private void InitializeDialogueServices()
+    {
+        _timeSceneService = new TimeSceneService();
+
+        _dialogueRepository = new DialogueRepository();
+        _dialogueRepository.LoadFromDirectory(Path.Combine(
+            AppContext.BaseDirectory, "Assets", "dialogue"));
+
+        _dialogueVariables = new DialogueVariableService(_timeSceneService);
+        _dialogueSelection = new DialogueSelectionService(_dialogueRepository);
+        _dialoguePagination = new DialoguePaginationService();
+
+        _pinyinMapper = new PinyinMouthMapper();
+        _mouthTimelineBuilder = new TextMouthTimelineBuilder(_pinyinMapper);
+        _mouthController = new Live2DMouthController(() => _live2D);
+        _mouthRunner = new MouthAnimationRunner(_mouthController);
+
+        _dialoguePlayback = new DialoguePlaybackService(
+            _dialogueRepository,
+            _dialogueSelection,
+            _dialogueVariables,
+            _dialoguePagination,
+            _mouthTimelineBuilder,
+            _mouthRunner,
+            this);
+
+        InitializeInteractionServices();
+    }
+
+    /// <summary>初始化人物互动服务（区域识别/手势/台词与参数动画统一入口）。</summary>
+    private void InitializeInteractionServices()
+    {
+        var hitArea = new HitAreaService();
+        var clickSequence = new ClickSequenceService();
+        var proximity = new PointerProximityService();
+        var longPress = new LongPressService();
+        var dragReaction = new DragReactionService();
+        var stateService = new InteractionStateService();
+        var recognizer = new PettingGestureRecognizer();
+        var reaction = new PettingReactionController(() => _live2D);
+        var procedural = new ProceduralReactionService(
+            () => _live2D,
+            () => _interaction is not null && _interaction.IsPettingModeActive,
+            PlayCharacterAction);
+        var headPetting = new HeadPettingService(
+            hitArea, recognizer, reaction, stateService, _dialoguePlayback, this);
+
+        _interaction = new InteractionService(
+            hitArea, clickSequence, proximity, longPress, dragReaction, headPetting, reaction, procedural, stateService);
+
+        _interaction.PlayClickDialogue = () => PlayDialogue(UserClickScene);
+        _interaction.IsDialogueActive = () => _dialogueCts is not null;
+        _interaction.PettingModeChanged += OnPettingModeChanged;
+        _interaction.Initialize(Path.Combine(AppContext.BaseDirectory, "Assets"));
+
+        // 抚摸会话结束统一处理：释放人物层捕获 + 更新光标
+        headPetting.SessionEnded += _ =>
+        {
+            if (Mouse.Captured is not null
+                && (ReferenceEquals(Mouse.Captured, PetImage) || ReferenceEquals(Mouse.Captured, Live2DImage)))
+            {
+                Mouse.Capture(null);
+            }
+            ApplyPettingCursorByState();
+        };
+
+        // 窗口失焦 / Alt+Tab：结束抚摸会话，防止永久闭眼
+        Deactivated += (_, _) =>
+            headPetting.EndPettingSession(PettingEndReason.WindowDeactivated);
+
+        // 鼠标捕获丢失（系统夺走 / 异常）：自动恢复
+        PetImage.LostMouseCapture += (_, _) =>
+            headPetting.EndPettingSession(PettingEndReason.LostCapture);
+        Live2DImage.LostMouseCapture += (_, _) =>
+            headPetting.EndPettingSession(PettingEndReason.LostCapture);
+
+        // 安全兜底：低频检查左键已松开/捕获丢失/窗口失活/无手势样本超时，避免永久闭眼
+        _pettingSafetyTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _pettingSafetyTimer.Tick += (_, _) => CheckPettingSafety();
+        _pettingSafetyTimer.Start();
+
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+                _interaction.OnEsc();
+        };
+
+        // 加载并缓存抚摸模式光标（HeadPettingGrabbing.cur，Bibata 中等档）
+        LoadHeadPettingCursor();
+    }
+
+    /// <summary>取消当前台词会话（再次点击/新时间问候/切换角色/重载 Live2D/关闭时调用）。</summary>
+    private void CancelDialogue(string reason)
+    {
+        if (_dialogueCts is not null)
+        {
+            AppLog.Info("PLAYBACK_CANCEL reason={0}", reason);
+            _dialogueCts.Cancel();
+        }
+        _mouthRunner?.StopNow();
+    }
+
+    private async void PlayDialogue(string scene)
+    {
+        CancelDialogue("new_session:" + scene);
+        var cts = new CancellationTokenSource();
+        _dialogueCts = cts;
+        try
+        {
+            var resolved = _dialoguePlayback.ResolveScene(scene);
+            if (resolved is not null)
+                await _dialoguePlayback.PlayAsync(resolved, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("DIALOGUE_PLAY_START_FAILED scene={0} error={1}", scene, ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_dialogueCts, cts))
+            {
+                _dialogueCts = null;
+                cts.Dispose();
+            }
+        }
+    }
+
+    private async void PlayDialogueRandom()
+    {
+        CancelDialogue("new_session:random");
+        var cts = new CancellationTokenSource();
+        _dialogueCts = cts;
+        try
+        {
+            var resolved = _dialoguePlayback.ResolveRandom();
+            if (resolved is not null)
+                await _dialoguePlayback.PlayAsync(resolved, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("DIALOGUE_PLAY_RANDOM_FAILED error={0}", ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_dialogueCts, cts))
+            {
+                _dialogueCts = null;
+                cts.Dispose();
+            }
+        }
+    }
+
+    /// <summary>气泡显示实现（供 DialoguePlaybackService 调用）。</summary>
+    private void ShowSpeechPage(string pageText)
+    {
+        _speechTimer.Stop();
+        SpeechText.Text = pageText;
+        SpeechBubble.Visibility = Visibility.Visible;
+    }
+
+    private void HideSpeechBubble()
+    {
+        _speechTimer.Stop();
+        SpeechBubble.Visibility = Visibility.Collapsed;
+    }
+
+    // ---- IDialogueDisplay ----
+    void IDialogueDisplay.ShowPage(string pageText) => ShowSpeechPage(pageText);
+
+    void IDialogueDisplay.HideBubble() => HideSpeechBubble();
+
+    // ---- IPettingDialogueHost ----
+    bool IPettingDialogueHost.IsDialogueActive => _dialogueCts is not null;
+
+    void IPettingDialogueHost.PlayPettingDialogue(ResolvedDialogue resolved)
+    {
+        if (resolved is null)
+            return;
+        CancelDialogue("petting_dialogue");
+        var cts = new CancellationTokenSource();
+        _dialogueCts = cts;
+        _ = PlayResolvedAsync(resolved, cts);
+    }
+
+    private async Task PlayResolvedAsync(ResolvedDialogue resolved, CancellationTokenSource cts)
+    {
+        try
+        {
+            await _dialoguePlayback.PlayAsync(resolved, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("DIALOGUE_PLAY_RESOLVED_FAILED id={0} error={1}", resolved.Entry.Id, ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_dialogueCts, cts))
+            {
+                _dialogueCts = null;
+                cts.Dispose();
+            }
+        }
+    }
+
+    // ---- 抚摸模式 UI ----
+    private void HeadPettingButton_Click(object sender, RoutedEventArgs e)
+    {
+        _interaction.TogglePettingMode();
+        e.Handled = true;
+    }
+
+    private void OnPettingModeChanged(bool active)
+    {
+        HeadPettingButton.IsChecked = active;
+        HeadPettingButton.ToolTip = active ? "退出抚摸模式" : "进入头部抚摸模式";
+        // 无论进入还是退出：彻底隐藏自定义覆盖层，并清理旧位置/旋转/缩放
+        ResetPettingCursorOverlay();
+        ApplyPettingCursorState(active);
+    }
+
+    /// <summary>清理自定义覆盖层位置与变换（当前禁用，但确保不残留上一次抚摸的坐标/旋转/缩放）。</summary>
+    private void ResetPettingCursorOverlay()
+    {
+        PettingPalmCursor.Visibility = Visibility.Collapsed;
+        PettingPalmCursor.Opacity = 0;
+        Canvas.SetLeft(PettingPalmCursor, 0);
+        Canvas.SetTop(PettingPalmCursor, 0);
+        PettingPalmRotate.Angle = 0;
+        PettingPalmScale.ScaleX = 1;
+        PettingPalmScale.ScaleY = 1;
+        _palmRotateCurrent = 0;
+    }
+
+    /// <summary>
+    /// 抚摸模式指针：使用本地小尺寸（32×32）CUR 光标。
+    ///   抚摸模式关闭 → 原系统光标；
+    ///   开启未按下   → HeadPettingOpenHand.cur（张开手掌）；
+    ///   按下抚摸中   → HeadPettingGrabbing.cur（握拳）；
+    ///   工具栏区域   → Cursors.Arrow。
+    /// 不显示 PettingPalmCursor（保持 Collapsed）；不按 DpiScale 手动放大（系统光标负责缩放）。
+    /// </summary>
+    private void ApplyPettingCursorState(bool active)
+    {
+        PettingPalmCursor.Visibility = Visibility.Collapsed;
+        if (active)
+        {
+            PetImage.Cursor = _headPettingCursor ?? Cursors.Hand;
+            Live2DImage.Cursor = _headPettingCursor ?? Cursors.Hand;
+        }
+        else
+        {
+            PetImage.Cursor = Cursors.Hand;
+            Live2DImage.Cursor = Cursors.Hand;
+        }
+    }
+
+    /// <summary>按抚摸状态切换光标：按下/抚摸中 → Grabbing（握拳）；否则 → OpenHand（张开手掌）。</summary>
+    private void ApplyPettingCursorByState()
+    {
+        if (!_interaction.IsPettingModeActive)
+            return;
+        bool pressed = _interaction.HeadPetting.State is PettingState.Pressed or PettingState.Petting;
+        var cur = pressed
+            ? (_headPettingGrabbingCursor ?? _headPettingCursor ?? Cursors.Hand)
+            : (_headPettingCursor ?? Cursors.Hand);
+        PetImage.Cursor = cur;
+        Live2DImage.Cursor = cur;
+    }
+
+    /// <summary>加载并缓存抚摸模式光标（HeadPettingOpenHand.cur 张开手掌 + HeadPettingGrabbing.cur 握拳）。
+    /// 失败回退 Cursors.Hand，不影响抚摸状态机。</summary>
+    private void LoadHeadPettingCursor()
+    {
+        if (_headPettingCursorLoadAttempted)
+            return;
+        _headPettingCursorLoadAttempted = true;
+        try
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "Assets", "interaction", "Cursors");
+            var openPath = Path.Combine(dir, "HeadPettingOpenHand.cur");
+            var grabPath = Path.Combine(dir, "HeadPettingGrabbing.cur");
+            if (File.Exists(openPath))
+            {
+                // WPF Cursor 从 .cur 文件路径创建（内部 LoadCursorFromFile，不依赖流生命周期）
+                _headPettingCursor = new Cursor(openPath);
+                AppLog.Info("HEAD_PETTING_CURSOR_LOADED path={0}", openPath);
+            }
+            else
+            {
+                AppLog.Warn("HEAD_PETTING_CURSOR_MISSING path={0} 回退 Cursors.Hand", openPath);
+            }
+            if (File.Exists(grabPath))
+            {
+                _headPettingGrabbingCursor = new Cursor(grabPath);
+                AppLog.Info("HEAD_PETTING_GRAB_CURSOR_LOADED path={0}", grabPath);
+            }
+            else
+            {
+                AppLog.Warn("HEAD_PETTING_GRAB_CURSOR_MISSING path={0} 回退张开手掌", grabPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _headPettingCursor = null;
+            _headPettingGrabbingCursor = null;
+            AppLog.Warn("HEAD_PETTING_CURSOR_LOAD_FAILED error={0} 回退 Cursors.Hand", ex.Message);
+        }
+    }
+
+    private Cursor? _headPettingCursor;           // 张开手掌（未按下）
+    private Cursor? _headPettingGrabbingCursor;   // 握拳（按下抚摸中）
+    private bool _headPettingCursorLoadAttempted;
+
+    /// <summary>安全兜底：低频检查左键已松开 / 捕获丢失 / 窗口失活 / 无手势样本超时，防止任何异常路径永久闭眼。</summary>
+    private void CheckPettingSafety()
+    {
+        var hp = _interaction.HeadPetting;
+        if (hp.State is not (PettingState.Pressed or PettingState.Petting))
+            return;
+
+        bool buttonReleased = Mouse.LeftButton != MouseButtonState.Pressed;
+        bool capturedLost = Mouse.Captured is null
+                            || (!ReferenceEquals(Mouse.Captured, PetImage) && !ReferenceEquals(Mouse.Captured, Live2DImage));
+        bool windowInactive = !IsActive;
+        if (buttonReleased || capturedLost || windowInactive)
+        {
+            hp.EndPettingSession(PettingEndReason.LostCapture);
+            return;
+        }
+
+        // 无有效手势样本超过 1s 且指针已不在容错区 → 自动结束
+        if (hp.LastActiveGestureUtc is { } last
+            && (DateTime.UtcNow - last).TotalMilliseconds > 1000
+            && !IsPointInPettingTolerance(Mouse.GetPosition(this)))
+        {
+            hp.EndPettingSession(PettingEndReason.SafetyTimeout);
+        }
+    }
+
+    /// <summary>判断指针是否仍在头部抚摸容错区（headPetZone + 四周扩展 32/28 DIP，窗口 DIP 坐标）。</summary>
+    private bool IsPointInPettingTolerance(Point windowPoint)
+    {
+        var area = _interaction.HitArea.GetArea("head_pet_zone");
+        if (area is null)
+            return false;
+        var cb = GetCharacterVisualBounds();
+        if (!IsValidBounds(cb))
+            return false;
+        var (nl, nt, nw, nh) = area.GetBounds(_interaction.HitArea.IsMirrored);
+        var petRect = new Rect(cb.Left + nl * cb.Width, cb.Top + nt * cb.Height, nw * cb.Width, nh * cb.Height);
+        petRect.Inflate(32, 28);
+        return petRect.Contains(windowPoint);
+    }
+
+    /// <summary>抚摸中指针移出容错区域 → 立即结束并睁眼恢复（按住左键移出后不得永久闭眼）。</summary>
+    private void CheckPettingToleranceExit(Point windowPoint)
+    {
+        if (!_interaction.HeadPetting.IsPettingSessionActive)
+            return;
+        if (!IsPointInPettingTolerance(windowPoint))
+            _interaction.HeadPetting.EndPettingSession(PettingEndReason.PointerOutsideTolerance);
+    }
+
+    /// <summary>抚摸模式下更新手掌指针位置/旋转/按压缩放。当前覆盖层禁用：不更新任何坐标。</summary>
+    private void UpdatePalmCursor(Point windowPos, bool leftPressed)
+    {
+        if (!UseCustomPettingCursor)
+            return;
+        if (!_interaction.IsPettingModeActive)
+            return;
+        if (PettingPalmCursor.Visibility != Visibility.Visible)
+            return;
+
+        // 热点位于掌心/手掌下部：图标偏左上偏移
+        Canvas.SetLeft(PettingPalmShape, windowPos.X - 20);
+        Canvas.SetTop(PettingPalmShape, windowPos.Y - 27);
+
+        // 左右移动旋转（-10°~10°），平滑过渡
+        double targetAngle = Math.Clamp(_interaction.SmoothedVelocityXPxPerSec * 0.02, -10, 10);
+        _palmRotateCurrent += (targetAngle - _palmRotateCurrent) * 0.35;
+        PettingPalmRotate.Angle = _palmRotateCurrent;
+
+        // 按下轻微缩小
+        double targetScale = leftPressed ? 0.90 : 1.0;
+        double cur = PettingPalmScale.ScaleX;
+        double next = cur + (targetScale - cur) * 0.4;
+        PettingPalmScale.ScaleX = next;
+        PettingPalmScale.ScaleY = next;
+    }
+
+    /// <summary>构建互动输入上下文（人物渲染区域归一化坐标 + 视口物理像素）。</summary>
+    private InteractionContext BuildInteractionContext(Point windowPos, bool pressed)
+    {
+        var image = GetActivePetVisual();
+        var origin = image.TranslatePoint(new Point(0, 0), this);
+        double w = image.ActualWidth;
+        double h = image.ActualHeight;
+        double nx = w > 0 ? (windowPos.X - origin.X) / w : 0;
+        double ny = h > 0 ? (windowPos.Y - origin.Y) / h : 0;
+        nx = Math.Clamp(nx, 0, 1);
+        ny = Math.Clamp(ny, 0, 1);
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double dt = 0.016;
+        if (_lastInteractionTime is not null)
+            dt = Math.Clamp((DateTime.UtcNow - _lastInteractionTime.Value).TotalSeconds, 0.001, 0.1);
+        _lastInteractionTime = DateTime.UtcNow;
+
+        return new InteractionContext(nx, ny, nx * w * dpi.DpiScaleX, ny * h * dpi.DpiScaleY, dt, pressed);
+    }
+
+    private DateTime? _lastInteractionTime;
+
+    /// <summary>渲染命中区域调试覆盖层（--hit-area-debug 开启）。</summary>
+    private void RenderHitAreaDebugOverlay()
+    {
+        HitAreaDebugOverlay.Children.Clear();
+        if (!_interaction.HitArea.DebugEnabled)
+        {
+            HitAreaDebugOverlay.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var image = GetActivePetVisual();
+        var origin = image.TranslatePoint(new Point(0, 0), this);
+        double w = image.ActualWidth;
+        double h = image.ActualHeight;
+        if (w <= 0 || h <= 0)
+            return;
+
+        foreach (var area in _interaction.HitArea.Areas)
+        {
+            var (l, t, aw, ah) = area.GetBounds(_interaction.HitArea.IsMirrored);
+            System.Windows.Shapes.Shape shape = area.Type == "rect"
+                ? new System.Windows.Shapes.Rectangle()
+                : new System.Windows.Shapes.Ellipse();
+            shape.Width = Math.Max(1, aw * w);
+            shape.Height = Math.Max(1, ah * h);
+            shape.Fill = new SolidColorBrush(Color.FromArgb(60, 80, 180, 255));
+            shape.Stroke = Brushes.SteelBlue;
+            shape.StrokeThickness = 1;
+            Canvas.SetLeft(shape, origin.X + l * w);
+            Canvas.SetTop(shape, origin.Y + t * h);
+            HitAreaDebugOverlay.Children.Add(shape);
+        }
+        HitAreaDebugOverlay.Visibility = Visibility.Visible;
     }
 
 
@@ -281,9 +742,9 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         _physicsOutputAmplitude = Clamp(settings.Live2DPhysicsOutputAmplitude, 0, 2);
         _gazeIdleTimeoutSeconds = Clamp(settings.GazeIdleTimeoutSeconds, 0.1, 30);
         _gazeHeadFollowAmount = Clamp(settings.Live2DGazeHeadFollowAmount, 0.2, 1.0);
-        _rendererMode = settings.CharacterRendererMode == "live2d"
-            ? CharacterRenderMode.Live2D
-            : CharacterRenderMode.Existing;
+        // 启动默认 PNG 人物模式（不读取上次 Live2D 设置，符合"进入后手动切换"要求；
+        // 测试参数如需 Live2D 会在下方显式强制 _rendererMode=Live2D）
+        _rendererMode = CharacterRenderMode.Existing;
         SetPetImage(false);
 
         if (double.IsFinite(settings.Left) && double.IsFinite(settings.Top))
@@ -303,8 +764,18 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         ClampToWorkArea();
         ApplyPetRunningState();
 
-        // 启动后按设置激活初始渲染模式（等布局完成）
-        Dispatcher.BeginInvoke(async () => await ApplyInitialRendererModeAsync());
+        // 启动：等首次布局完成后统一定位工具栏（位于人物下方居中）
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateCharacterToolbarPlacement));
+
+        // 启动：后台预加载 Live2D（不切换显示模式，保持 PNG）；
+        // 测试参数显式要求 Live2D 时才自动激活
+        Dispatcher.BeginInvoke(async () =>
+        {
+            if (_rendererMode == CharacterRenderMode.Live2D)
+                await ApplyInitialRendererModeAsync();
+            else
+                await PreloadLive2DInternalAsync();
+        });
 
         // 隐藏测试参数：--autoswitch N 自动执行 N 次模式切换并退出
         var autoSwitchArg = Environment.GetCommandLineArgs()
@@ -438,6 +909,65 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             Dispatcher.BeginInvoke(async () => { await RunLipSyncTestAsync(); AppLog.Info("口型测试退出"); Close(); });
             return;
         }
+        if (args.Contains("--mouth-param-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunMouthParamTestAsync(); AppLog.Info("嘴型参数测试退出"); Close(); });
+            return;
+        }
+        if (args.Contains("--dialogue-smoke-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunDialogueSmokeTestAsync(); AppLog.Info("台词冒烟测试退出"); Close(); });
+            return;
+        }
+        if (args.Contains("--hit-area-debug"))
+        {
+            // 命中区域调试：显示半透明轮廓（正式默认关闭）
+            _interaction.SetHitAreaDebug(true);
+            SizeChanged += (_, _) => RenderHitAreaDebugOverlay();
+            LocationChanged += (_, _) => RenderHitAreaDebugOverlay();
+            Dispatcher.BeginInvoke(() => RenderHitAreaDebugOverlay());
+        }
+        if (args.Contains("--ear-root-debug"))
+        {
+            // 猫耳根部参数调试：每 200ms 记录根部偏移/物理基值/最终值（正式默认关闭）
+            _interaction.Reaction.EarRootDebugEnabled = true;
+            AppLog.Info("EAR_ROOT_DEBUG_ENABLED");
+        }
+        if (args.Contains("--interaction-smoke-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunInteractionSmokeTestAsync(); AppLog.Info("互动冒烟测试退出"); Close(); });
+            return;
+        }
+        if (args.Contains("--toolbar-placement-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunToolbarPlacementTestAsync(); AppLog.Info("工具栏定位测试退出"); });
+            return;
+        }
+        if (args.Contains("--ear-ab-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunEarAbTestAsync(); AppLog.Info("猫耳A/B对照测试退出"); });
+            return;
+        }
+        if (args.Contains("--mode-switch-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunModeSwitchTestAsync(); AppLog.Info("模式切换测试退出"); });
+            return;
+        }
+        if (args.Contains("--toolbar-hit-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunToolbarHitTestAsync(); AppLog.Info("工具栏命中测试退出"); });
+            return;
+        }
+        if (args.Contains("--toolbar-input-debug"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunToolbarInputDebugAsync(); AppLog.Info("工具栏输入诊断退出"); });
+            return;
+        }
+        if (args.Contains("--petting-session-test"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunPettingSessionTestAsync(); AppLog.Info("抚摸会话测试退出"); });
+            return;
+        }
         if (args.Contains("--lip-sync-missing-export-test"))
         {
             Dispatcher.BeginInvoke(async () => { await RunLipSyncMissingExportTestAsync(); AppLog.Info("口型缺失导出测试退出"); Close(); });
@@ -479,7 +1009,9 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         SetPetImage(false);
         ScheduleNextBlink();
         SaveSettings();
+        CancelDialogue("switch_character");
         Speak($"已切换为 {_character}。");
+        InvalidateCharacterLayout();
     }
 
     private static string NormalizeCharacter(string? character)
@@ -589,97 +1121,47 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             await RefreshWeatherGreetingAsync(false);
 
         var now = DateTime.Now;
-        var period = GetGreetingPeriod(now);
-        var day = period == GreetingPeriod.LateNight && now.Hour < 2
+        var scene = _timeSceneService.GetScene(now);
+        var day = scene == TimeSceneService.DeepNight && now.Hour < 2
             ? now.Date.AddDays(-1)
             : now.Date;
-        var key = $"{day:yyyy-MM-dd}:{period}";
+        var key = $"{day:yyyy-MM-dd}:{scene}";
         if (_lastGreetingKey == key)
             return;
 
         var timeGreetingAllowed = _timeGreetingEnabled
-                                  && (period is not GreetingPeriod.Lunch
-                                      and not GreetingPeriod.Dinner || _mealReminderEnabled)
-                                  && (period is not GreetingPeriod.LateNight
-                                      and not GreetingPeriod.DeepNight || _nightRestReminderEnabled);
+                                  && (scene is not TimeSceneService.Lunch
+                                      and not TimeSceneService.Dinner || _mealReminderEnabled)
+                                  && (scene is not TimeSceneService.LateNight
+                                      and not TimeSceneService.DeepNight || _nightRestReminderEnabled);
         var weatherAvailable = _weatherGreetingEnabled
                                && _weatherGreeting is not null
                                && _lastWeatherGreetingDate != now.ToString("yyyy-MM-dd");
-        string? message = null;
 
         if (timeGreetingAllowed)
         {
-            var reminderPeriod = period is GreetingPeriod.Lunch
-                or GreetingPeriod.Dinner
-                or GreetingPeriod.LateNight
-                or GreetingPeriod.DeepNight;
+            var reminderPeriod = scene is TimeSceneService.Lunch
+                or TimeSceneService.Dinner
+                or TimeSceneService.LateNight
+                or TimeSceneService.DeepNight;
             if (!reminderPeriod && weatherAvailable && _random.NextDouble() < 0.35)
             {
-                message = _weatherGreeting;
                 _lastWeatherGreetingDate = now.ToString("yyyy-MM-dd");
+                Speak(_weatherGreeting!);
             }
             else
             {
-                message = GetTimeGreeting(period);
+                _lastGreetingKey = key;
+                PlayDialogue(scene);
             }
         }
         else if (weatherAvailable)
         {
-            message = _weatherGreeting;
             _lastWeatherGreetingDate = now.ToString("yyyy-MM-dd");
+            Speak(_weatherGreeting!);
         }
 
-        if (message is null)
-            return;
-
-        _lastGreetingKey = key;
-        Speak(message);
         SaveSettings();
-    }
-
-    private enum GreetingPeriod
-    {
-        Morning,
-        Forenoon,
-        Lunch,
-        Afternoon,
-        Dinner,
-        Evening,
-        LateNight,
-        DeepNight
-    }
-
-    private static GreetingPeriod GetGreetingPeriod(DateTime time)
-    {
-        var minutes = time.Hour * 60 + time.Minute;
-        if (minutes is >= 300 and <= 569) return GreetingPeriod.Morning;
-        if (minutes is >= 570 and <= 689) return GreetingPeriod.Forenoon;
-        if (minutes is >= 690 and <= 810) return GreetingPeriod.Lunch;
-        if (minutes is >= 811 and <= 1049) return GreetingPeriod.Afternoon;
-        if (minutes is >= 1050 and <= 1200) return GreetingPeriod.Dinner;
-        if (minutes is >= 1201 and <= 1349) return GreetingPeriod.Evening;
-        return minutes >= 1350 || minutes <= 119
-            ? GreetingPeriod.LateNight
-            : GreetingPeriod.DeepNight;
-    }
-
-    private string GetTimeGreeting(GreetingPeriod period)
-    {
-        if (_timeGreetingPhrases.TryGetValue(period, out var phrases)
-            && phrases.Length > 0)
-            return phrases[_random.Next(phrases.Length)];
-
-        return period switch
-        {
-            GreetingPeriod.Morning => "早上好，新的一天也一起加油吧。",
-            GreetingPeriod.Forenoon => "上午好，忙碌时也记得喝点水。",
-            GreetingPeriod.Lunch => "到午饭时间了，先好好吃饭吧。",
-            GreetingPeriod.Afternoon => "下午好，累了就休息几分钟。",
-            GreetingPeriod.Dinner => "晚饭时间到了，别忙到忘记吃饭。",
-            GreetingPeriod.Evening => "晚上好，今天也辛苦了。",
-            GreetingPeriod.LateNight => "已经很晚了，早点休息吧。",
-            _ => "夜深了，先放下工作好好睡一觉吧。"
-        };
     }
 
     private async Task RefreshWeatherGreetingAsync(bool showResult)
@@ -771,111 +1253,10 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         };
     }
 
-    private void SpeakGeneralRandom()
-    {
-        Speak(_generalPhrases[_random.Next(_generalPhrases.Length)]);
-    }
-
-    private void SpeakClickRandom()
-    {
-        if (_character != AliyaCharacter || _aliyaClickPhrases.Length == 0)
-        {
-            SpeakGeneralRandom();
-            return;
-        }
-
-        if (_aliyaClickBag.Count == 0)
-        {
-            foreach (var phrase in _aliyaClickPhrases.OrderBy(_ => _random.Next()))
-                _aliyaClickBag.Enqueue(phrase);
-        }
-        Speak(_aliyaClickBag.Dequeue());
-    }
-
-    private static string[] LoadAliyaClickPhrases()
-    {
-        try
-        {
-            var path = Path.Combine(
-                AppContext.BaseDirectory,
-                "Assets",
-                "dialogue",
-                "user_click.json");
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            var phrases = new List<string>();
-            foreach (var entry in document.RootElement.GetProperty("entries").EnumerateArray())
-            {
-                if (entry.TryGetProperty("enabled", out var enabled)
-                    && enabled.ValueKind == JsonValueKind.False)
-                    continue;
-
-                var text = entry.GetProperty("text").GetString();
-                if (!string.IsNullOrWhiteSpace(text))
-                    phrases.Add(text.Replace("\\", Environment.NewLine));
-            }
-            return phrases.ToArray();
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
-    }
-
-    private static Dictionary<GreetingPeriod, string[]> LoadTimeGreetingPhrases()
-    {
-        var result = new Dictionary<GreetingPeriod, string[]>();
-        foreach (var period in Enum.GetValues<GreetingPeriod>())
-        {
-            try
-            {
-                var path = Path.Combine(
-                    AppContext.BaseDirectory,
-                    "Assets",
-                    "dialogue",
-                    "time",
-                    GetGreetingPeriodFileName(period) + ".json");
-                using var document = JsonDocument.Parse(File.ReadAllText(path));
-                var phrases = new List<string>();
-                foreach (var entry in document.RootElement.GetProperty("entries").EnumerateArray())
-                {
-                    if (entry.TryGetProperty("enabled", out var enabled)
-                        && enabled.ValueKind == JsonValueKind.False)
-                        continue;
-
-                    var text = entry.GetProperty("text").GetString();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        phrases.Add(text);
-                }
-                result[period] = phrases.ToArray();
-            }
-            catch
-            {
-                result[period] = Array.Empty<string>();
-            }
-        }
-        return result;
-    }
-
-    private static string GetGreetingPeriodFileName(GreetingPeriod period)
-    {
-        return period switch
-        {
-            GreetingPeriod.Morning => "morning",
-            GreetingPeriod.Forenoon => "forenoon",
-            GreetingPeriod.Lunch => "lunch",
-            GreetingPeriod.Afternoon => "afternoon",
-            GreetingPeriod.Dinner => "dinner",
-            GreetingPeriod.Evening => "evening",
-            GreetingPeriod.LateNight => "late_night",
-            _ => "deep_night"
-        };
-    }
-
     private void Speak(string text)
     {
+        CancelDialogue("system_message");
         SpeechText.Text = text;
-        if (_rendererMode == CharacterRenderMode.Live2D)
-            _live2D?.SetLipSyncValue(0.7);
         SpeechBubble.Visibility = Visibility.Visible;
         _speechTimer.Stop();
         _speechTimer.Start();
@@ -1127,8 +1508,28 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         PlayTouchSound(true);
     }
 
+    private void Window_DpiChanged(object sender, DpiChangedEventArgs e)
+    {
+        // Windows DPI 变化后重新定位工具栏与命中区域调试层
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            UpdateCharacterToolbarPlacement();
+            RenderHitAreaDebugOverlay();
+        }));
+    }
+
     private void PetImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        var downCtx = BuildInteractionContext(e.GetPosition(this), pressed: true);
+        if (_interaction.OnPointerDown(downCtx))
+        {
+            // 抚摸按压：光标切换为握拳 Grabbing
+            ApplyPettingCursorByState();
+            // 捕获人物层：即使鼠标移出人物控件也能继续收到 MouseMove / MouseLeftButtonUp
+            Mouse.Capture(GetActivePetVisual(), CaptureMode.Element);
+            e.Handled = true;
+            return;
+        }
         if (_actionRunning)
             return;
 
@@ -1156,6 +1557,22 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     private void PetImage_MouseMove(object sender, MouseEventArgs e)
     {
+        var windowPos = e.GetPosition(this);
+        var moveCtx = BuildInteractionContext(windowPos, e.LeftButton == MouseButtonState.Pressed);
+        bool consumed = _interaction.OnPointerMove(moveCtx);
+        // 自定义覆盖层禁用时不更新指针图标位置；鼠标坐标只交给 HitArea/抚摸轨迹识别
+        if (UseCustomPettingCursor)
+            UpdatePalmCursor(windowPos, e.LeftButton == MouseButtonState.Pressed);
+        if (consumed)
+        {
+            _longPressTimer?.Stop();
+            // 抚摸中：光标按状态切换（Pressed/Petting → Grabbing）
+            ApplyPettingCursorByState();
+            // 指针移出容错区域 → 立即结束并睁眼恢复（按住左键移出后不会永久闭眼）
+            CheckPettingToleranceExit(windowPos);
+            e.Handled = true;
+            return;
+        }
         if (!_dragging || e.LeftButton != MouseButtonState.Pressed)
             return;
 
@@ -1184,6 +1601,22 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     private async void PetImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        var upCtx = BuildInteractionContext(e.GetPosition(this), pressed: false);
+        bool consumed = _interaction.OnPointerUp(upCtx);
+        if (consumed)
+        {
+            if (_dragging)
+            {
+                _dragging = false;
+                ((UIElement)sender).ReleaseMouseCapture();
+                ActionRotate.Angle = 0;
+                ActionScale.ScaleY = 1;
+            }
+            // 松开：光标恢复张开手掌 OpenHand
+            ApplyPettingCursorByState();
+            e.Handled = true;
+            return;
+        }
         if (!_dragging)
             return;
 
@@ -1208,6 +1641,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             SaveSettings();
             if (_rendererMode == CharacterRenderMode.Live2D)
                 SyncRendererState();
+            _interaction.OnClick(upCtx, wasDrag: true);
         }
         else
         {
@@ -1223,34 +1657,64 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     private void PetImage_MouseEnter(object sender, MouseEventArgs e)
     {
+        var ctx = BuildInteractionContext(e.GetPosition(this), e.LeftButton == MouseButtonState.Pressed);
+        _interaction.OnPointerEnter(ctx);
         ShowQuickActions();
     }
 
     private void PetImage_MouseLeave(object sender, MouseEventArgs e)
     {
-        ScheduleQuickActionsHide();
+        _interaction.OnPointerLeave();
+        // 不立即隐藏：启动延迟隐藏倒计时，鼠标进入连接走廊/工具栏时取消
+        ScheduleToolbarHide();
     }
 
     private void HoverQuickActions_MouseEnter(object sender, MouseEventArgs e)
     {
-        _hoverHideTimer.Stop();
+        CancelToolbarHide();
+        ShowQuickActions();
+        if (_interaction.IsPettingModeActive)
+        {
+            // 工具栏区域恢复普通箭头（人物区域保持 Grabbing.cur）
+            PetImage.Cursor = Cursors.Arrow;
+            Live2DImage.Cursor = Cursors.Arrow;
+        }
+        // 释放可能残留的人物层鼠标捕获，避免按钮无法接收点击（不处于拖动/抚摸按压时）
+        if (!_dragging && _interaction.HeadPetting.State is not (PettingState.Pressed or PettingState.Petting)
+            && Mouse.Captured is not null && !IsToolbarInputSource(Mouse.Captured as DependencyObject))
+        {
+            AppLog.Info("MOUSE_CAPTURE_STATE capturedElement={0} reason=toolbar_enter_release", Mouse.Captured.GetType().Name);
+            Mouse.Capture(null);
+        }
     }
 
     private void HoverQuickActions_MouseLeave(object sender, MouseEventArgs e)
     {
-        ScheduleQuickActionsHide();
+        if (_interaction.IsPettingModeActive)
+            ApplyPettingCursorState(true); // 返回人物区域恢复 Grabbing
+        ScheduleToolbarHide();
+    }
+
+    /// <summary>鼠标进入人物与工具栏之间的透明连接走廊：取消隐藏并保持工具栏显示。</summary>
+    private void ToolbarHoverBridge_MouseEnter(object sender, MouseEventArgs e)
+    {
+        CancelToolbarHide();
+        ShowQuickActions();
+    }
+
+    private void ToolbarHoverBridge_MouseLeave(object sender, MouseEventArgs e)
+    {
+        ScheduleToolbarHide();
     }
 
     private void ShowQuickActions()
     {
-        _hoverHideTimer.Stop();
-        HoverQuickActionsPopup.PlacementTarget = GetActivePetVisual();
-        if (HoverQuickActionsPopup.IsOpen)
+        CancelToolbarHide();
+        UpdateCharacterToolbarPlacement();
+        if (HoverQuickActions.Visibility == Visibility.Visible)
             return;
 
-        HoverQuickActionsPopup.HorizontalOffset =
-            (GetActivePetVisual().ActualWidth - HoverQuickActions.Width) / 2;
-        HoverQuickActionsPopup.IsOpen = true;
+        HoverQuickActions.Visibility = Visibility.Visible;
         HoverQuickActions.IsHitTestVisible = true;
         HoverQuickActions.BeginAnimation(
             OpacityProperty,
@@ -1263,18 +1727,236 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             });
     }
 
-    private void ScheduleQuickActionsHide()
+    /// <summary>启动延迟隐藏倒计时（1200ms）。抚摸模式选中时固定显示，不启动倒计时。</summary>
+    private void ScheduleToolbarHide()
     {
+        if (IsToolbarPinned())
+        {
+            CancelToolbarHide();
+            return;
+        }
         _hoverHideTimer.Stop();
         _hoverHideTimer.Start();
     }
 
+    private void CancelToolbarHide() => _hoverHideTimer.Stop();
+
     private void HideQuickActions()
     {
+        if (HoverQuickActions.Visibility == Visibility.Collapsed)
+            return;
         HoverQuickActions.BeginAnimation(OpacityProperty, null);
         HoverQuickActionsTranslate.BeginAnimation(TranslateTransform.YProperty, null);
-        HoverQuickActionsPopup.IsOpen = false;
+        HoverQuickActions.Visibility = Visibility.Collapsed;
         HoverQuickActions.IsHitTestVisible = false;
+        ToolbarHoverBridge.Visibility = Visibility.Collapsed;
+    }
+
+    // ==================== 工具栏统一布局（PNG/Live2D 共用，父级=CharacterToolbarLayer） ====================
+
+    private const double ToolbarGap = 8; // DIP，人物底部与工具栏间距（6~10）
+    private const double ToolbarHideDelayMilliseconds = 1200;
+    private const double DefaultToolbarWidth = 318;
+    private Rect _currentCharacterBounds = Rect.Empty;
+
+    /// <summary>人物当前在窗口 DIP 坐标系下的实际显示矩形（不使用纹理像素/模型坐标/旧资源尺寸）。</summary>
+    private Rect GetCharacterVisualBounds()
+    {
+        var image = GetActivePetVisual();
+        if (image is null || image.ActualWidth <= 0 || image.ActualHeight <= 0)
+            return Rect.Empty;
+        var origin = image.TranslatePoint(new Point(0, 0), this);
+        if (!double.IsFinite(origin.X) || !double.IsFinite(origin.Y)
+            || !double.IsFinite(image.ActualWidth) || !double.IsFinite(image.ActualHeight))
+            return Rect.Empty;
+        return new Rect(origin.X, origin.Y, image.ActualWidth, image.ActualHeight);
+    }
+
+    private static bool IsValidBounds(Rect r)
+    {
+        return !r.IsEmpty
+               && r.Width > 0 && r.Height > 0
+               && double.IsFinite(r.Left) && double.IsFinite(r.Top)
+               && double.IsFinite(r.Width) && double.IsFinite(r.Height);
+    }
+
+    /// <summary>统一工具栏定位：toolbarCenterX = 人物中心X，toolbarTop = 人物底部 + Gap。DIP 坐标。</summary>
+    private void UpdateCharacterToolbarPlacement()
+    {
+        var bounds = GetCharacterVisualBounds();
+        if (!IsValidBounds(bounds))
+        {
+            // 人物边界暂时无效：保持上一次位置或隐藏，禁止回退到 0,0（左上角）
+            if (HoverQuickActions.Visibility == Visibility.Visible)
+                HoverQuickActions.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _currentCharacterBounds = bounds;
+        double centerX = bounds.Left + bounds.Width / 2;
+        double top = bounds.Top + bounds.Height + ToolbarGap;
+        double toolbarWidth = HoverQuickActions.ActualWidth > 0 ? HoverQuickActions.ActualWidth : DefaultToolbarWidth;
+        double toolbarLeft = Math.Max(0, centerX - toolbarWidth / 2);
+        Canvas.SetLeft(HoverQuickActions, toolbarLeft);
+        Canvas.SetTop(HoverQuickActions, Math.Max(0, top));
+        UpdateToolbarHoverBridge(bounds, toolbarWidth, toolbarLeft, top);
+    }
+
+    /// <summary>更新人物与工具栏之间的透明连接走廊（可命中，保持工具栏显示）。
+    /// Bounds 严格截止于工具栏顶部，不覆盖 HoverQuickActions 按钮。</summary>
+    private void UpdateToolbarHoverBridge(Rect bounds, double toolbarWidth, double toolbarLeft, double toolbarTop)
+    {
+        double bridgeWidth = Math.Max(toolbarWidth + 30, 320);       // 工具栏宽度 + 左右容错
+        double bridgeLeft = Math.Max(0, bounds.Left + bounds.Width / 2 - bridgeWidth / 2);
+        double bridgeTop = bounds.Top + bounds.Height;               // 人物底部
+        double bridgeHeight = toolbarTop - bridgeTop;                // 截止于工具栏顶部（不覆盖按钮）
+        ToolbarHoverBridge.Width = bridgeWidth;
+        ToolbarHoverBridge.Height = Math.Max(1, bridgeHeight);
+        Canvas.SetLeft(ToolbarHoverBridge, bridgeLeft);
+        Canvas.SetTop(ToolbarHoverBridge, bridgeTop);
+        ToolbarHoverBridge.Visibility = HoverQuickActions.Visibility;
+    }
+
+    /// <summary>切换模式/缩放/DPI/角色等布局失效时：清空旧边界，暂时禁用工具栏交互，布局完成后恢复并重定位。</summary>
+    private void InvalidateCharacterLayout()
+    {
+        _currentCharacterBounds = Rect.Empty;
+        SetToolbarInteractive(false);
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            UpdateCharacterToolbarPlacement();
+            SetToolbarInteractive(true);
+            if (IsPointerInsideToolbarInteractionRegion() || IsToolbarPinned())
+                ShowQuickActions();
+            else
+                ScheduleToolbarHide();
+        }));
+    }
+
+    /// <summary>切换期间暂时禁用工具栏交互（Hidden 保留布局）；完成后恢复 Visible/IsHitTestVisible/IsEnabled。</summary>
+    private void SetToolbarInteractive(bool interactive)
+    {
+        if (interactive)
+        {
+            HoverQuickActions.IsEnabled = true;
+            HoverQuickActions.IsHitTestVisible = true;
+            if (HoverQuickActions.Visibility != Visibility.Visible)
+                HoverQuickActions.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            HoverQuickActions.IsEnabled = false;
+            HoverQuickActions.IsHitTestVisible = false;
+            HoverQuickActions.Visibility = Visibility.Hidden;
+        }
+    }
+
+    /// <summary>
+    /// 模式切换后的统一恢复方法（成功/失败/取消都调用）：
+    /// 恢复工具栏所有父级与按钮的交互状态、释放鼠标捕获、重新定位工具栏。
+    /// </summary>
+    private void RestoreToolbarAfterCharacterModeSwitch()
+    {
+        CharacterToolbarLayer.IsHitTestVisible = true;
+        CharacterToolbarLayer.IsEnabled = true;
+        HoverQuickActions.IsEnabled = true;
+        HoverQuickActions.IsHitTestVisible = true;
+        HeadPettingButton.IsEnabled = true;
+        if (HoverQuickActions.Visibility != Visibility.Visible)
+            HoverQuickActions.Visibility = Visibility.Visible;
+        // 不主动重新 Capture 人物层；释放残留捕获（若捕获属于人物层）
+        if (Mouse.Captured is not null && !IsToolbarInputSource(Mouse.Captured as DependencyObject))
+        {
+            AppLog.Info("MOUSE_CAPTURE_STATE capturedElement={0} reason=mode_switch_release", Mouse.Captured.GetType().Name);
+            Mouse.Capture(null);
+        }
+        // 布局完成后重定位工具栏与连接走廊
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            UpdateCharacterToolbarPlacement();
+            if (IsPointerInsideToolbarInteractionRegion() || IsToolbarPinned())
+                ShowQuickActions();
+            else
+                ScheduleToolbarHide();
+        }));
+    }
+
+    /// <summary>判断事件来源或其祖先是否属于工具栏（Visual 与 Logical 父级均检查）。
+    /// 工具栏输入不进入人物拖动/抚摸/点击逻辑，不设置 e.Handled。</summary>
+    private bool IsToolbarInputSource(DependencyObject? source)
+    {
+        DependencyObject? current = source;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, CharacterToolbarLayer)
+                || ReferenceEquals(current, HoverQuickActions))
+            {
+                return true;
+            }
+            current = VisualTreeHelper.GetParent(current)
+                      ?? LogicalTreeHelper.GetParent(current);
+        }
+        return false;
+    }
+
+    /// <summary>全窗口 Preview 鼠标按下：来源属于工具栏时不设置 e.Handled，让按钮正常处理事件。</summary>
+    private void Window_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsToolbarInputSource(e.OriginalSource as DependencyObject))
+        {
+            CancelToolbarHide();
+            ShowQuickActions();
+            return; // 不 e.Handled=true、不 CaptureMouse、不进入人物逻辑
+        }
+    }
+
+    /// <summary>工具栏是否固定显示（抚摸模式选中/正在抚摸时不自动隐藏）。</summary>
+    private bool IsToolbarPinned()
+    {
+        return _interaction.IsPettingModeActive || HeadPettingButton.IsChecked == true;
+    }
+
+    private Rect ToolbarRect()
+    {
+        double left = Canvas.GetLeft(HoverQuickActions);
+        double top = Canvas.GetTop(HoverQuickActions);
+        double w = HoverQuickActions.ActualWidth > 0 ? HoverQuickActions.ActualWidth : DefaultToolbarWidth;
+        double h = HoverQuickActions.ActualHeight > 0 ? HoverQuickActions.ActualHeight : 50;
+        return new Rect(left, top, w, h);
+    }
+
+    /// <summary>
+    /// 统一悬停区域判断：人物可见区域 / 工具栏区域 / 透明连接走廊 / 工具栏周围容错扩展。
+    /// 所有隐藏决策必须经过此方法。
+    /// </summary>
+    private bool IsPointerInsideToolbarInteractionRegion()
+    {
+        if (_currentCharacterBounds.Contains(Mouse.GetPosition(this)))
+            return true;
+
+        var toolbar = ToolbarRect();
+        if (toolbar.Contains(Mouse.GetPosition(this)))
+            return true;
+
+        if (ToolbarHoverBridge.Visibility == Visibility.Visible)
+        {
+            double bLeft = Canvas.GetLeft(ToolbarHoverBridge);
+            double bTop = Canvas.GetTop(ToolbarHoverBridge);
+            if (new Rect(bLeft, bTop, ToolbarHoverBridge.ActualWidth, ToolbarHoverBridge.ActualHeight).Contains(Mouse.GetPosition(this)))
+                return true;
+        }
+
+        var inflated = toolbar;
+        inflated.Inflate(12, 12);
+        return inflated.Contains(Mouse.GetPosition(this));
+    }
+
+    private bool IsPointerOverPetArea()
+    {
+        if (_currentCharacterBounds.IsEmpty)
+            return false;
+        var pos = Mouse.GetPosition(this);
+        return _currentCharacterBounds.Contains(pos);
     }
 
     private async void HoverWeather_Click(object sender, RoutedEventArgs e)
@@ -1294,7 +1976,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     private void HoverTalk_Click(object sender, RoutedEventArgs e)
     {
-        SpeakClickRandom();
+        PlayDialogue(UserClickScene);
         e.Handled = true;
     }
 
@@ -1318,6 +2000,8 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             ResizeLive2D();
         ClampToWorkArea();
         SaveSettings();
+        // 人物缩放后重新定位工具栏
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateCharacterToolbarPlacement));
     }
 
     private static double GetMaximumVisualWidth()
@@ -1390,7 +2074,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         running.Click += (_, _) => SetPetRunning(!_petRunning);
 
         var talk = new MenuItem { Header = "说句话", IsEnabled = _petRunning };
-        talk.Click += (_, _) => SpeakClickRandom();
+        talk.Click += (_, _) => PlayDialogue(UserClickScene);
 
         var actions = new MenuItem { Header = "动作", IsEnabled = _petRunning };
         actions.Items.Add(CreateActionMenuItem("跳一下", () => RunActionAsync("hop")));
@@ -1776,6 +2460,8 @@ GazeSpeedMultiplier = _gazeSpeed,
         return Math.Max(min, Math.Min(max, value));
     }
 }
+
+
 
 
 

@@ -1,0 +1,12 @@
+Aliya Desktop Pet v1.1 validation
+
+Completed checks:
+- Android debug APK built successfully with Gradle 8.7 in offline mode.
+- Android Java source parsed successfully.
+- Windows C# source parsed successfully.
+- XAML and AndroidManifest XML parsed successfully.
+- All WPF XAML event handlers exist in MainWindow.xaml.cs.
+- Windows, Android, and shared PNG assets are byte-identical.
+
+Not completed in this environment:
+- EXE binary build (Windows .NET Desktop SDK unavailable).

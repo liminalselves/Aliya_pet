@@ -17,7 +17,7 @@
     {"id": "aliya_click_009", "text": "爱哭鬼被我发现啦。", "enabled": true},
     {"id": "aliya_click_010", "text": "真想看看千年前的星空。", "enabled": true},
     {"id": "aliya_click_011", "text": "千年也挡不住这次连接。", "enabled": true},
-    {"id": "aliya_click_012", "text": "3026年也要加油呀。", "enabled": true},
+    {"id": "aliya_click_012", "text": "{aliya_year}年也要加油呀。", "enabled": true},
     {"id": "aliya_click_013", "text": "宇宙还有太多未知啦。", "enabled": true},
     {"id": "aliya_click_014", "text": "COSMOS，继续航行吧。", "enabled": true},
     {"id": "aliya_click_015", "text": "海獭号今天状态不错。", "enabled": true},
