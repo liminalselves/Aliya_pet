@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.IO;
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -1759,6 +1760,59 @@ public partial class MainWindow
     }
 
     private static InteractionContext MakeCtx(Point norm) => new(norm.X, norm.Y, norm.X * 400, norm.Y * 400, 0.033, true);
+
+    /// <summary>
+    /// --petting-input-sim：抚摸输入热路径仿真（诊断）。模拟高频鼠标输入走真实消费管线：
+    /// 快照记录 → 消费计时器（60Hz）→ InteractionService.OnPointerMove → 识别器 → 反应控制器 → Native 写入。
+    /// 用于验证 processedSamplesPerSec≤60、Native 调用每帧≤1次、PETTING_PERF 计数正确。
+    /// </summary>
+    private async Task RunPettingInputSimAsync()
+    {
+        bool ok = await ActivateLive2DAsync();
+        if (!ok)
+        {
+            AppLog.Error("PETTING_INPUT_SIM_RESULT FAIL activate_failed");
+            Close();
+            return;
+        }
+        await Task.Delay(500);
+        _interaction.TogglePettingMode();
+        await Task.Delay(300);
+        UpdateCachedPettingGeometry();
+        // 仿真输入不产生真实鼠标捕获/按键，停止安全兜底，避免 150ms 后误判 LostCapture 结束会话
+        _pettingSafetyTimer?.Stop();
+
+        double hx = _cachedCharacterOrigin.X + 0.5 * _cachedCharacterWidthDip;
+        double hy = _cachedCharacterOrigin.Y + 0.15 * _cachedCharacterHeightDip;
+
+        // 模拟头部区域按压（走消费路径构建上下文）
+        var pressCtx = BuildPettingContext(new PettingPointerSnapshot(
+            new Point(hx, hy), Stopwatch.GetTimestamp(), true, true, ++_latestPettingPointerSequence));
+        bool consumed = _interaction.OnPointerDown(pressCtx);
+        AppLog.Info("PETTING_INPUT_SIM down consumed={0}", consumed);
+
+        // 快速左右移动：每 16ms 突发 10 个快照，等效模拟 ~600 事件/秒的高频鼠标输入，持续约 4 秒。
+        // 消费计时器（≤60Hz）每 tick 只处理最新一个，其余被覆盖丢弃，
+        // 验证 processedSamplesPerSec 封顶在配置采样率、Native 调用有界。
+        for (int round = 0; round < 250; round++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                double off = (round / 4) % 2 == 0 ? -45 : 45;
+                var pos = new Point(hx + off, hy);
+                _latestPettingPointer = new PettingPointerSnapshot(
+                    pos, Stopwatch.GetTimestamp(), true, true, ++_latestPettingPointerSequence);
+            }
+            await Task.Delay(16);
+        }
+        await Task.Delay(3000);
+
+        await Task.Delay(500);
+        _interaction.HeadPetting.EndPettingSession(PettingEndReason.MouseReleased);
+        await Task.Delay(2000);
+        AppLog.Info("PETTING_INPUT_SIM_RESULT done consumed={0}", consumed);
+        Close();
+    }
 
     private static InteractionContext MakeCtxViewport(double nx, double ny, double px, double py)
         => new(nx, ny, px, py, 0.033, true);

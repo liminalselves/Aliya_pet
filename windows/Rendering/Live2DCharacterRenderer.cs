@@ -172,8 +172,10 @@ public sealed class Live2DCharacterRenderer : ICharacterRenderer
             return;
 
         var now = DateTime.UtcNow;
+        double intervalMs = (now - _lastFrameTime).TotalMilliseconds;
         var delta = Math.Clamp((now - _lastFrameTime).TotalSeconds, 0.001, 0.1);
         _lastFrameTime = now;
+        PettingPerfDiagnostics.OnFrame(intervalMs);
 
         try
         {

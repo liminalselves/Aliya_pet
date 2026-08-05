@@ -240,6 +240,15 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             ScheduleNextAutoAction();
         };
         InitializeLive2D();
+
+        // 抚摸输入消费计时器：高频 MouseMove 只记录最新快照，此计时器按输入采样率（30/60Hz）
+        // 每帧最多消费一次最新输入，交由现有 InteractionService 处理（识别/反应/光标/容错区）。
+        // 只在抚摸模式激活时启动（OnPettingModeChanged）。
+        _pettingInputTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / _pettingInputRateHz) };
+        _pettingInputTimer.Tick += (_, _) => ConsumePettingInput();
+
+        // 抚摸热路径性能诊断（PETTING_PERF 每 5 秒汇总）
+        PettingPerfDiagnostics.Initialize();
     }
 
     /// <summary>初始化台词与嘴型服务（相对路径加载 Assets/dialogue 全部 JSON）。</summary>
@@ -460,7 +469,22 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         HeadPettingButton.ToolTip = active ? "退出抚摸模式" : "进入头部抚摸模式";
         // 无论进入还是退出：彻底隐藏自定义覆盖层，并清理旧位置/旋转/缩放
         ResetPettingCursorOverlay();
+        _cursorGrabbedInitialized = false; // 模式变化后光标必须重新建立
         ApplyPettingCursorState(active);
+
+        if (active)
+        {
+            // 进入抚摸：刷新几何缓存并启动消费计时器（高频输入由它统一消费）。
+            // 把进入模式前的旧快照标记为已消费，只处理进入后的真实 MouseMove（避免陈旧位置误判容错区结束）。
+            UpdateCachedPettingGeometry();
+            _lastConsumedPettingSequence = _latestPettingPointerSequence;
+            _lastConsumedPointerTick = 0;
+            _pettingInputTimer.Start();
+        }
+        else
+        {
+            _pettingInputTimer.Stop();
+        }
     }
 
     /// <summary>清理自定义覆盖层位置与变换（当前禁用，但确保不残留上一次抚摸的坐标/旋转/缩放）。</summary>
@@ -499,12 +523,17 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         }
     }
 
-    /// <summary>按抚摸状态切换光标：按下/抚摸中 → Grabbing（握拳）；否则 → OpenHand（张开手掌）。</summary>
+    /// <summary>按抚摸状态切换光标：按下/抚摸中 → Grabbing（握拳）；否则 → OpenHand（张开手掌）。
+    /// 仅在按下/松开状态变化时重新赋值 Cursor（内部缓存），不随每个 MouseMove 重复赋值。</summary>
     private void ApplyPettingCursorByState()
     {
         if (!_interaction.IsPettingModeActive)
             return;
         bool pressed = _interaction.HeadPetting.State is PettingState.Pressed or PettingState.Petting;
+        if (_cursorGrabbedInitialized && pressed == _lastPettingCursorGrabbed)
+            return; // 状态未变化，不重复赋值 Cursor
+        _cursorGrabbedInitialized = true;
+        _lastPettingCursorGrabbed = pressed;
         var cur = pressed
             ? (_headPettingGrabbingCursor ?? _headPettingCursor ?? Cursors.Hand)
             : (_headPettingCursor ?? Cursors.Hand);
@@ -582,20 +611,10 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         }
     }
 
-    /// <summary>判断指针是否仍在头部抚摸容错区（headPetZone + 四周扩展 32/28 DIP，窗口 DIP 坐标）。</summary>
+    /// <summary>判断指针是否仍在头部抚摸容错区（headPetZone + 四周扩展 32/28 DIP，窗口 DIP 坐标）。
+    /// 使用布局时预计算的缓存矩形（O(1)，不读 VisualTree/不 LINQ 查找区域）。</summary>
     private bool IsPointInPettingTolerance(Point windowPoint)
-    {
-        var area = _interaction.HitArea.GetArea("head_pet_zone");
-        if (area is null)
-            return false;
-        var cb = GetCharacterVisualBounds();
-        if (!IsValidBounds(cb))
-            return false;
-        var (nl, nt, nw, nh) = area.GetBounds(_interaction.HitArea.IsMirrored);
-        var petRect = new Rect(cb.Left + nl * cb.Width, cb.Top + nt * cb.Height, nw * cb.Width, nh * cb.Height);
-        petRect.Inflate(32, 28);
-        return petRect.Contains(windowPoint);
-    }
+        => _cachedGeometryValid && _cachedPetToleranceRect.Contains(windowPoint);
 
     /// <summary>抚摸中指针移出容错区域 → 立即结束并睁眼恢复（按住左键移出后不得永久闭眼）。</summary>
     private void CheckPettingToleranceExit(Point windowPoint)
@@ -655,6 +674,27 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     }
 
     private DateTime? _lastInteractionTime;
+
+    // ---- 抚摸输入热路径：MouseMove 只记录最新快照，消费计时器每帧最多消费一次 ----
+    private PettingPointerSnapshot _latestPettingPointer;
+    private long _latestPettingPointerSequence;
+    private long _lastConsumedPettingSequence = -1;
+    private long _lastConsumedPointerTick;
+    private readonly DispatcherTimer _pettingInputTimer;
+    private int _pettingInputRateHz = 60;
+
+    // 抚摸几何缓存：布局变化时预计算，热路径仅 Rect.Contains / 简单除法（无 TranslatePoint/GetDpi/VisualTreeHelper）
+    private Rect _cachedHeadPetZoneRect;
+    private Rect _cachedPetToleranceRect;
+    private Point _cachedCharacterOrigin;
+    private double _cachedCharacterWidthDip;
+    private double _cachedCharacterHeightDip;
+    private DpiScale _cachedDpi = new(1, 1);
+    private bool _cachedGeometryValid;
+
+    // 光标状态变化缓存：只有按下/松开/模式切换等状态变化时才重新赋值 Cursor
+    private bool _cursorGrabbedInitialized;
+    private bool _lastPettingCursorGrabbed;
 
     /// <summary>渲染命中区域调试覆盖层（--hit-area-debug 开启）。</summary>
     private void RenderHitAreaDebugOverlay()
@@ -797,6 +837,21 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         // --physics-output-overwrite-test / --physics-editor-equivalence-test / --physics-60hz-test /
         // --physics-drive-diagnostic（常规启动 + 250ms 物理驱动回读，不退出）
         var args = Environment.GetCommandLineArgs().Skip(1);
+
+        // 抚摸输入采样率诊断：--petting-input-rate=30|60（默认 60）。
+        // 消费计时器与识别器都按该频率限频，对比 30Hz 与 60Hz 下帧率/手感/Native 调用次数。
+        var pettingRateArg = args
+            .Select(a => a.StartsWith("--petting-input-rate=") ? a.Substring("--petting-input-rate=".Length) : null)
+            .FirstOrDefault(v => v is not null);
+        if (pettingRateArg is not null && int.TryParse(pettingRateArg, out int pettingRate)
+            && (pettingRate == 30 || pettingRate == 60))
+        {
+            _pettingInputRateHz = pettingRate;
+            _pettingInputTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / _pettingInputRateHz);
+            _interaction.HeadPetting.SetInputRateHz(_pettingInputRateHz);
+            AppLog.Info("PETTING_INPUT_RATE set={0}Hz", _pettingInputRateHz);
+        }
+
         // 常规启动 + 物理驱动诊断：开启 250ms 回读日志（可见姿态 vs 物理虚拟输入），不退出
         if (args.Contains("--physics-drive-diagnostic"))
         {
@@ -936,6 +991,11 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         if (args.Contains("--interaction-smoke-test"))
         {
             Dispatcher.BeginInvoke(async () => { await RunInteractionSmokeTestAsync(); AppLog.Info("互动冒烟测试退出"); Close(); });
+            return;
+        }
+        if (args.Contains("--petting-input-sim"))
+        {
+            Dispatcher.BeginInvoke(async () => { await RunPettingInputSimAsync(); AppLog.Info("抚摸输入仿真退出"); });
             return;
         }
         if (args.Contains("--toolbar-placement-test"))
@@ -1557,22 +1617,30 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     private void PetImage_MouseMove(object sender, MouseEventArgs e)
     {
+        // 抚摸热路径：O(1)。只记录最新输入快照，不在此驱动 Native/识别/反应/光标/容错区结束/布局。
+        // 全部互动处理由 _pettingInputTimer（30/60Hz 消费计时器）每帧最多执行一次。
         var windowPos = e.GetPosition(this);
-        var moveCtx = BuildInteractionContext(windowPos, e.LeftButton == MouseButtonState.Pressed);
-        bool consumed = _interaction.OnPointerMove(moveCtx);
+        bool leftPressed = e.LeftButton == MouseButtonState.Pressed;
+        PettingPerfDiagnostics.CountMouseEvent();
+        _latestPettingPointer = new PettingPointerSnapshot(
+            windowPos,
+            Stopwatch.GetTimestamp(),
+            leftPressed,
+            _cachedGeometryValid && _cachedPetToleranceRect.Contains(windowPos),
+            ++_latestPettingPointerSequence);
+
         // 自定义覆盖层禁用时不更新指针图标位置；鼠标坐标只交给 HitArea/抚摸轨迹识别
         if (UseCustomPettingCursor)
-            UpdatePalmCursor(windowPos, e.LeftButton == MouseButtonState.Pressed);
-        if (consumed)
+            UpdatePalmCursor(windowPos, leftPressed);
+
+        // 抚摸模式：输入由消费计时器处理（本方法不返回"已接管"判定，消费时统一处理）
+        if (_interaction.IsPettingModeActive)
         {
-            _longPressTimer?.Stop();
-            // 抚摸中：光标按状态切换（Pressed/Petting → Grabbing）
-            ApplyPettingCursorByState();
-            // 指针移出容错区域 → 立即结束并睁眼恢复（按住左键移出后不会永久闭眼）
-            CheckPettingToleranceExit(windowPos);
             e.Handled = true;
             return;
         }
+
+        // 非抚摸模式：仅保留窗口拖动路径（不属于抚摸热路径，行为不变）
         if (!_dragging || e.LeftButton != MouseButtonState.Pressed)
             return;
 
@@ -1597,6 +1665,83 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         if (_rendererMode == CharacterRenderMode.Live2D)
             _live2D?.SetState(CharacterState.Drag, _dragIntensity);
         _lastMouse = current;
+    }
+
+    /// <summary>消费最新抚摸输入（消费计时器回调，30/60Hz）。每帧最多消费一次，过期输入直接丢弃。</summary>
+    private void ConsumePettingInput()
+    {
+        var snap = _latestPettingPointer;
+        if (snap.Sequence == _lastConsumedPettingSequence)
+            return; // 无新输入
+        _lastConsumedPettingSequence = snap.Sequence;
+
+        if (!_interaction.IsPettingModeActive)
+            return; // 非抚摸模式不消费（近距/识别/反应均无下游消费者）
+
+        var ctx = BuildPettingContext(snap);
+        bool consumed = _interaction.OnPointerMove(ctx);
+        if (!consumed)
+            return;
+
+        _longPressTimer?.Stop();
+        // 光标只在状态变化时切换（内部缓存，未变化不重新赋值）
+        ApplyPettingCursorByState();
+        // 指针移出容错区域 → 立即结束并睁眼恢复（按住左键移出后不会永久闭眼）
+        if (!snap.IsInsideToleranceZone)
+            _interaction.HeadPetting.EndPettingSession(PettingEndReason.PointerOutsideTolerance);
+    }
+
+    /// <summary>基于缓存几何构建互动上下文（O(1)，无 TranslatePoint/GetDpi/ActualWidth 读取）。</summary>
+    private InteractionContext BuildPettingContext(PettingPointerSnapshot snap)
+    {
+        double w = _cachedCharacterWidthDip;
+        double h = _cachedCharacterHeightDip;
+        double nx = w > 0 ? (snap.Position.X - _cachedCharacterOrigin.X) / w : 0;
+        double ny = h > 0 ? (snap.Position.Y - _cachedCharacterOrigin.Y) / h : 0;
+        nx = Math.Clamp(nx, 0, 1);
+        ny = Math.Clamp(ny, 0, 1);
+        double dt = _lastConsumedPointerTick == 0
+            ? 0.016
+            : Math.Clamp((snap.Timestamp - _lastConsumedPointerTick) / (double)Stopwatch.Frequency, 0.001, 0.1);
+        _lastConsumedPointerTick = snap.Timestamp;
+        return new InteractionContext(nx, ny, nx * w * _cachedDpi.DpiScaleX, ny * h * _cachedDpi.DpiScaleY, dt, snap.IsLeftButtonPressed);
+    }
+
+    /// <summary>预计算抚摸几何缓存（headPetZone / 容错区 / 人物原点与尺寸 / DPI）。
+    /// 只在布局变化（模式切换/缩放/DPI/窗口尺寸/工具栏尺寸）时调用，热路径仅做 Rect.Contains。</summary>
+    private void UpdateCachedPettingGeometry()
+    {
+        _cachedGeometryValid = false;
+        var image = GetActivePetVisual();
+        if (image is null || image.ActualWidth <= 0 || image.ActualHeight <= 0)
+            return;
+        var origin = image.TranslatePoint(new Point(0, 0), this);
+        if (!double.IsFinite(origin.X) || !double.IsFinite(origin.Y)
+            || !double.IsFinite(image.ActualWidth) || !double.IsFinite(image.ActualHeight))
+            return;
+
+        _cachedCharacterOrigin = origin;
+        _cachedCharacterWidthDip = image.ActualWidth;
+        _cachedCharacterHeightDip = image.ActualHeight;
+        _cachedDpi = VisualTreeHelper.GetDpi(this);
+
+        _cachedHeadPetZoneRect = new Rect();
+        _cachedPetToleranceRect = new Rect();
+        var area = _interaction.HitArea.HeadPetZone;
+        if (area is not null)
+        {
+            var (nl, nt, nw, nh) = area.GetBounds(_interaction.HitArea.IsMirrored);
+            var zone = new Rect(
+                origin.X + nl * image.ActualWidth,
+                origin.Y + nt * image.ActualHeight,
+                nw * image.ActualWidth,
+                nh * image.ActualHeight);
+            _cachedHeadPetZoneRect = zone;
+            var tolerance = zone;
+            tolerance.Inflate(32, 28);
+            _cachedPetToleranceRect = tolerance;
+        }
+        _cachedGeometryValid = true;
     }
 
     private async void PetImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1676,6 +1821,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         if (_interaction.IsPettingModeActive)
         {
             // 工具栏区域恢复普通箭头（人物区域保持 Grabbing.cur）
+            _cursorGrabbedInitialized = false; // 工具栏光标是显式赋值，离开后需重新建立抚摸光标状态
             PetImage.Cursor = Cursors.Arrow;
             Live2DImage.Cursor = Cursors.Arrow;
         }
@@ -1691,7 +1837,10 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     private void HoverQuickActions_MouseLeave(object sender, MouseEventArgs e)
     {
         if (_interaction.IsPettingModeActive)
+        {
+            _cursorGrabbedInitialized = false;
             ApplyPettingCursorState(true); // 返回人物区域恢复 Grabbing
+        }
         ScheduleToolbarHide();
     }
 
@@ -1800,6 +1949,8 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         Canvas.SetLeft(HoverQuickActions, toolbarLeft);
         Canvas.SetTop(HoverQuickActions, Math.Max(0, top));
         UpdateToolbarHoverBridge(bounds, toolbarWidth, toolbarLeft, top);
+        // 布局变化时同步预计算抚摸几何缓存（热路径只做 Rect.Contains）
+        UpdateCachedPettingGeometry();
     }
 
     /// <summary>更新人物与工具栏之间的透明连接走廊（可命中，保持工具栏显示）。

@@ -89,6 +89,18 @@ public sealed class PettingReactionController
     private static readonly double HeadTauSeconds = 0.10;
     private static readonly double ReturnTauSeconds = 0.16;
 
+    // ---- Native 写入合并（消除高频重复 P/Invoke）----
+    // 角度变化超过 0.05°、眼睛开度变化超过 0.005、enabled 状态变化、或达到强制刷新间隔时才写入。
+    private const double AngleEpsilonDeg = 0.05;
+    private const double EyeEpsilon = 0.005;
+    private const long NativeForceRefreshMs = 250;
+    private double _lastCommitAngleX, _lastCommitAngleY, _lastCommitAngleZ, _lastCommitBodyX;
+    private bool _lastCommitEyeEnabled;
+    private double _lastCommitEyeL, _lastCommitEyeR;
+    private bool _earCommitWritten;
+    private bool _lastLookAtReduction;
+    private long _lastNativeCommitTick;
+
     public PettingReactionController(Func<Live2DCharacterRenderer?> getRenderer)
     {
         _getRenderer = getRenderer;
@@ -190,15 +202,20 @@ public sealed class PettingReactionController
         WriteAll(force: true);
     }
 
-    /// <summary>抚摸期间降低 LookAt 对头部角度权重，避免 LookAt 抵消抚摸转动（Native 侧生效）。</summary>
-    private void ApplyLookAtReduction(bool enabled)
+    /// <summary>抚摸期间降低 LookAt 对头部角度权重，避免 LookAt 抵消抚摸转动（Native 侧生效）。
+    /// 仅在 enabled 状态变化时写入，避免高频重复 P/Invoke。</summary>
+    private void ApplyLookAtReduction(bool enabled, bool force = false)
     {
+        if (!force && _lastLookAtReduction == enabled)
+            return;
+        _lastLookAtReduction = enabled;
         var renderer = _getRenderer();
         if (renderer is null)
             return;
         try
         {
             renderer.SetPettingLookAtReduction(enabled);
+            PettingPerfDiagnostics.CountNativeCall();
         }
         catch
         {
@@ -317,20 +334,50 @@ public sealed class PettingReactionController
             return;
         try
         {
-            renderer.SetInteractionOffsets(_curAngleX, _curAngleY, _curAngleZ, _curBodyX);
-            if (_eyeOverrideActive && _hasEyes)
+            bool eyeEnabled = _eyeOverrideActive && _hasEyes;
+            double eyeL = eyeEnabled ? _eyeLMin + _eyeOpenness * (_eyeLMax - _eyeLMin) : 0;
+            double eyeR = eyeEnabled ? _eyeRMin + _eyeOpenness * (_eyeRMax - _eyeRMin) : 0;
+            long nowMs = Environment.TickCount64;
+            bool forceRefresh = force || nowMs - _lastNativeCommitTick >= NativeForceRefreshMs;
+
+            // 头部互动偏移：角度变化超过 epsilon、强制刷新或首次才写入（每渲染帧最多一次）
+            if (forceRefresh
+                || Math.Abs(_curAngleX - _lastCommitAngleX) > AngleEpsilonDeg
+                || Math.Abs(_curAngleY - _lastCommitAngleY) > AngleEpsilonDeg
+                || Math.Abs(_curAngleZ - _lastCommitAngleZ) > AngleEpsilonDeg
+                || Math.Abs(_curBodyX - _lastCommitBodyX) > AngleEpsilonDeg)
             {
-                double l = _eyeLMin + _eyeOpenness * (_eyeLMax - _eyeLMin);
-                double r = _eyeRMin + _eyeOpenness * (_eyeRMax - _eyeRMin);
-                renderer.SetEyeOverride(true, l, r);
+                renderer.SetInteractionOffsets(_curAngleX, _curAngleY, _curAngleZ, _curBodyX);
+                PettingPerfDiagnostics.CountNativeCall();
+                _lastCommitAngleX = _curAngleX;
+                _lastCommitAngleY = _curAngleY;
+                _lastCommitAngleZ = _curAngleZ;
+                _lastCommitBodyX = _curBodyX;
             }
-            else
+
+            // 眼睛覆盖：enabled 状态变化或开度变化超过 epsilon 才写入（闭合/睁开动画期间自然每帧变化）
+            if (forceRefresh
+                || eyeEnabled != _lastCommitEyeEnabled
+                || Math.Abs(eyeL - _lastCommitEyeL) > EyeEpsilon
+                || Math.Abs(eyeR - _lastCommitEyeR) > EyeEpsilon)
             {
-                renderer.SetEyeOverride(false, 0, 0);
+                renderer.SetEyeOverride(eyeEnabled, eyeL, eyeR);
+                PettingPerfDiagnostics.CountNativeCall();
+                _lastCommitEyeEnabled = eyeEnabled;
+                _lastCommitEyeL = eyeL;
+                _lastCommitEyeR = eyeR;
             }
-            // 猫耳互动已禁用（EarInteractionMode=Disabled）：始终清零耳朵互动偏移，
+
+            // 猫耳互动已禁用（EarInteractionMode=Disabled）：只在首次/强制刷新时写入一次关闭状态，
             // 不得写入任何 Param_Angle_Rotation_*_CAT_Ear_* 参数，耳朵由原 Physics 自然摆动。
-            renderer.SetEarInteraction(false, 0, 0);
+            if (!_earCommitWritten || forceRefresh)
+            {
+                renderer.SetEarInteraction(false, 0, 0);
+                PettingPerfDiagnostics.CountNativeCall();
+                _earCommitWritten = true;
+            }
+
+            _lastNativeCommitTick = nowMs;
         }
         catch
         {
@@ -348,6 +395,13 @@ public sealed class PettingReactionController
             _hasEyes = false;
             _hasEars = false;
             _warningLogged = false;
+            // 重置 Native 提交缓存：新渲染器状态未知，下次必须重新建立（含 LookAt 降权、猫耳关闭）
+            _lastCommitAngleX = _lastCommitAngleY = _lastCommitAngleZ = _lastCommitBodyX = double.NaN;
+            _lastCommitEyeEnabled = false;
+            _lastCommitEyeL = _lastCommitEyeR = double.NaN;
+            _earCommitWritten = false;
+            _lastLookAtReduction = false;
+            _lastNativeCommitTick = 0;
         }
     }
 

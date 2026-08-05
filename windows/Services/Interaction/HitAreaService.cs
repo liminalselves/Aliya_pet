@@ -16,6 +16,8 @@ namespace AliyaPet.Services.Interaction;
 public sealed class HitAreaService
 {
     private readonly List<HitAreaDefinition> _areas = new();
+    // 高频使用的抚摸头区域：加载时缓存引用，避免热路径每次 LINQ GetArea
+    private HitAreaDefinition? _headPetZone;
 
     /// <summary>是否为调试模式（显示半透明轮廓）。默认关闭。</summary>
     public bool DebugEnabled { get; private set; }
@@ -26,6 +28,7 @@ public sealed class HitAreaService
     public void LoadFromDirectory(string rootDirectory)
     {
         _areas.Clear();
+        _headPetZone = null;
         string configPath = Path.Combine(rootDirectory, "interaction", "aliya_hit_areas.json");
         try
         {
@@ -50,7 +53,11 @@ public sealed class HitAreaService
                         Priority = a.TryGetProperty("priority", out var p) ? p.GetInt32() : 0
                     };
                     if (!string.IsNullOrEmpty(def.Id))
+                    {
                         _areas.Add(def);
+                        if (def.Id == "head_pet_zone")
+                            _headPetZone = def;
+                    }
                 }
             }
             AppLog.Info("HIT_AREA_LOAD count={0}", _areas.Count);
@@ -91,4 +98,11 @@ public sealed class HitAreaService
         var area = GetArea(id);
         return area is not null && area.Contains(nx, ny, IsMirrored);
     }
+
+    /// <summary>头部抚摸区域命中（缓存引用，热路径使用，无 LINQ 分配）。</summary>
+    public bool IsInHeadPetZone(double nx, double ny)
+        => _headPetZone is not null && _headPetZone.Contains(nx, ny, IsMirrored);
+
+    /// <summary>头部抚摸区域定义（供 MainWindow 预计算窗口 DIP 矩形）。</summary>
+    public HitAreaDefinition? HeadPetZone => _headPetZone;
 }

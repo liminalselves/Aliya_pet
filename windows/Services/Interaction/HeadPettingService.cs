@@ -81,6 +81,12 @@ public sealed class HeadPettingService
     /// <summary>当前平滑水平速度（供手掌指针旋转）。</summary>
     public double SmoothedVelocityXPxPerSec => _recognizer.SmoothedVelXPxPerSec;
 
+    /// <summary>设置抚摸输入采样率（30/60Hz，--petting-input-rate）。识别器按该频率采样，不被 MouseMove 事件频率驱动。</summary>
+    public void SetInputRateHz(int hz)
+    {
+        _recognizer.SampleIntervalSeconds = 1.0 / Math.Clamp(hz, 30, 60);
+    }
+
     public void EnterPettingMode()
     {
         if (State == PettingState.Inactive)
@@ -123,7 +129,7 @@ public sealed class HeadPettingService
 
         if (State is PettingState.Armed or PettingState.HoveringHead or PettingState.Finishing)
         {
-            bool inZone = _hitArea.IsInArea("head_pet_zone", ctx.NormX, ctx.NormY);
+            bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
             if (State == PettingState.Armed && inZone)
                 SetState(PettingState.HoveringHead);
             else if (State == PettingState.HoveringHead && !inZone)
@@ -133,6 +139,7 @@ public sealed class HeadPettingService
         if (State is PettingState.Pressed or PettingState.Petting)
         {
             var result = _recognizer.Update(ctx);
+            PettingPerfDiagnostics.CountProcessedSample();
             _lastGestureUtc = DateTime.UtcNow;
             _reaction.SetVelocity(result.SmoothedVelXPxPerSec, petting: true);
             if (result.IsValid && State == PettingState.Pressed)
@@ -153,7 +160,7 @@ public sealed class HeadPettingService
 
         if (State is PettingState.Armed or PettingState.HoveringHead or PettingState.Finishing)
         {
-            bool inZone = _hitArea.IsInArea("head_pet_zone", ctx.NormX, ctx.NormY);
+            bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
             if (inZone)
             {
                 _sessionEnding = false; // 先取消旧恢复再创建新会话（单 EyeOverride 动画）

@@ -1,12 +1,12 @@
 using System;
-using System.Collections.Generic;
 using AliyaPet.Models.Interaction;
 
 namespace AliyaPet.Services.Interaction;
 
 /// <summary>
 /// 抚摸手势识别（纯逻辑，可测试）：
-///   - 采样 30~60Hz，固定容量环形缓冲，只保留最近约 1 秒
+///   - 采样 30~60Hz，固定容量预分配环形缓冲（索引覆盖，不使用 List/LinkedList/LINQ/ToArray），
+///     只保留最近约 1 秒；采样频率受 SampleIntervalSeconds 限制，不被 MouseMove 事件频率驱动。
 ///   - 有效条件：水平移动占主导（&gt;60%）、起始距离 6~10px、单次划动 18~80px、
 ///     水平速度 40~500px/s、至少一次有效方向反转
 ///   - 方向反转：最小反转距离 14~24px、防抖 80~160ms、忽略 &lt;3~5px 抖动
@@ -26,7 +26,14 @@ public sealed class PettingGestureRecognizer
     private readonly double _reversalDebounceSeconds = 0.12; // 80~160ms
     private readonly double _jitterPx = 4;                  // 3~5
 
-    private readonly LinkedList<PettingGestureSample> _samples = new();
+    // 固定容量预分配环形缓冲（索引覆盖，无堆分配）
+    private readonly PettingGestureSample[] _samples;
+    private int _sampleHead;      // 下一个写入位置
+    private int _sampleCount;     // 有效样本数（≤ _capacity）
+    private double _sampleIntervalSeconds;
+    private double _lastSampleElapsed;
+    private double _pendingDt;    // 被限频跳过的累计 dt（保证跳帧后速度仍按真实时间差计算）
+
     private bool _gestureActive;
     private double _startCumulative;
     private double _lastCumulative;
@@ -41,16 +48,29 @@ public sealed class PettingGestureRecognizer
     private double _smoothedVelXPxPerSec;
     private double _gestureElapsed;
 
-    public PettingGestureRecognizer(int capacity = 64, double sampleWindowSeconds = 1.0)
+    public PettingGestureRecognizer(int capacity = 64, double sampleWindowSeconds = 1.0,
+        double sampleIntervalSeconds = 1.0 / 60.0)
     {
         _capacity = capacity;
         _sampleWindowSeconds = sampleWindowSeconds;
+        _sampleIntervalSeconds = Math.Clamp(sampleIntervalSeconds, 1.0 / 120.0, 1.0 / 30.0);
+        _samples = new PettingGestureSample[capacity];
+    }
+
+    /// <summary>采样间隔（秒），限制为 30~60Hz（1/120~1/30 秒）。过低时跳过样本、不判反转。</summary>
+    public double SampleIntervalSeconds
+    {
+        get => _sampleIntervalSeconds;
+        set => _sampleIntervalSeconds = Math.Clamp(value, 1.0 / 120.0, 1.0 / 30.0);
     }
 
     public void StartGesture()
     {
         _gestureActive = true;
-        _samples.Clear();
+        _sampleHead = 0;
+        _sampleCount = 0;
+        _lastSampleElapsed = 0;
+        _pendingDt = 0;
         _startCumulative = 0;
         _lastCumulative = 0;
         _lastPxX = 0;
@@ -68,7 +88,8 @@ public sealed class PettingGestureRecognizer
     public void EndGesture()
     {
         _gestureActive = false;
-        _samples.Clear();
+        _sampleHead = 0;
+        _sampleCount = 0;
         _smoothedVelXPxPerSec = 0;
         _currentDirection = 0;
     }
@@ -87,7 +108,8 @@ public sealed class PettingGestureRecognizer
 
     public double CumulativeDistancePx => _gestureActive ? _lastCumulative - _startCumulative : 0;
 
-    /// <summary>压入一个新采样并返回识别结果。</summary>
+    /// <summary>压入一个新采样并返回识别结果。
+    /// 距上次有效采样不足 SampleIntervalSeconds 时：累计 dt、更新指针基线，不入缓冲、不判反转。</summary>
     public PettingGestureResult Update(InteractionContext ctx)
     {
         if (!_gestureActive)
@@ -97,12 +119,24 @@ public sealed class PettingGestureRecognizer
         double dt = Math.Max(0.001, ctx.DeltaSeconds);
         _gestureElapsed += dt;
 
+        // 采样频率限制：不足间隔直接跳过（只更新位置基线，供下一次 dx 计算），不加入环形缓冲
+        if (_sampleCount > 0 && _gestureElapsed - _lastSampleElapsed < _sampleIntervalSeconds)
+        {
+            _pendingDt += dt;
+            _lastPxX = ctx.ViewportPxX;
+            _lastPxY = ctx.ViewportPxY;
+            return PettingGestureResult.Invalid;
+        }
+        double sampleDt = dt + _pendingDt;
+        _pendingDt = 0;
+        _lastSampleElapsed = _gestureElapsed;
+
         double dx = ctx.ViewportPxX - _lastPxX;
         double dy = ctx.ViewportPxY - _lastPxY;
         double distance = Math.Sqrt(dx * dx + dy * dy);
 
-        double velX = dx / dt;
-        double velY = dy / dt;
+        double velX = dx / sampleDt;
+        double velY = dy / sampleDt;
         _smoothedVelXPxPerSec = _smoothedVelXPxPerSec * 0.7 + Math.Clamp(velX, -800, 800) * 0.3;
 
         _lastPxX = ctx.ViewportPxX;
@@ -143,12 +177,19 @@ public sealed class PettingGestureRecognizer
         var sample = new PettingGestureSample(
             _gestureElapsed, ctx.NormX, ctx.NormY, ctx.ViewportPxX, ctx.ViewportPxY,
             velX, velY, _currentDirection, _lastCumulative);
-        _samples.AddLast(sample);
-        if (_samples.Count > _capacity)
-            _samples.RemoveFirst();
-        // 只保留最近约 1 秒
-        while (_samples.First is not null && _gestureElapsed - _samples.First.Value.TimeSeconds > _sampleWindowSeconds)
-            _samples.RemoveFirst();
+        _samples[_sampleHead] = sample;   // 索引覆盖，不分配
+        _sampleHead = (_sampleHead + 1) % _capacity;
+        if (_sampleCount < _capacity)
+            _sampleCount++;
+
+        // 只保留最近约 1 秒（从最旧端修剪）
+        while (_sampleCount > 0)
+        {
+            var oldest = _samples[OldestIndex];
+            if (_gestureElapsed - oldest.TimeSeconds <= _sampleWindowSeconds)
+                break;
+            _sampleCount--;
+        }
 
         bool isValid = EvaluateGesture(out double strokeDistance, out double horizontalRatio);
         return new PettingGestureResult(
@@ -156,28 +197,31 @@ public sealed class PettingGestureRecognizer
             _lastCumulative - _startCumulative, strokeDistance);
     }
 
+    private int OldestIndex => (_sampleHead - _sampleCount + _capacity) % _capacity;
+
+    /// <summary>按相对序号取样本：0=最旧，count-1=最新。</summary>
+    private PettingGestureSample SampleAt(int index)
+        => _samples[(_sampleHead - _sampleCount + index + _capacity) % _capacity];
+
     private bool EvaluateGesture(out double strokeDistance, out double horizontalRatio)
     {
         strokeDistance = 0;
         horizontalRatio = 0;
-        if (_samples.Count < 2)
+        if (_sampleCount < 2)
             return false;
 
         double total = 0;
         double horizontal = 0;
-        var node = _samples.First;
-        var prev = node!.Value;
-        node = node.Next;
-        while (node is not null)
+        var prev = SampleAt(0);
+        for (int i = 1; i < _sampleCount; i++)
         {
-            var cur = node.Value;
+            var cur = SampleAt(i);
             double ddx = cur.ViewportPxX - prev.ViewportPxX;
             double ddy = cur.ViewportPxY - prev.ViewportPxY;
             double seg = Math.Sqrt(ddx * ddx + ddy * ddy);
             total += seg;
             horizontal += Math.Abs(ddx);
             prev = cur;
-            node = node.Next;
         }
 
         if (total < _minStartDistancePx)
