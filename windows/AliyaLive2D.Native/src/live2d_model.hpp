@@ -231,6 +231,9 @@ private:
     int viewportH_ = 0;
     float scale_ = 1.0f;
 
+    // 视口适配留边系数：模型缩放后四周留出摆动空间（马尾等物理摆动超出静态包围盒时不被视口裁剪）。
+    static constexpr float kModelViewportMargin = 0.88f;
+
     int parameterCount_ = 0;
     int drawableCount_ = 0;
     int textureCount_ = 0;

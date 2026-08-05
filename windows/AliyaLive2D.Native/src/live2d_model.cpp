@@ -400,15 +400,17 @@ void Live2DModel::SetupModelMatrix(int viewportW, int viewportH)
     if (!userModel_ || viewportW <= 0 || viewportH <= 0)
         return;
 
-    // 按角色真实包围盒适配视口（模型通常只占画布的一部分，避免角色过小）
+    // 按角色真实包围盒适配视口（模型通常只占画布的一部分，避免角色过小）。
+    // 留边系数 kModelViewportMargin：模型在视口四周留出摆动空间，
+    // 马尾/头发等物理摆动顶点会超出静态包围盒，若填满视口则摆动部分被 D3D 视口裁剪（如左转头时马尾右上缺失）。
+    // HitTest 使用同一矩阵反变换，坐标保持一致。
     float fit = std::min(static_cast<float>(viewportW) / modelBoundsW_,
                          static_cast<float>(viewportH) / modelBoundsH_);
-    float s = fit * scale_;
+    float s = fit * scale_ * kModelViewportMargin;
 
     CubismMatrix44 m;
     m.LoadIdentity();
     // 模型坐标系 Y 轴朝上，视口 Y 轴朝下（左上原点）：模型 +Y -> 视口上方。
-    // HitTest 使用同一矩阵反变换，坐标保持一致。
     m.Scale(s, -s);
     m.Translate(static_cast<float>(viewportW) * 0.5f, static_cast<float>(viewportH) * 0.5f);
 
