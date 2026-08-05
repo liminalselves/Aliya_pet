@@ -119,13 +119,15 @@ public sealed class PettingGestureRecognizer
         double dt = Math.Max(0.001, ctx.DeltaSeconds);
         _gestureElapsed += dt;
 
-        // 采样频率限制：不足间隔直接跳过（只更新位置基线，供下一次 dx 计算），不加入环形缓冲
-        if (_sampleCount > 0 && _gestureElapsed - _lastSampleElapsed < _sampleIntervalSeconds)
+        // 采样频率限制：不足间隔直接跳过（只更新位置基线，供下一次 dx 计算），不加入环形缓冲。
+        // 阈值取 sampleInterval - 1ms，避免与 60Hz 消费计时器（dt≈16.7ms）临界误跳。
+        if (_sampleCount > 0 && _gestureElapsed - _lastSampleElapsed < _sampleIntervalSeconds - 0.001)
         {
             _pendingDt += dt;
             _lastPxX = ctx.ViewportPxX;
             _lastPxY = ctx.ViewportPxY;
-            return PettingGestureResult.Invalid;
+            // 未到采样间隔：返回上一次平滑速度（保持头部目标，避免下游 SetVelocity(0) 把头部清零导致转向失效）
+            return new PettingGestureResult(false, false, _currentDirection, _smoothedVelXPxPerSec, 0, 0);
         }
         double sampleDt = dt + _pendingDt;
         _pendingDt = 0;
@@ -137,7 +139,20 @@ public sealed class PettingGestureRecognizer
 
         double velX = dx / sampleDt;
         double velY = dy / sampleDt;
-        _smoothedVelXPxPerSec = _smoothedVelXPxPerSec * 0.7 + Math.Clamp(velX, -800, 800) * 0.3;
+        // 方向反转时立即换向（绕过 EMA 滞后，否则快速往返抚摸下头部 X 轴转向迟钝/错乱）。
+        // 仅在水平方向符号发生变化时覆盖，不改变方向反转检测阈值与抚摸计数。
+        if (Math.Abs(dx) >= _jitterPx)
+        {
+            int newDir = dx > 0 ? 1 : -1;
+            if (newDir != _currentDirection && _currentDirection != 0)
+                _smoothedVelXPxPerSec = Math.Clamp(velX, -800, 800);
+            else
+                _smoothedVelXPxPerSec = _smoothedVelXPxPerSec * 0.7 + Math.Clamp(velX, -800, 800) * 0.3;
+        }
+        else
+        {
+            _smoothedVelXPxPerSec = _smoothedVelXPxPerSec * 0.7 + Math.Clamp(velX, -800, 800) * 0.3;
+        }
 
         _lastPxX = ctx.ViewportPxX;
         _lastPxY = ctx.ViewportPxY;

@@ -866,9 +866,15 @@ public sealed class Live2DCharacterRenderer : ICharacterRenderer
             Marshal.FreeHGlobal(_pixelBuffer);
             _pixelBuffer = IntPtr.Zero;
         }
+        // 仅当 hostImage 当前 Source 是本渲染器的 bitmap 时才清除/隐藏；
+        // 新旧渲染器可共享同一 hostImage（预加载→重建），不能把新实例的显示一并清掉。
+        var currentBitmap = _bitmap;
         _bitmap = null;
-        _hostImage.Source = null;
-        _hostImage.Visibility = Visibility.Collapsed;
+        if (currentBitmap is not null && ReferenceEquals(_hostImage.Source, currentBitmap))
+        {
+            _hostImage.Source = null;
+            _hostImage.Visibility = Visibility.Collapsed;
+        }
         GC.SuppressFinalize(this);
     }
 

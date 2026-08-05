@@ -1691,7 +1691,8 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             _interaction.HeadPetting.EndPettingSession(PettingEndReason.PointerOutsideTolerance);
     }
 
-    /// <summary>基于缓存几何构建互动上下文（O(1)，无 TranslatePoint/GetDpi/ActualWidth 读取）。</summary>
+    /// <summary>基于缓存几何构建互动上下文（O(1)，无 TranslatePoint/GetDpi/ActualWidth 读取）。
+    /// dt 用消费时刻间隔（而非快照时间戳差），保证高频突发输入下识别器采样间隔稳定。</summary>
     private InteractionContext BuildPettingContext(PettingPointerSnapshot snap)
     {
         double w = _cachedCharacterWidthDip;
@@ -1700,10 +1701,11 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         double ny = h > 0 ? (snap.Position.Y - _cachedCharacterOrigin.Y) / h : 0;
         nx = Math.Clamp(nx, 0, 1);
         ny = Math.Clamp(ny, 0, 1);
+        long nowTick = Stopwatch.GetTimestamp();
         double dt = _lastConsumedPointerTick == 0
             ? 0.016
-            : Math.Clamp((snap.Timestamp - _lastConsumedPointerTick) / (double)Stopwatch.Frequency, 0.001, 0.1);
-        _lastConsumedPointerTick = snap.Timestamp;
+            : Math.Clamp((nowTick - _lastConsumedPointerTick) / (double)Stopwatch.Frequency, 0.001, 0.1);
+        _lastConsumedPointerTick = nowTick;
         return new InteractionContext(nx, ny, nx * w * _cachedDpi.DpiScaleX, ny * h * _cachedDpi.DpiScaleY, dt, snap.IsLeftButtonPressed);
     }
 

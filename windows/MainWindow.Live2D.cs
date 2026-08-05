@@ -225,7 +225,28 @@ public partial class MainWindow
                 AppLog.Info("应用退出，取消 Live2D 初始化");
                 return false;
             }
-            _live2D = renderer;
+            // 接管/预加载实例仲裁：
+            //  - applyUi:true（激活）：无条件接管，释放旧的渲染器。
+            //  - applyUi:false（后台预加载）：若当前已是激活的 Live2D 实例（正在渲染），本次预加载
+            //    实例直接释放，不覆盖当前实例（否则互动参数会写入非可见渲染器，头部/眼睛不生效）。
+            bool takeOver = applyUi;
+            if (!takeOver && _rendererMode != CharacterRenderMode.Live2D)
+                takeOver = true; // 尚无激活实例：预加载实例作为缓存接管
+            if (takeOver)
+            {
+                if (_live2D is not null && !ReferenceEquals(_live2D, renderer))
+                {
+                    try { _live2D.Dispose(); }
+                    catch (Exception ex) { AppLog.Warn("释放旧 Live2D 渲染器失败: {0}", ex.Message); }
+                }
+                _live2D = renderer;
+            }
+            else
+            {
+                renderer.Dispose();
+                AppLog.Info("Live2D 预加载实例已释放（当前已有激活实例）");
+                return true;
+            }
 
             if (applyUi)
             {
@@ -1791,19 +1812,33 @@ public partial class MainWindow
         bool consumed = _interaction.OnPointerDown(pressCtx);
         AppLog.Info("PETTING_INPUT_SIM down consumed={0}", consumed);
 
-        // 快速左右移动：每 16ms 突发 10 个快照，等效模拟 ~600 事件/秒的高频鼠标输入，持续约 4 秒。
-        // 消费计时器（≤60Hz）每 tick 只处理最新一个，其余被覆盖丢弃，
-        // 验证 processedSamplesPerSec 封顶在配置采样率、Native 调用有界。
-        for (int round = 0; round < 250; round++)
+        // 方向反转验证：位置在 ±45px 间左右振荡（每 18 轮换向 ≈ 288ms/方向，接近真实抚摸频率），
+        // 禁用 LookAt 排除干扰，每约 1 秒输出一次 ParamAngleX 供人工核对转向方向。
+        if (_live2D is not null)
         {
+            _live2D.SetLookAtEnabled(false);
+            _live2D.ClearLookTarget();
+        }
+        double px = 0;
+        for (int i = 0; i < 200; i++)
+        {
+            double dir = (i / 18) % 2 == 0 ? 1 : -1;
+            px += dir * 5;
+            if (px > 45) px = 45; else if (px < -45) px = -45;
             for (int j = 0; j < 10; j++)
             {
-                double off = (round / 4) % 2 == 0 ? -45 : 45;
-                var pos = new Point(hx + off, hy);
                 _latestPettingPointer = new PettingPointerSnapshot(
-                    pos, Stopwatch.GetTimestamp(), true, true, ++_latestPettingPointerSequence);
+                    new Point(hx + px, hy), Stopwatch.GetTimestamp(), true, true, ++_latestPettingPointerSequence);
             }
             await Task.Delay(16);
+            if (i % 60 == 0)
+            {
+                double angX = 0;
+                if (_live2D is not null)
+                    _live2D.GetParameterValue("ParamAngleX", out angX);
+                AppLog.Info("PETTING_REVERSAL_CHECK i={0} px={1:0.#} vel={2:0.#} ParamAngleX={3:0.##}",
+                    i, px, _interaction.SmoothedVelocityXPxPerSec, angX);
+            }
         }
         await Task.Delay(3000);
 
