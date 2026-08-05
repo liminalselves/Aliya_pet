@@ -15,10 +15,10 @@
         PreviewMouseLeftButtonDown="Window_PreviewMouseLeftButtonDown">
     <Window.Resources>
         <Style x:Key="HoverActionButton" TargetType="{x:Type Button}">
-            <Setter Property="Height" Value="46"/>
-            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="MinWidth" Value="56"/>
             <Setter Property="Margin" Value="3,0"/>
-            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Padding" Value="10,0"/>
             <Setter Property="Foreground" Value="#FF252A38"/>
             <Setter Property="FontFamily" Value="Avenir Next, Microsoft YaHei UI"/>
             <Setter Property="FontSize" Value="12"/>
@@ -61,11 +61,11 @@
     </Window.Resources>
     <Grid x:Name="RootLayout">
         <!-- 人物显示层（缩放/旋转/倾斜/帧尺寸变化只作用于本层，工具栏独立于本层）。
-             底部 Margin 预留工具栏空间（8 间距 + 64 工具栏 + 38 阴影 + 14 底部安全 = 124），
+             底部 Margin 预留工具栏空间（8 间距 + 52 工具栏 + 38 阴影 + 14 底部安全 = 112），
              保证工具栏完整外观（含圆角描边与阴影）位于窗口客户区内，不被底部裁切。 -->
         <Grid x:Name="CharacterContainer"
               Panel.ZIndex="10"
-              Margin="70,95,70,124">
+              Margin="70,95,70,112">
             <Image x:Name="PetImage"
                    Source="/Assets/aliya_pet.png"
                    Stretch="Uniform"
@@ -183,9 +183,9 @@
                        MouseLeave="ToolbarHoverBridge_MouseLeave"/>
             <Border x:Name="HoverQuickActions"
                     Panel.ZIndex="41"
-                    MinHeight="64"
-                    Padding="10,8"
-                    CornerRadius="30"
+                    MinHeight="52"
+                    Padding="8,6"
+                    CornerRadius="22"
                     BorderBrush="#B8FFFFFF"
                     BorderThickness="1"
                     ClipToBounds="False"
@@ -214,22 +214,22 @@
                 <StackPanel Orientation="Horizontal">
                     <Button x:Name="WeatherButton"
                             Style="{StaticResource HoverActionButton}"
-                            Width="100"
-                            Height="46"
+                            Width="72"
+                            Height="40"
                             Content="天气"
                             ToolTip="查询当前天气"
                             Click="HoverWeather_Click"/>
                     <Button x:Name="ActionButton"
                             Style="{StaticResource HoverActionButton}"
-                            Width="100"
-                            Height="46"
+                            Width="72"
+                            Height="40"
                             Content="动作"
                             ToolTip="播放一个随机动作"
                             Click="HoverAction_Click"/>
                     <Button x:Name="SpeakButton"
                             Style="{StaticResource HoverActionButton}"
-                            Width="100"
-                            Height="46"
+                            Width="72"
+                            Height="40"
                             Content="说话"
                             ToolTip="让宠物说一句话"
                             Click="HoverTalk_Click"/>

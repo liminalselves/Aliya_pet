@@ -43,7 +43,7 @@ public partial class MainWindow : Window, IDialogueDisplay, IPettingDialogueHost
     // ---- 工具栏底部预留（人物底部到窗口底部的空间，保证工具栏完整外观不被窗口裁切）----
     // 人物底部 → 工具栏间距 + 工具栏高度 + 阴影向下延伸 + 底部安全区
     private const double ToolbarGap = 8;                        // 人物底部与工具栏间距
-    private const double ToolbarMinHeight = 64;                 // HoverQuickActions.MinHeight
+    private const double ToolbarMinHeight = 52;                 // HoverQuickActions.MinHeight
     private const double ToolbarShadowMargin = 38;              // DropShadowEffect(BlurRadius20+ShadowDepth5) 实际向下延伸约 38px
     private const double ToolbarBottomSafetyPadding = 14;       // 工具栏下方透明安全空间
     private const double ToolbarSidePadding = 12;               // 工具栏左右安全边距
@@ -1946,7 +1946,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     // ==================== 工具栏统一布局（PNG/Live2D 共用，父级=CharacterToolbarLayer） ====================
 
     private const double ToolbarHideDelayMilliseconds = 1200;
-    private const double DefaultToolbarWidth = 338; // 回退宽度（3 按钮 + 内边距），实际以 Measure 为准
+    private const double DefaultToolbarWidth = 250; // 回退宽度（3×72 按钮 + 内边距），实际以 Measure 为准
     private Rect _currentCharacterBounds = Rect.Empty;
 
     /// <summary>人物当前在窗口 DIP 坐标系下的实际显示矩形（不使用纹理像素/模型坐标/旧资源尺寸）。</summary>
