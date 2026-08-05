@@ -456,17 +456,9 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         }
     }
 
-    // ---- 抚摸模式 UI ----
-    private void HeadPettingButton_Click(object sender, RoutedEventArgs e)
-    {
-        _interaction.TogglePettingMode();
-        e.Handled = true;
-    }
-
+    // ---- 抚摸模式 UI（自动触发：鼠标悬停头部区域进入，离开退出）----
     private void OnPettingModeChanged(bool active)
     {
-        HeadPettingButton.IsChecked = active;
-        HeadPettingButton.ToolTip = active ? "退出抚摸模式" : "进入头部抚摸模式";
         // 无论进入还是退出：彻底隐藏自定义覆盖层，并清理旧位置/旋转/缩放
         ResetPettingCursorOverlay();
         _cursorGrabbedInitialized = false; // 模式变化后光标必须重新建立
@@ -589,6 +581,27 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     private void CheckPettingSafety()
     {
         var hp = _interaction.HeadPetting;
+
+        // 自动抚摸模式（周期性，150ms）：鼠标在头部区域即进入，离开且无会话即退出。
+        // 使用 Win32 GetCursorPos 实时读取光标位置（Mouse.GetPosition 缓存最后一次窗口内
+        // 事件位置，鼠标离开窗口后无法检测，导致自动退出失效）。
+        if (_cachedGeometryValid && GetCursorPos(out var screenPt))
+        {
+            var windowPoint = PointFromScreen(new Point(screenPt.X, screenPt.Y));
+            bool inHeadZone = _cachedHeadPetZoneRect.Contains(windowPoint);
+            if (!hp.IsPettingModeActive)
+            {
+                if (inHeadZone)
+                    hp.EnterPettingMode();
+                return;
+            }
+            if (!hp.IsPettingSessionActive && !inHeadZone)
+            {
+                _interaction.ExitPettingMode("pointer_left_head");
+                return;
+            }
+        }
+
         if (hp.State is not (PettingState.Pressed or PettingState.Petting))
             return;
 
@@ -1633,6 +1646,15 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         if (UseCustomPettingCursor)
             UpdatePalmCursor(windowPos, leftPressed);
 
+        // 自动抚摸模式：鼠标悬停到头部区域即自动进入（O(1) 缓存矩形判断，不重计算几何）。
+        // 进入后由消费计时器处理状态机；离开头部由 CheckPettingSafety 周期检查自动退出。
+        if (!_interaction.IsPettingModeActive
+            && _cachedGeometryValid
+            && _cachedHeadPetZoneRect.Contains(windowPos))
+        {
+            _interaction.HeadPetting.EnterPettingMode();
+        }
+
         // 抚摸模式：输入由消费计时器处理（本方法不返回"已接管"判定，消费时统一处理）
         if (_interaction.IsPettingModeActive)
         {
@@ -2014,7 +2036,6 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         CharacterToolbarLayer.IsEnabled = true;
         HoverQuickActions.IsEnabled = true;
         HoverQuickActions.IsHitTestVisible = true;
-        HeadPettingButton.IsEnabled = true;
         if (HoverQuickActions.Visibility != Visibility.Visible)
             HoverQuickActions.Visibility = Visibility.Visible;
         // 不主动重新 Capture 人物层；释放残留捕获（若捕获属于人物层）
@@ -2066,7 +2087,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     /// <summary>工具栏是否固定显示（抚摸模式选中/正在抚摸时不自动隐藏）。</summary>
     private bool IsToolbarPinned()
     {
-        return _interaction.IsPettingModeActive || HeadPettingButton.IsChecked == true;
+        return _interaction.IsPettingModeActive;
     }
 
     private Rect ToolbarRect()

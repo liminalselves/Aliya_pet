@@ -58,45 +58,6 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="HeadPettingToggleButton" TargetType="{x:Type ToggleButton}">
-            <Setter Property="Height" Value="36"/>
-            <Setter Property="MinWidth" Value="68"/>
-            <Setter Property="Margin" Value="3,0"/>
-            <Setter Property="Padding" Value="12,0"/>
-            <Setter Property="Foreground" Value="#FF252A38"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Background" Value="#24FFFFFF"/>
-            <Setter Property="BorderBrush" Value="#70FFFFFF"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type ToggleButton}">
-                        <Border x:Name="Surface"
-                                Padding="{TemplateBinding Padding}"
-                                CornerRadius="13"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Surface" Property="Background" Value="#70FFFFFF"/>
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="#D0FFFFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Surface" Property="Opacity" Value="0.7"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Surface" Property="Background" Value="#8FE0F0FF"/>
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="#FF9FC4E8"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Window.Resources>
     <Grid x:Name="RootLayout">
         <!-- 人物显示层（缩放/旋转/倾斜/帧尺寸变化只作用于本层，工具栏独立于本层） -->
@@ -246,19 +207,6 @@
                     <TranslateTransform x:Name="HoverQuickActionsTranslate" Y="0"/>
                 </Border.RenderTransform>
                 <StackPanel Orientation="Horizontal">
-                    <ToggleButton x:Name="HeadPettingButton"
-                                  Style="{StaticResource HeadPettingToggleButton}"
-                                  ToolTip="进入头部抚摸模式"
-                                  Click="HeadPettingButton_Click">
-                        <Image Source="/Assets/interaction/Icons/HeadPettingOpenHand_64.png"
-                               Width="18"
-                               Height="18"
-                               MaxWidth="20"
-                               MaxHeight="20"
-                               Stretch="Uniform"
-                               SnapsToDevicePixels="True"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
-                    </ToggleButton>
                     <Button Style="{StaticResource HoverActionButton}"
                             Content="天气"
                             ToolTip="查询当前天气"

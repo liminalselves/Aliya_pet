@@ -121,15 +121,28 @@ public sealed class HeadPettingService
     }
 
     /// <summary>指针移动。返回 true 表示互动已接管（MainWindow 不再移动窗口）。
-    /// 移出容错区域的结束判断由 MainWindow 依据统一窗口坐标执行。</summary>
+    /// 自动抚摸模式：鼠标悬停到头部区域即自动进入抚摸模式，无会话且离开头部即自动退出。
+    /// 移出容错区域的会话结束判断由 MainWindow 依据统一窗口坐标执行。</summary>
     public bool OnPointerMove(InteractionContext ctx)
     {
+        bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
+
+        // 自动进入/退出抚摸模式（抚摸区域仅限头部 head_pet_zone）
         if (!IsPettingModeActive)
+        {
+            if (inZone)
+                EnterPettingMode();
+            else
+                return false;
+        }
+        else if (!IsPettingSessionActive && !inZone)
+        {
+            ExitPettingMode("pointer_left_head");
             return false;
+        }
 
         if (State is PettingState.Armed or PettingState.HoveringHead or PettingState.Finishing)
         {
-            bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
             if (State == PettingState.Armed && inZone)
                 SetState(PettingState.HoveringHead);
             else if (State == PettingState.HoveringHead && !inZone)
@@ -155,12 +168,18 @@ public sealed class HeadPettingService
     /// <summary>左键按下。返回 true 表示互动已接管（MainWindow 不开始拖动/单击）。</summary>
     public bool OnPointerDown(InteractionContext ctx)
     {
+        // 自动抚摸模式兜底：按下时若尚未进入但位于头部区域，先自动进入
+        bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
         if (!IsPettingModeActive)
-            return false;
+        {
+            if (inZone)
+                EnterPettingMode();
+            else
+                return false;
+        }
 
         if (State is PettingState.Armed or PettingState.HoveringHead or PettingState.Finishing)
         {
-            bool inZone = _hitArea.IsInHeadPetZone(ctx.NormX, ctx.NormY);
             if (inZone)
             {
                 _sessionEnding = false; // 先取消旧恢复再创建新会话（单 EyeOverride 动画）

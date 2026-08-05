@@ -1356,18 +1356,18 @@ public partial class MainWindow
                 mode, exStyle, (exStyle & WS_EX_TRANSPARENT) != 0,
                 (exStyle & WS_EX_NOACTIVATE) != 0, (exStyle & WS_EX_LAYERED) != 0);
 
-            // 按钮中心命中（Visual + Input + DirectlyOver）
-            var center = GetElementWindowCenter(HeadPettingButton);
+            // 按钮中心命中（Visual + Input + DirectlyOver）——以工具栏容器中心为探针
+            var center = GetElementWindowCenter(HoverQuickActions);
             var visualHit = VisualTreeHelper.HitTest(this, center)?.VisualHit;
             var inputHit = this.InputHitTest(center);
             var over = Mouse.DirectlyOver;
-            AppLog.Info("LIVE2D_TOOLBAR_HIT_TEST button=HeadPettingButton mode={0} windowPoint=({1:0.#},{2:0.#}) visualHit={3} inputHit={4} mouseDirectlyOver={5} originalSource={6} capturedElement={7}",
+            AppLog.Info("LIVE2D_TOOLBAR_HIT_TEST target=HoverQuickActions mode={0} windowPoint=({1:0.#},{2:0.#}) visualHit={3} inputHit={4} mouseDirectlyOver={5} originalSource={6} capturedElement={7}",
                 mode, center.X, center.Y, visualHit?.GetType().Name ?? "null",
                 inputHit?.GetType().Name ?? "null", over?.GetType().Name ?? "null",
                 over?.GetType().Name ?? "null", Mouse.Captured?.GetType().Name ?? "null");
 
             // 父级链
-            LogToolbarParentChain(HeadPettingButton, mode);
+            LogToolbarParentChain(HoverQuickActions, mode);
 
             // 各层 Bounds
             var l2d = Live2DImage.TranslatePoint(new Point(0, 0), this);
@@ -1494,8 +1494,8 @@ public partial class MainWindow
             HoverQuickActions.IsHitTestVisible, HoverQuickActions.IsEnabled,
             Panel.GetZIndex(HoverQuickActions));
 
-        // HeadPettingButton 中心命中
-        var center = GetElementWindowCenter(HeadPettingButton);
+        // 工具栏中心命中（验证工具栏区域不被穿透、可正常点击）
+        var center = GetElementWindowCenter(HoverQuickActions);
         var hit = VisualTreeHelper.HitTest(this, center);
         var el = hit?.VisualHit as FrameworkElement;
         AppLog.Info("TOOLBAR_HIT_TEST point={0} hitElement={1} elementType={2} elementName={3} isHitTestVisible={4} zIndex={5}",
@@ -1503,7 +1503,7 @@ public partial class MainWindow
             el?.Name ?? "", el is UIElement ui && ui.IsHitTestVisible, Panel.GetZIndex(el ?? this));
 
         bool pass = el is not null && FindToolbarAncestor(el);
-        AppLog.Info("TOOLBAR_HIT_TEST_RESULT {0} headPetting={1}",
+        AppLog.Info("TOOLBAR_HIT_TEST_RESULT {0} toolbar={1}",
             pass ? "PASS" : "FAIL", pass);
         Close();
     }
