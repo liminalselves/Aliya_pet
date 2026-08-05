@@ -416,12 +416,24 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         }
     }
 
-    /// <summary>气泡显示实现（供 DialoguePlaybackService 调用）。</summary>
+    /// <summary>气泡显示实现（供 DialoguePlaybackService 调用）。
+    /// 气泡贴近人物头顶上方（基于人物实际显示矩形顶部），而非固定在窗口顶部。</summary>
     private void ShowSpeechPage(string pageText)
     {
         _speechTimer.Stop();
         SpeechText.Text = pageText;
         SpeechBubble.Visibility = Visibility.Visible;
+        // Measure 按窗口可用宽度计算真实内容高度（含换行文字）；Measure(∞,∞) 只测单行高度会低估
+        double maxWidth = Math.Max(1, ActualWidth - SpeechBubble.Margin.Left - SpeechBubble.Margin.Right);
+        SpeechBubble.Measure(new Size(maxWidth, double.PositiveInfinity));
+        double bubbleHeight = SpeechBubble.DesiredSize.Height > 0 ? SpeechBubble.DesiredSize.Height : 40;
+        const double gap = 8;
+        // 以人物实际顶部（图像顶）为基准，气泡底部 = 头顶 - 间距
+        var bounds = GetCharacterVisualBounds();
+        double charTop = IsValidBounds(bounds) ? bounds.Top : CharacterTopMargin;
+        double top = Math.Max(4, charTop - bubbleHeight - gap);
+        SpeechBubble.Margin = new Thickness(SpeechBubble.Margin.Left, top, SpeechBubble.Margin.Right, 0);
+        SpeechBubble.UpdateLayout(); // 使 Margin 立即生效（首次显示时布局尚未刷新）
     }
 
     private void HideSpeechBubble()
