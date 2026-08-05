@@ -39,6 +39,18 @@ public partial class MainWindow : Window, IDialogueDisplay, IPettingDialogueHost
     private const string AliyaCharacter = "Aliya";
     private const string WindyCharacter = "Windy";
     private const string UserClickScene = "user_click";
+
+    // ---- 工具栏底部预留（人物底部到窗口底部的空间，保证工具栏完整外观不被窗口裁切）----
+    // 人物底部 → 工具栏间距 + 工具栏高度 + 阴影向下延伸 + 底部安全区
+    private const double ToolbarGap = 8;                        // 人物底部与工具栏间距
+    private const double ToolbarMinHeight = 64;                 // HoverQuickActions.MinHeight
+    private const double ToolbarShadowMargin = 38;              // DropShadowEffect(BlurRadius20+ShadowDepth5) 实际向下延伸约 38px
+    private const double ToolbarBottomSafetyPadding = 14;       // 工具栏下方透明安全空间
+    private const double ToolbarSidePadding = 12;               // 工具栏左右安全边距
+    private const double CharacterTopMargin = 95;               // CharacterContainer.Margin.Top
+    private const double OldCharacterBottomMargin = 70;         // 旧布局人物底部 margin（用于启动高度增量）
+    private const double ToolbarBottomReserve =
+        ToolbarGap + ToolbarMinHeight + ToolbarShadowMargin + ToolbarBottomSafetyPadding; // 112
     /// <summary>自定义抚摸指针开关：当前禁用（只显示普通 Windows 鼠标，不显示任何手掌/抚摸覆盖图标）。</summary>
     private static readonly bool UseCustomPettingCursor = false;
     private readonly DispatcherTimer _idleTimer;
@@ -756,14 +768,17 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
             _ => 0
         };
         var maximumVisualWidth = GetMaximumVisualWidth();
+        double baseWidth = settings.Width + (legacyLayout ? HorizontalAnimationPadding * 2 : 0);
         Width = Clamp(
-            settings.Width + (legacyLayout ? HorizontalAnimationPadding * 2 : 0),
+            Math.Max(baseWidth, GetToolbarWidth() + ToolbarSidePadding * 2),
             MinimumVisualWidth + HorizontalAnimationPadding * 2,
             maximumVisualWidth + HorizontalAnimationPadding * 2);
+        // 窗口高度 = 人物高度 + 顶部边距 + 工具栏底部预留（8 间距 + 64 工具栏 + 26 阴影 + 14 安全区）。
+        // 相对旧布局（人物底 margin 70）增加 42 DIP，保持人物在窗口内的位置不变（底部 margin 同步增大）。
         Height = Clamp(
-            settings.Height + heightAdjustment,
-            MinimumVisualWidth * 470 / 300 + VerticalAnimationPadding,
-            maximumVisualWidth * 470 / 300 + VerticalAnimationPadding);
+            settings.Height + heightAdjustment + (ToolbarBottomReserve - OldCharacterBottomMargin),
+            HeightForVisualWidth(MinimumVisualWidth),
+            HeightForVisualWidth(maximumVisualWidth));
         Topmost = settings.Topmost;
         _petRunning = settings.PetRunning;
         _autoActions = settings.AutoActions;
@@ -802,7 +817,10 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
         if (double.IsFinite(settings.Left) && double.IsFinite(settings.Top))
         {
-            Left = settings.Left - (legacyLayout ? HorizontalAnimationPadding : 0);
+            // 窗口宽度可能因工具栏预留而增大：平移窗口使人物视觉中心保持不变。
+            double oldWindowWidth = settings.Width + (legacyLayout ? HorizontalAnimationPadding * 2 : 0);
+            double leftBase = settings.Left - (legacyLayout ? HorizontalAnimationPadding : 0);
+            Left = leftBase + (oldWindowWidth - Width) / 2;
             Top = settings.Top - (legacyLayout ? TopAnimationPaddingDelta : 0);
         }
         else
@@ -1927,9 +1945,8 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
     // ==================== 工具栏统一布局（PNG/Live2D 共用，父级=CharacterToolbarLayer） ====================
 
-    private const double ToolbarGap = 8; // DIP，人物底部与工具栏间距（6~10）
     private const double ToolbarHideDelayMilliseconds = 1200;
-    private const double DefaultToolbarWidth = 318;
+    private const double DefaultToolbarWidth = 338; // 回退宽度（3 按钮 + 内边距），实际以 Measure 为准
     private Rect _currentCharacterBounds = Rect.Empty;
 
     /// <summary>人物当前在窗口 DIP 坐标系下的实际显示矩形（不使用纹理像素/模型坐标/旧资源尺寸）。</summary>
@@ -1967,14 +1984,29 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
         _currentCharacterBounds = bounds;
         double centerX = bounds.Left + bounds.Width / 2;
-        double top = bounds.Top + bounds.Height + ToolbarGap;
-        double toolbarWidth = HoverQuickActions.ActualWidth > 0 ? HoverQuickActions.ActualWidth : DefaultToolbarWidth;
-        double toolbarLeft = Math.Max(0, centerX - toolbarWidth / 2);
+        // 顶部对齐到 0.5 DIP，避免半像素圆角描边/阴影被像素边界取整裁切
+        double top = Math.Round((bounds.Top + bounds.Height + ToolbarGap) * 2.0) / 2.0;
+        double toolbarWidth = GetToolbarWidth();
+        double toolbarLeft = centerX - toolbarWidth / 2;
+        // 左右安全边距；工具栏过宽时优先保左安全边距（不强制压缩工具栏）
+        double rootWidth = ActualWidth;
+        double maxLeft = Math.Max(ToolbarSidePadding, rootWidth - ToolbarSidePadding - toolbarWidth);
+        toolbarLeft = Math.Min(Math.Max(toolbarLeft, ToolbarSidePadding), maxLeft);
         Canvas.SetLeft(HoverQuickActions, toolbarLeft);
         Canvas.SetTop(HoverQuickActions, Math.Max(0, top));
         UpdateToolbarHoverBridge(bounds, toolbarWidth, toolbarLeft, top);
         // 布局变化时同步预计算抚摸几何缓存（热路径只做 Rect.Contains）
         UpdateCachedPettingGeometry();
+    }
+
+    /// <summary>工具栏实际宽度：优先 ActualWidth；未布局时显式 Measure 取 DesiredSize（随可见按钮自动变化）。</summary>
+    private double GetToolbarWidth()
+    {
+        if (HoverQuickActions.ActualWidth > 0)
+            return HoverQuickActions.ActualWidth;
+        HoverQuickActions.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double w = HoverQuickActions.DesiredSize.Width;
+        return w > 0 ? w : DefaultToolbarWidth;
     }
 
     /// <summary>更新人物与工具栏之间的透明连接走廊（可命中，保持工具栏显示）。
@@ -2161,15 +2193,25 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         e.Handled = true;
     }
 
+    /// <summary>按人物视觉宽度计算窗口内容高度：人物高度 + 顶部边距 + 工具栏底部预留。</summary>
+    private static double HeightForVisualWidth(double visualWidth)
+        => visualWidth * 470 / 300 + CharacterTopMargin + ToolbarBottomReserve;
+
+    /// <summary>窗口宽度：至少容纳人物，且保证工具栏（自动宽度）带左右安全边距完整显示在窗口内。</summary>
+    private double WindowWidthFor(double visualWidth)
+        => Math.Max(visualWidth + HorizontalAnimationPadding * 2, GetToolbarWidth() + ToolbarSidePadding * 2);
+
     private void SetPetSize(double width)
     {
-        var oldBottom = Top + Height;
+        // 保持人物视觉中心不变：先记旧人物中心（屏幕），调整尺寸后平移窗口使中心不变。
+        var oldCenterX = Left + Width / 2;
+        var oldCenterY = Top + CharacterTopMargin + (Height - CharacterTopMargin - ToolbarBottomReserve) / 2;
         var visualWidth = Clamp(width, MinimumVisualWidth, GetMaximumVisualWidth());
-        Width = visualWidth + HorizontalAnimationPadding * 2;
-        Height = Math.Max(
-            MinimumVisualWidth * 470 / 300 + VerticalAnimationPadding,
-            visualWidth * 470 / 300 + VerticalAnimationPadding);
-        Top = oldBottom - Height;
+        Width = WindowWidthFor(visualWidth);
+        double charHeight = visualWidth * 470 / 300;
+        Height = HeightForVisualWidth(visualWidth);
+        Left = oldCenterX - Width / 2;
+        Top = oldCenterY - CharacterTopMargin - charHeight / 2;
         if (_rendererMode == CharacterRenderMode.Live2D)
             ResizeLive2D();
         ClampToWorkArea();
@@ -2182,7 +2224,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     {
         var workArea = SystemParameters.WorkArea;
         var maximumByWidth = workArea.Width - HorizontalAnimationPadding * 2;
-        var maximumByHeight = (workArea.Height - VerticalAnimationPadding) * 300 / 470;
+        var maximumByHeight = (workArea.Height - (CharacterTopMargin + ToolbarBottomReserve)) * 300 / 470;
 
         return Clamp(
             Math.Min(MaximumVisualWidth, Math.Min(maximumByWidth, maximumByHeight)),

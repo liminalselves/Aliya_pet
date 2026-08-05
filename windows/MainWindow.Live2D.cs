@@ -197,7 +197,7 @@ public partial class MainWindow
     private (int wDip, int hDip) GetLive2DViewportDip()
     {
         int wDip = (int)Math.Max(1, Width - HorizontalAnimationPadding * 2);
-        int hDip = (int)Math.Max(1, Height - 95 - 70);
+        int hDip = (int)Math.Max(1, Height - CharacterTopMargin - ToolbarBottomReserve);
         return (wDip, hDip);
     }
 

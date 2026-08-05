@@ -15,7 +15,7 @@
         PreviewMouseLeftButtonDown="Window_PreviewMouseLeftButtonDown">
     <Window.Resources>
         <Style x:Key="HoverActionButton" TargetType="{x:Type Button}">
-            <Setter Property="Height" Value="36"/>
+            <Setter Property="Height" Value="46"/>
             <Setter Property="MinWidth" Value="68"/>
             <Setter Property="Margin" Value="3,0"/>
             <Setter Property="Padding" Value="12,0"/>
@@ -60,10 +60,12 @@
         </Style>
     </Window.Resources>
     <Grid x:Name="RootLayout">
-        <!-- 人物显示层（缩放/旋转/倾斜/帧尺寸变化只作用于本层，工具栏独立于本层） -->
+        <!-- 人物显示层（缩放/旋转/倾斜/帧尺寸变化只作用于本层，工具栏独立于本层）。
+             底部 Margin 预留工具栏空间（8 间距 + 64 工具栏 + 38 阴影 + 14 底部安全 = 124），
+             保证工具栏完整外观（含圆角描边与阴影）位于窗口客户区内，不被底部裁切。 -->
         <Grid x:Name="CharacterContainer"
               Panel.ZIndex="10"
-              Margin="70,95,70,70">
+              Margin="70,95,70,124">
             <Image x:Name="PetImage"
                    Source="/Assets/aliya_pet.png"
                    Stretch="Uniform"
@@ -181,12 +183,13 @@
                        MouseLeave="ToolbarHoverBridge_MouseLeave"/>
             <Border x:Name="HoverQuickActions"
                     Panel.ZIndex="41"
-                    Width="318"
-                    Height="50"
-                    Padding="10,7"
-                    CornerRadius="19"
+                    MinHeight="64"
+                    Padding="10,8"
+                    CornerRadius="30"
                     BorderBrush="#B8FFFFFF"
                     BorderThickness="1"
+                    ClipToBounds="False"
+                    SnapsToDevicePixels="False"
                     Visibility="Collapsed"
                     IsHitTestVisible="False"
                     MouseEnter="HoverQuickActions_MouseEnter"
@@ -206,16 +209,27 @@
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="HoverQuickActionsTranslate" Y="0"/>
                 </Border.RenderTransform>
+                <!-- 工具栏宽度由可见按钮自动决定（左/右内边距 10 + 按钮宽度和 + 间距）。
+                     抚摸模式为自动触发（鼠标悬停头部进入），工具栏不设抚摸按钮。 -->
                 <StackPanel Orientation="Horizontal">
-                    <Button Style="{StaticResource HoverActionButton}"
+                    <Button x:Name="WeatherButton"
+                            Style="{StaticResource HoverActionButton}"
+                            Width="100"
+                            Height="46"
                             Content="天气"
                             ToolTip="查询当前天气"
                             Click="HoverWeather_Click"/>
-                    <Button Style="{StaticResource HoverActionButton}"
+                    <Button x:Name="ActionButton"
+                            Style="{StaticResource HoverActionButton}"
+                            Width="100"
+                            Height="46"
                             Content="动作"
                             ToolTip="播放一个随机动作"
                             Click="HoverAction_Click"/>
-                    <Button Style="{StaticResource HoverActionButton}"
+                    <Button x:Name="SpeakButton"
+                            Style="{StaticResource HoverActionButton}"
+                            Width="100"
+                            Height="46"
                             Content="说话"
                             ToolTip="让宠物说一句话"
                             Click="HoverTalk_Click"/>
