@@ -2570,6 +2570,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
     {
         MessageBox.Show(
             "Aliya Desktop Pet（Live2D 桌面宠物）\n\n" +
+            "本程序二创，人物原创为彼方的她\n\n" +
             "项目 Git 仓库:\nhttps://github.com/miqi660/Aliya_pet.git\n\n" +
             "分支: live2d_windows",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
