@@ -17,7 +17,6 @@ dotnet publish (Join-Path $projectDir "AliyaPet.csproj") `
     -c Release `
     -r win-x64 `
     --self-contained true `
-    --no-restore `
     -o $publishDir `
     /p:PublishSingleFile=true `
     /p:IncludeNativeLibrariesForSelfExtract=true `
