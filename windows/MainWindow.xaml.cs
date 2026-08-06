@@ -2555,11 +2555,24 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         menu.Items.Add(CreateLookAtMenuItem());
         menu.Items.Add(CreateGazeSettingsMenu());
         menu.Items.Add(new Separator());
+        var about = new MenuItem { Header = "关于" };
+        about.Click += (_, _) => ShowAboutDialog();
+        menu.Items.Add(about);
         menu.Items.Add(exit);
         menu.IsOpen = true;
 
         await Task.CompletedTask;
         e.Handled = true;
+    }
+
+    /// <summary>关于对话框：显示项目信息与 Git 仓库地址。</summary>
+    private void ShowAboutDialog()
+    {
+        MessageBox.Show(
+            "Aliya Desktop Pet（Live2D 桌面宠物）\n\n" +
+            "项目 Git 仓库:\nhttps://github.com/miqi660/Aliya_pet.git\n\n" +
+            "分支: live2d_windows",
+            "关于", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private MenuItem CreateActionMenuItem(string title, Func<Task> action)
