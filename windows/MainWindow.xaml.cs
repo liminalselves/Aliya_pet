@@ -164,8 +164,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         Directory.CreateDirectory(_settingsDirectory);
         _settingsPath = Path.Combine(_settingsDirectory, "settings.json");
         _defaultTouchSoundPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "Assets",
+            AssetVault.AssetsRoot,
             "pet_touch.wav");
         InitializeDialogueServices();
         Loaded += MainWindow_Loaded;
@@ -270,7 +269,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
 
         _dialogueRepository = new DialogueRepository();
         _dialogueRepository.LoadFromDirectory(Path.Combine(
-            AppContext.BaseDirectory, "Assets", "dialogue"));
+            AssetVault.AssetsRoot, "dialogue"));
 
         _dialogueVariables = new DialogueVariableService(_timeSceneService);
         _dialogueSelection = new DialogueSelectionService(_dialogueRepository);
@@ -317,7 +316,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         _interaction.PlayClickDialogue = () => PlayDialogue(UserClickScene);
         _interaction.IsDialogueActive = () => _dialogueCts is not null;
         _interaction.PettingModeChanged += OnPettingModeChanged;
-        _interaction.Initialize(Path.Combine(AppContext.BaseDirectory, "Assets"));
+        _interaction.Initialize(AssetVault.AssetsRoot);
 
         // 抚摸会话结束统一处理：释放人物层捕获 + 更新光标
         headPetting.SessionEnded += _ =>
@@ -566,7 +565,7 @@ public double GazeSpeedMultiplier { get; set; } = 1.0;        public double Phys
         _headPettingCursorLoadAttempted = true;
         try
         {
-            var dir = Path.Combine(AppContext.BaseDirectory, "Assets", "interaction", "Cursors");
+            var dir = Path.Combine(AssetVault.AssetsRoot, "interaction", "Cursors");
             var openPath = Path.Combine(dir, "HeadPettingOpenHand.cur");
             var grabPath = Path.Combine(dir, "HeadPettingGrabbing.cur");
             if (File.Exists(openPath))

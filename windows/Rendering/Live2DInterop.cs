@@ -363,7 +363,7 @@ internal static class Live2DInterop
     {
         get
         {
-            return Path.Combine(AppContext.BaseDirectory, "Assets", "Live2D", "Aliya", "16.model3.json");
+            return Path.Combine(AssetVault.AssetsRoot, "Live2D", "Aliya", "16.model3.json");
         }
     }
 
