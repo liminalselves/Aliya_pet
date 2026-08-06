@@ -8,7 +8,10 @@ AppId={{84DF4BD7-A395-46C6-B88A-05DD86584F54}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+; 默认安装到当前用户目录（无需管理员），但向导显示目录选择页，
+; 用户可自由选择任意盘符（如 D:）安装，不锁定 C 盘。
 DefaultDirName={localappdata}\Programs\AliyaDesktopPet
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
