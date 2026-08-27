@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- 悬浮窗小窗 WebView 必须钉住 CSS 像素比例，否则气泡等 DOM 元素尺寸漂移 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Aliya Pet</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent;
+    -webkit-user-select: none; user-select: none;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* 台词气泡：角色头顶居中，不拦截指针。
+     居中用 left:0;right:0+margin auto——left:50% 会把可用宽度压成窗口右半，
+     max-content 下气泡被迫窄列换行。text-size-adjust 关掉 WebView 字体放大。 */
+  #dialogue-bubble {
+    position: absolute;
+    top: 6%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    width: fit-content;
+    max-width: min(82%, 300px);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    padding: 10px 16px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.94);
+    color: #3a3335;
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    text-align: center;
+    letter-spacing: 0.02em;
+    box-shadow: 0 4px 18px rgba(60, 40, 60, 0.18);
+    pointer-events: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+    z-index: 10;
+  }
+
+  /* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），
+     气泡落在带内——窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
+     translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
+  body.overlay-wrap #dialogue-bubble {
+    top: 6px;
+    max-width: min(260px, 92%);
+    transform: translateZ(0);
+    max-height: 76px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<!-- Cubism Core 6.0.1（Emscripten，异步初始化，main.ts 会轮询就绪） -->
+<script src="/core/live2dcubismcore.js"></script>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

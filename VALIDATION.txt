@@ -1,12 +1,43 @@
-Aliya Desktop Pet v1.1 validation
+Aliya Desktop Pet v2.0 (Flutter 跨平台迁移) 验证记录
 
-Completed checks:
-- Android debug APK built successfully with Gradle 8.7 in offline mode.
-- Android Java source parsed successfully.
-- Windows C# source parsed successfully.
-- XAML and AndroidManifest XML parsed successfully.
-- All WPF XAML event handlers exist in MainWindow.xaml.cs.
-- Windows, Android, and shared PNG assets are byte-identical.
+## M1 里程碑 — Windows MVP（已完成）
+- [x] C++ 内核编译为 DLL（D3D11 后端），smoke 测试通过
+- [x] Flutter Windows 窗口内渲染 Aliya 模型（离屏 + CPU 读回 + Skia 呈现）
+- [x] 透明无边框窗口 + 置顶 + 屏幕吸附
+- [x] 托盘图标/菜单
+- [x] 动作/台词/交互逻辑（Dart 移植）在 Windows 上运行
 
-Not completed in this environment:
-- EXE binary build (Windows .NET Desktop SDK unavailable).
+## M2 里程碑 — Android 渲染 + 悬浮窗（已完成）
+- [x] APK 构建（AGP 8.13.1 + Gradle 8.14 + NDK 27.0.12077973）
+- [x] 真机（Redmi Note 12T Pro）主界面渲染 Aliya 模型（GLES2 + EGL + FBO + CPU 读回）
+- [x] 纹理上传链路（纯 Dart image 包解码 PNG → FFI → glTexImage2D + glGenerateMipmap）
+- [x] 悬浮窗前台服务（PetOverlayService）独立引擎渲染角色 + 拖动 + 关闭按钮
+- [x] 双引擎并发稳定（EGL 进程级共享 + GL 全局互斥）
+- [x] 悬浮窗权限申请/开关（MainActivity 平台通道）
+
+## 回归清单（双端）
+- [x] Windows 渲染 + 台词气泡（截图验证）
+- [x] Windows 构建（flutter build windows --debug）
+- [x] 主菜单界面（Android 真机显示验证：动作/行为/外观/悬浮窗）
+- [ ] 随机动作 / 动作调度
+- [ ] 摸头（petting）互动
+- [ ] 对话台词（点击/随机/时间场景）
+- [ ] 嘴型同步（PinyinMouthMapper）
+- [ ] 拖动 / 点击序列 / 长按
+- [ ] 滚轮缩放 / 三档尺寸（Windows）
+- [ ] 托盘菜单（贴边/尺寸/位置重置/关于/自启）
+- [ ] 设置持久化（位置/置顶/缩放）
+- [ ] 悬浮窗开关（Android）
+
+## 桌面能力对齐（旧 C# 版 → Flutter 版）
+- [x] 窗口：透明/置顶/吸附/拖动
+- [x] 托盘：显示/动作/台词/置顶/贴边/尺寸/位置重置/关于/退出
+- [x] 滚轮缩放 / 尺寸切换 / 位置重置
+- [x] 设置持久化 + 开机自启
+- [x] 关于对话框
+- [ ] 镜像（需 native 模型矩阵翻转 API，待扩展）
+
+## 环境与构建
+- Windows: VS2022 + CMake + Flutter Windows desktop
+- Android: AGP 8.13.1 / Gradle 8.14 / NDK 27.0.12077973 / 阿里云 Maven 镜像
+- 构建: flutter build windows / flutter build apk

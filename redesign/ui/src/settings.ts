@@ -1,0 +1,90 @@
+/**
+ * 设置存储（移植自 Flutter SettingsService，逻辑等价）：
+ * localStorage 持久化 + Tauri 事件跨窗口同步。
+ *
+ * 同步拓扑：
+ *   设置窗口（settings.html）改设置 → saveSettings + emitTo('pet', 'settings-changed')
+ *   托盘（Rust）→ emitTo('pet', 'tray-action', …)
+ *   pet 窗口启动时 loadSettings 全量应用（含位置/缩放/置顶恢复）。
+ */
+
+export interface PetSettings {
+  /** 窗口位置（物理像素；null=未保存，用默认位置） */
+  posX: number | null;
+  posY: number | null;
+  alwaysOnTop: boolean;
+  /** 拖动结束后吸附屏幕边缘 */
+  snapEdges: boolean;
+  /** 窗口缩放（548×796.5 为 1.0，见 BASE_WINDOW_*） */
+  scale: number;
+  autoActions: boolean;
+  mirror: boolean;
+  randomSpeech: boolean;
+  randomSpeechMinutes: number;
+  /** 省电模式：帧率上限降为 15fps（移动端主要收益）。 */
+  batterySaver?: boolean;
+}
+
+const STORAGE_KEY = 'aliya_pet_settings_v1';
+
+/**
+ * 窗口基准尺寸（scale=1.0），与 native ComputeTargetPixelSize 对齐：
+ * 高 = 675 × 1.18（动作余量），宽 = 高 × 模型包围盒宽高比（Aliya ≈ 0.688）。
+ * pet 窗口按加载后的实测包围盒计算；此处为同一模型的近似值，供设置页钳制用。
+ */
+export const BASE_WINDOW_W = 548;
+export const BASE_WINDOW_H = 796.5;
+
+export const DEFAULT_SETTINGS: PetSettings = {
+  posX: null,
+  posY: null,
+  alwaysOnTop: true,
+  snapEdges: true,
+  scale: 1.0,
+  autoActions: true,
+  mirror: false,
+  randomSpeech: false,
+  randomSpeechMinutes: 5,
+  batterySaver: false,
+};
+
+/** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
+export function clampScale(v: number): number {
+  if (!Number.isFinite(v)) return 1.0;
+  return Math.min(Math.max(v, 0.1), 8.0);
+}
+
+/** 尺寸档位（托盘"切换尺寸"循环）。 */
+export const SIZE_PRESETS = [0.5, 1.0, 2.0];
+
+export function nextSizePreset(current: number): number {
+  const idx = SIZE_PRESETS.findIndex((p) => Math.abs(p - current) < 0.005);
+  return SIZE_PRESETS[(idx + 1 + SIZE_PRESETS.length) % SIZE_PRESETS.length];
+}
+
+export function loadSettings(): PetSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw) as Partial<PetSettings>;
+    return {
+      ...DEFAULT_SETTINGS,
+      ...parsed,
+      scale: clampScale(Number(parsed.scale ?? 1.0)),
+      randomSpeechMinutes: Math.min(
+        Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
+        120
+      ),
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+export function saveSettings(s: PetSettings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    // 存储不可用时设置仅本次会话有效
+  }
+}

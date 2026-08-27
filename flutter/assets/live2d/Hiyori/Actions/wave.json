@@ -1,0 +1,190 @@
+{
+  "id": "wave",
+  "duration": 2.2,
+  "priority": 40,
+  "interruptible": true,
+  "blendIn": 0.1,
+  "blendOut": 0.2,
+  "tags": [
+    "wave"
+  ],
+  "channels": [
+    {
+      "parameter": "PartArmB",
+      "blendMode": "override",
+      "weight": 1.0,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeOut"
+        },
+        {
+          "time": 0.3,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.0,
+          "value": 1.0,
+          "easing": "easeIn"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamArmRA",
+      "blendMode": "override",
+      "weight": 0.9,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeOut"
+        },
+        {
+          "time": 0.3,
+          "value": -10.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": -10.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamArmRB",
+      "blendMode": "override",
+      "weight": 0.9,
+      "keyframes": [
+        {
+          "time": 0.3,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.6,
+          "value": 6.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.0,
+          "value": -6.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.4,
+          "value": 6.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.8,
+          "value": -6.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamHandR",
+      "blendMode": "override",
+      "weight": 0.7,
+      "keyframes": [
+        {
+          "time": 0.3,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.6,
+          "value": 4.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.4,
+          "value": -4.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamAngleZ",
+      "blendMode": "override",
+      "weight": 0.4,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.6,
+          "value": -6.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.2,
+          "value": 5.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.8,
+          "value": -4.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamBrowLY",
+      "blendMode": "override",
+      "weight": 0.4,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.4,
+          "value": 0.3,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.8,
+          "value": 0.2,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    }
+  ]
+}

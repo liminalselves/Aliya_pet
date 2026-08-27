@@ -1,0 +1,14 @@
+{
+  "name": "aliya-pet-redesign",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Aliya Pet 重写版：Tauri 壳 + Web 渲染（原型验证）",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

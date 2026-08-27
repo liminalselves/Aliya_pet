@@ -1,0 +1,45 @@
+name: aliya_pet
+description: "Aliya 桌面宠物：Flutter + Live2D Cubism Native SDK 跨平台（Windows / Android）"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  cupertino_icons: ^1.0.8
+  path_provider: ^2.1.6
+  window_manager: ^0.5.2
+  desktop_multi_window: ^0.3.0
+  tray_manager: ^0.5.3
+  screen_retriever: ^0.2.2
+  image: ^4.9.1
+  shared_preferences: ^2.5.5
+  win32: ^6.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Live2D 模型资源（Aliya）+ Cubism Framework shader
+  # 注意：Flutter assets 目录声明非递归，子目录需逐层声明
+  assets:
+    - assets/live2d/Aliya/
+    - assets/live2d/Aliya/16.1024/
+    - assets/live2d/Aliya/Actions/
+    - assets/live2d/Hiyori/
+    - assets/live2d/Hiyori/Hiyori.2048/
+    - assets/live2d/Hiyori/Actions/
+    - assets/FrameworkShaders/
+    - assets/dialogue/
+    - assets/dialogue/time/
+    - assets/interaction/
+    - assets/icons/

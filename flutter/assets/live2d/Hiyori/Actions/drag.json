@@ -1,0 +1,192 @@
+{
+  "id": "drag",
+  "duration": 2.2,
+  "priority": 40,
+  "interruptible": true,
+  "blendIn": 0.1,
+  "blendOut": 0.2,
+  "tags": [
+    "drag"
+  ],
+  "channels": [
+    {
+      "parameter": "PartArmB",
+      "blendMode": "override",
+      "weight": 1.0,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 1.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamBodyAngleX",
+      "blendMode": "override",
+      "weight": 0.8,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.4,
+          "value": -12.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": -12.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamAngleX",
+      "blendMode": "override",
+      "weight": 0.6,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.4,
+          "value": 10.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": 9.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamArmLA",
+      "blendMode": "override",
+      "weight": 0.6,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.5,
+          "value": 8.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": 7.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamArmRA",
+      "blendMode": "override",
+      "weight": 0.6,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 0.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.5,
+          "value": 8.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": 7.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 0.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamEyeLOpen",
+      "blendMode": "override",
+      "weight": 0.5,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.5,
+          "value": 0.5,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": 0.6,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 1.0,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "parameter": "ParamEyeROpen",
+      "blendMode": "override",
+      "weight": 0.5,
+      "keyframes": [
+        {
+          "time": 0.0,
+          "value": 1.0,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 0.5,
+          "value": 0.5,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 1.6,
+          "value": 0.6,
+          "easing": "easeInOut"
+        },
+        {
+          "time": 2.2,
+          "value": 1.0,
+          "easing": "easeInOut"
+        }
+      ]
+    }
+  ]
+}

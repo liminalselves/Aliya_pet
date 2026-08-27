@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 占位图标：猫耳剪影，后续替换正式形象 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#F2A6C3"
+        android:pathData="M39,44 L34,28 L48,37 Z" />
+    <path
+        android:fillColor="#F2A6C3"
+        android:pathData="M69,44 L74,28 L60,37 Z" />
+    <path
+        android:fillColor="#F2A6C3"
+        android:pathData="M54,38 A16,16 0 1,0 54,70 A16,16 0 1,0 54,38 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,52 A3,3 0 1,0 48,58 A3,3 0 1,0 48,52 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,52 A3,3 0 1,0 60,58 A3,3 0 1,0 60,52 Z" />
+    <path
+        android:fillColor="#2D2A3A"
+        android:pathData="M48,54 A1.4,1.4 0 1,0 48,56.8 A1.4,1.4 0 1,0 48,54 Z" />
+    <path
+        android:fillColor="#2D2A3A"
+        android:pathData="M60,54 A1.4,1.4 0 1,0 60,56.8 A1.4,1.4 0 1,0 60,54 Z" />
+    <path
+        android:fillColor="#E46E9E"
+        android:pathData="M54,60 L52,63 L56,63 Z" />
+</vector>

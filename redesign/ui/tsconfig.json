@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "es2021",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "noImplicitAny": true,
+    "useUnknownInCatchVariables": true,
+    "baseUrl": "./",
+    "paths": {
+      "@framework/*": ["../../third_party/CubismWebSamples/Framework/src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/types/*.d.ts"
+  ]
+}

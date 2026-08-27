@@ -1,4 +1,4 @@
-# Windows 构建输出
+# 通用构建输出
 bin/
 obj/
 publish/
@@ -8,16 +8,35 @@ build/
 .vscode/
 *.user
 *.suo
+*.iml
 *.cache
 *.tmp
 TestResults/
 packages/
 artifacts/
-*.pdb
-*.nupkg
-*.snupkg
-*.userosscache
-*.sln.docstates
+
+# 个人工具配置（AI 编辑器等）
+opencode.json
+
+# redesign 调试工具与临时截图（一次性 CDP 调试脚本、窗口截图产物）
+redesign/tools/
+
+# Kotlin 编译器缓存与错误日志
+.kotlin/
+
+# Flutter/Dart 构建产物（flutter/ 子项目）
+flutter/.dart_tool/
+flutter/build/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.packages
+flutter/pubspec.lock
+flutter/android/.gradle/
+flutter/android/local.properties
+flutter/android/key.properties
+flutter/windows/flutter/ephemeral/
+flutter/windows/flutter/generated_plugin_registrant.cc
+flutter/windows/flutter/generated_plugin_registrant.h
 
 # 敏感信息
 appsettings.*.json
@@ -37,17 +56,18 @@ vc140.pdb
 *.7z
 *.rar
 
-# NuGet 缓存
-*.nupkg
-
-# AliyaPet.MultiFrame Web 子项目
-windows/AliyaPet.MultiFrame/Live2DWeb/node_modules/
-windows/AliyaPet.MultiFrame/Live2DWeb/dist/
-
-# WebView2 运行时缓存
-**/WebView2/
-
-# 第三方 SDK（许可限制，需用户自行下载）
+# 第三方 SDK（许可限制，需用户自行下载）：
 # Live2D Cubism SDK 需从 https://www.live2d.com/en/sdk/download/native/ 下载
-# 并放置到 third_party/CubismSdkForNative-5-r.5/ 目录
+# 将 SDK 包解压后把 Core/ 与 Framework/ 放置到 third_party/CubismSdkForNative-5-r.5/
 third_party/
+
+# 重写版（redesign/）构建产物
+redesign/node_modules/
+redesign/ui/node_modules/
+redesign/ui/dist/
+redesign/src-tauri/target/
+redesign/android/.gradle/
+redesign/android/build/
+redesign/android/app/build/
+redesign/android/local.properties
+redesign/android/app/src/main/assets/pet/

@@ -1,0 +1,34 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "16.moc3",
+		"Textures": [
+			"16.1024/texture_00.png"
+		],
+		"Physics": "16.physics3.json",
+		"DisplayInfo": "16.cdi3.json",
+		"Motions": {
+			"sway": [{"File": "motions/sway.motion3.json", "FadeInTime": 1.0, "FadeOutTime": 1.0}],
+			"nod": [{"File": "motions/nod.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"shake": [{"File": "motions/shake.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"doubt": [{"File": "motions/doubt.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"wave": [{"File": "motions/wave.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"stretch": [{"File": "motions/stretch.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"angry": [{"File": "motions/angry.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"yawn": [{"File": "motions/yawn.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
+			"walk": [{"File": "motions/walk.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": []
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		}
+	]
+}

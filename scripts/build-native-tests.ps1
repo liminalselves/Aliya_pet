@@ -1,5 +1,5 @@
 # =========================================================
-# 构建 Native 测试（aliya_smoke.exe / profile_renderer.exe）
+# 构建 Native 测试（aliya_smoke.exe / profile_renderer.exe�?
 # Release x64 + PDB，输出到 build\test-results\test-bin
 # =========================================================
 param(
@@ -7,9 +7,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $vcvars = 'E:\AliyaLive2DToolchain\VS2022\VC\Auxiliary\Build\vcvars64.bat'
-if (-not (Test-Path $vcvars)) { throw "找不到 vcvars64.bat: $vcvars" }
+if (-not (Test-Path $vcvars)) { throw "找不�?vcvars64.bat: $vcvars" }
 
-$native = Join-Path $ProjectRoot 'windows\AliyaLive2D.Native'
+$native = Join-Path $ProjectRoot 'native\AliyaLive2D.Native'
 $sdk = Join-Path $ProjectRoot 'third_party\CubismSdkForNative-5-r.5'
 $release = Join-Path $ProjectRoot 'build\native-x64-release'
 $libDir = Join-Path $release 'lib\AliyaLive2D.Native\Release'

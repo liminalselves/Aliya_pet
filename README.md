@@ -1,126 +1,91 @@
-# Aliya Desktop Pet - Windows (Live2D)
+# Aliya Pet
 
-基于 Live2D Cubism 的 Windows 桌面宠物应用。
+基于 Live2D Cubism 的桌面宠物（**Windows / Android 双端**）。
 
-## 技术栈
+当前实现为重写版（`redesign/`）：**共享 Web 内核 + 双端薄壳**。
 
-- **框架**: .NET 8.0 + WPF (Windows Presentation Foundation)
-- **语言**: C# 12 / TypeScript
-- **Live2D 渲染**: 原生 C++ DLL (通过 P/Invoke 调用)
-- **Live2D SDK**: Cubism SDK for Native 5 (r.5)
-- **Web 子项目**: Vite + TypeScript (AliyaPet.MultiFrame 中的 Live2DWeb)
+- **Windows**：Tauri 壳 + 官方 Cubism Web SDK（WebGL 渲染）
+- **Android**：Kotlin 薄壳 + 系统 WebView（同一份 Web 前端，悬浮窗桌宠）
 
-## 系统要求
+官方渲染链路（SDK 官方支持、随 Live2D 长期维护）取代了旧版自研 C++ 渲染内核，
+之前最常见的性能与卡顿问题基本消除。旧版实现保留在 `flutter/` 与 `native/` 作参考。
 
-- Windows 10 版本 19041 (2004) 或更高
-- .NET 8.0 SDK (LTS)
-- Visual Studio 2022 或更高版本（推荐）
-- CMake 3.20+（用于构建原生 DLL）
+```
+        全部功能与渲染（一套 TypeScript，redesign/ui/）
+   ┌──────────────────────────────────────────────────┐
+   │ 官方 Cubism Web SDK + 互动/行为/对话/设置           │  <- 95% 代码，双端共用
+   └────────────────┬───────────────────┬─────────────┘
+             Windows 薄壳          Android 薄壳
+          redesign/src-tauri/   redesign/android/
+            （Tauri/Rust）        （Kotlin + WebView）
+```
+
+## 功能
+
+- 抚摸（手势识别：水平往返/速度/方向反转 + 抚摸台词 + 闭眼）
+- 点击互动（区域反应：头/脸/耳朵、连续点击疑惑、快速拖动反应）
+- 对话系统（分页气泡、时间段问候、洗牌袋抽取、随机台词）
+- 视线跟随、自动随机动作、每日互动状态
+- Windows：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启
+- Android：App 内全屏互动 → 退后台转悬浮窗、省电模式（15fps）、开机自启
+
+## 快速开始
+
+### Windows
+
+```bash
+cd redesign
+npm install                # 首次
+# 开发运行（带 CDP 调试端口）：
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run tauri dev
+```
+
+打包安装版：`cd redesign/ui && npm run build && cd .. && npm run tauri build`
+（详见 `docs/BUILD.md`，含 SDK 依赖准备。）
+
+### Android
+
+```bash
+cd redesign/ui && npm run build     # 产出共享前端 dist
+cd ../android && gradlew.bat assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+> 国内网络需走阿里云镜像（已内置在 `android/settings.gradle.kts`）。
 
 ## 项目结构
 
 ```
-windows/
-├── AliyaPet/                    # 主 WPF 桌面宠物应用
-│   ├── AliyaPet.csproj
-│   ├── Assets/                  # 图标、音频、Live2D 模型
-│   │   ├── Live2D/Aliya/        # Live2D 模型文件 (.moc3, .model3.json)
-│   │   ├── dialogue/            # 对话配置
-│   │   └── *.png, *.wav, *.ico
-│   ├── FrameworkShaders/        # Live2D 渲染着色器
-│   ├── Rendering/               # 渲染层（P/Invoke 封装）
-│   ├── MainWindow.xaml(.cs)     # 主窗口
-│   └── MainWindow.Live2D.cs     # Live2D 逻辑
-├── AliyaLive2D.Native/          # 原生 C++ Live2D 渲染库
-│   ├── CMakeLists.txt
-│   ├── src/                     # 源码
-│   └── tests/                   # 测试工具
-└── AliyaPet.MultiFrame/         # 多帧动画版本（实验性）
-    ├── AliyaPet.csproj
-    ├── Assets/
-    ├── Frames/                  # 逐帧动画
-    ├── Live2DWeb/               # WebView2 + Live2D Web SDK
-    └── Rendering/
+redesign/                 # 重写版（当前主产品）
+├── ui/                   # 共享 Web 前端（TypeScript + Vite）
+│   ├── src/
+│   │   ├── platform.ts   # 平台适配层（tauri / android / 浏览器）
+│   │   ├── pet-app.ts    # 应用外壳：渲染循环/指针接线/窗口
+│   │   ├── pet-model.ts  # 模型：动作/物理/眨眼/呼吸/视线/互动通道
+│   │   ├── interaction/  # 抚摸状态机、程序式反应、连点/拖动
+│   │   ├── dialogue/     # 台词分页/播放/气泡
+│   │   ├── behavior.ts   # 自动动作、随机台词、视线跟随
+│   │   └── settings.ts   # 设置存储（localStorage）
+│   └── assets/live2d/aliya/   # 模型 + 动作（当前为官方示例占位动作）
+├── src-tauri/            # Windows 壳（Rust）：窗口/托盘/自启/设置子窗口
+├── android/              # Android 壳（Kotlin）：Activity/悬浮窗服务/桥
+└── tools/                # 开发调试脚本（CDP 检查/截屏/CPU 测量）
+
+flutter/                  # 旧版 Flutter 实现（已弃用，保留参考）
+native/                   # 旧版自研 C++ 渲染内核（已弃用，保留参考）
+third_party/              # Live2D SDK（许可限制，不入库）
+scripts/                  # 旧版构建/验证脚本
 ```
 
-## 构建命令
+## 文档
 
-### 1. 构建原生 Live2D DLL
+- `docs/ARCHITECTURE.md` — 架构、渲染/布局算法、平台适配与双端差异
+- `docs/BUILD.md` — Windows / Android 构建、依赖与调试工具
+- `docs/ANDROID.md` — Android 壳设计（悬浮窗/前台服务/JS 桥/权限）
+- `docs/ACTIONS.md` — 动作接入指南（替换占位动作 + 余量重新测量）
 
-```powershell
-# 需要先安装 Cubism SDK 到 third_party/CubismSdkForNative-5-r.5/
-cd windows/AliyaLive2D.Native
-cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-```
+## 说明
 
-构建产物：
-- `build/native-x64-release/bin/AliyaLive2D.Native/Release/AliyaLive2D.Native.dll`
-- `build/native-x64-release/bin/AliyaLive2D.Native/Release/Live2DCubismCore.dll`
-
-### 2. 构建 WPF 应用
-
-```powershell
-cd windows/AliyaPet
-dotnet restore
-dotnet build -c Release
-```
-
-### 3. 发布
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained false
-```
-
-## 运行命令
-
-```powershell
-cd windows/AliyaPet
-dotnet run -c Release
-```
-
-或直接运行发布后的 EXE：
-
-```powershell
-.\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\AliyaPet.exe
-```
-
-## 依赖说明
-
-### 必须手动下载的依赖
-
-1. **Live2D Cubism SDK for Native**
-   - 下载地址: https://www.live2d.com/en/sdk/download/native/
-   - 解压到: `third_party/CubismSdkForNative-5-r.5/`
-   - 许可: Live2D Proprietary Software License（年营收超 1000 万日元的商业用户需获取 Release License）
-
-2. **.NET 8.0 SDK**
-   - 下载地址: https://dotnet.microsoft.com/download/dotnet/8.0
-
-### NuGet 包（自动恢复）
-
-- Microsoft.Web.WebView2 (仅 MultiFrame 版本需要)
-
-## 已知问题
-
-1. **原生 DLL 路径**: 项目默认从 `build/native-x64-release/bin/AliyaLive2D.Native/Release/` 加载原生 DLL。如构建路径不同，需修改 `AliyaPet.csproj` 中的 `NativeDllDir` 属性。
-
-2. **MultiFrame 版本**: `AliyaPet.MultiFrame` 为实验性多帧动画版本，Live2DWeb 子项目需要先执行 `npm install` 和 `npm run build:prod`。
-
-3. **TTS 功能**: 应用内置 TTS（文字转语音）功能，API 密钥通过本地配置文件加载，**不得提交到仓库**。
-
-4. **Windows 版本兼容性**: 目标框架为 `net8.0-windows10.0.19041.0`，需要 Windows 10 2004 或更高版本。
-
-## 许可说明
-
-- **Live2D Cubism Core**: Live2D Proprietary Software License
-  - [许可协议（英文）](https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html)
-  - [许可协议（中文）](https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_cn.html)
-- **Live2D Cubism Framework**: Live2D Open Software License
-  - [许可协议（英文）](https://www.live2d.com/eula/live2d-open-software-license-agreement_en.html)
-
-## 安全提醒
-
-- **禁止提交** API Key、Access Token、TTS 密钥等敏感信息
-- 配置文件使用 `appsettings.example.json` 模板，实际密钥通过环境变量或本地配置加载
-- `.gitignore` 已排除 `bin/`、`obj/`、`publish/`、`build/`、`third_party/` 等目录
+- **动作库**：当前 9 个动作是官方示例（Hiyori）的占位文件，Aliya 真动作导出后
+  直接替换同名文件即可（见 `docs/ACTIONS.md`）。
+- **二创声明**：本程序为二创桌宠，人物原创为《彼方的她》。
