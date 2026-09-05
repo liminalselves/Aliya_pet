@@ -16,8 +16,19 @@ import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismPhysicsUpdater } from '@framework/motion/cubismphysicsupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
+import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
+import { CubismExpressionUpdater } from '@framework/motion/cubismexpressionupdater';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
+import { GazeController } from './gaze';
+import {
+  OverlayLayer,
+  InteractionOffsetChannel,
+  EyeOverrideChannel,
+  EarChannel,
+  CheekChannel,
+  HandRaiseChannel,
+} from './overlay';
 
 /** 动作优先级（与官方 LAppDefine 一致）。 */
 export const MotionPriority = {
@@ -27,16 +38,26 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
+/** 动作清单元数据（assets/live2d/aliya/actions.json）。 */
+export interface ActionManifestEntry {
+  name: string;
+  category?: 'idle' | 'emotion' | 'reaction';
+  weight?: number;
+  moods?: Record<string, number>;
+}
+
 const INVALID_MOTION_HANDLE = -1;
 
 /**
- * 模型装配与每帧行为：
- *   呼吸/眨眼/物理（调度器）→ 视线跟随 → 互动写入（抚摸/程序化反应）→ 动作播放。
- * 同时实现 InteractionTarget（互动参数通道）与 PetBehaviorHost（动作/注视）。
+ * 模型装配与每帧流水线（成熟路径：五阶段，单一职责）：
  *
- * 每帧顺序（与官方 LAppModel 一致，互动写入在物理之后、model.update 之前）：
- *   loadParameters → motion 更新 → saveParameters → 调度器（物理/眨眼/呼吸）
- *   → 视线 → 互动偏移/眼睛覆盖/耳朵/脸红 → model.update
+ *   1. loadParameters → 2. 动作(motion) → saveParameters
+ *   → 3. 调度器（眨眼→表情→呼吸→物理，SDK 官方顺序）
+ *   → 4. GazeController（视线唯一所有者：指针跟随/动作交挖/表情偏移/钳制）
+ *   → 5. OverlayLayer（程序化通道：互动偏移/眼覆盖/猫耳/脸红/抬手）
+ *   → model.update
+ *
+ * 同时实现 InteractionTarget（互动参数通道）与 PetBehaviorHost（动作/注视）。
  */
 export class PetModel
   extends CubismUserModel
@@ -62,33 +83,27 @@ export class PetModel
   private readonly _motions = new Map<string, CubismMotion>();
   private _motionUpdated = false;
 
+  // 表情（exp3.json，加性叠加在动作之上；与眨眼/物理共存）。
+  // 管理器复用 CubismUserModel 基类自带的 _expressionManager。
+  private readonly _expressions = new Map<string, CubismExpressionMotion>();
+  private _currentExpression: string | null = null;
+
+  // 动作清单元数据（可选，缺省时均匀抽取）
+  private _actionManifest: ActionManifestEntry[] | null = null;
+
   // 眨眼参数 ID（覆盖写入用）
   private _eyeBlinkIds: CubismIdHandle[] = [];
 
-  // 视线
-  private _look: CubismLook = null;
-  private _lookTargetX = 0; // -1..1（右为正）
-  private _lookTargetY = 0; // -1..1（上为正）
-  private _lookCurrentX = 0;
-  private _lookCurrentY = 0;
-  private _lookActive = false;
-  private _lookAtReduction = false; // 抚摸期间降低权重
-  private static readonly _lookTauSeconds = 0.15;
+  // 视线（唯一所有者）与程序化覆盖层（句柄就绪后装配）
+  private _gaze: GazeController = null;
+  private readonly _overlays = new OverlayLayer();
+  private _chInteraction: InteractionOffsetChannel = null;
+  private _chEye: EyeOverrideChannel = null;
+  private _chEar: EarChannel = null;
+  private _chCheek: CheekChannel = null;
+  private _chHand: HandRaiseChannel = null;
+  private _lookAtReduction = false; // 抚摸期间视线跟随降权
   private static readonly _lookReductionScale = 0.25;
-
-  // 互动通道状态（每帧全量重写）
-  private _intAngleX = 0;
-  private _intAngleY = 0;
-  private _intAngleZ = 0;
-  private _intBodyX = 0;
-  private _eyeOverrideEnabled = false;
-  private _eyeOverrideL = 0;
-  private _eyeOverrideR = 0;
-  private _earEnabled = false;
-  private _earL = 0;
-  private _earR = 0;
-  private _cheekEnabled = false;
-  private _cheek = 0;
 
   // 热路径参数句柄缓存（配置探测后填充）
   private _idAngleX: CubismIdHandle = null;
@@ -98,6 +113,8 @@ export class PetModel
   private _idEarL: CubismIdHandle = null;
   private _idEarR: CubismIdHandle = null;
   private _idCheek: CubismIdHandle = null;
+  private _idEyeBallX: CubismIdHandle = null;
+  private _idEyeBallY: CubismIdHandle = null;
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -107,7 +124,8 @@ export class PetModel
 
   /**
    * 按 model3.json 装配：moc → 物理 → 纹理 → 渲染器 → 动作库 → 待机行为。
-   * Aliya 的 model3.json 未挂 EyeBlink/LipSync Ids，眨眼参数回退到标准 ID。
+   * 眨眼参数读 model3.json 的 EyeBlink Ids（新版已挂 ParamEyeLOpen/ROpen），
+   * 为空时回退标准参数 ID；LipSync 未启用。
    */
   public async loadFromSetting(
     buffer: ArrayBuffer,
@@ -201,8 +219,8 @@ export class PetModel
     this._eyeBlink.setParameterIds(this._eyeBlinkIds);
     this._updateScheduler.addUpdatableList(
       new CubismEyeBlinkUpdater(
-        // 动作更新中或眼睛被互动覆盖时暂停自动眨眼
-        () => this._motionUpdated || this._eyeOverrideEnabled,
+        // 动作更新中或眼睛被互动覆盖时暂停自动眨眼（通道装配后再取状态）
+        () => this._motionUpdated || this._chEye?.enabled === true,
         this._eyeBlink
       )
     );
@@ -221,15 +239,17 @@ export class PetModel
       new CubismBreathUpdater(this._breath)
     );
 
-    // 视线跟随（权重与官方 LAppModel 一致）
-    this._look = CubismLook.create();
-    this._look.setParameters([
-      new LookParameterData(id(CubismDefaultParameterId.ParamAngleX), 30, 0, 0),
-      new LookParameterData(id(CubismDefaultParameterId.ParamAngleY), 0, 30, 0),
-      new LookParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0, 0, -30),
-      new LookParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 10, 0, 0),
-      new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallX), 1, 0, 0),
-      new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallY), 0, 1, 0),
+    // 视线跟随增益（GazeController 内合成；头部按 Q 版模型调低：官方 ±30
+    // 的 AngleZ 在该模型绑定极强会「断头」，收敛到动作库同量级 ±6~12）。
+    const look = CubismLook.create();
+    look.setParameters([
+      new LookParameterData(id(CubismDefaultParameterId.ParamAngleX), 12, 0, 0),
+      new LookParameterData(id(CubismDefaultParameterId.ParamAngleY), 0, 10, 0),
+      new LookParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0, 0, -8),
+      new LookParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 4, 0, 0),
+      // 该模型眼球参数值域是 ±30（非官方惯例的 ±1），取 18（60% 行程）
+      new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallX), 18, 0, 0),
+      new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallY), 0, 18, 0),
     ]);
 
     // 互动参数句柄缓存
@@ -237,18 +257,139 @@ export class PetModel
     this._idAngleY = id(CubismDefaultParameterId.ParamAngleY);
     this._idAngleZ = id(CubismDefaultParameterId.ParamAngleZ);
     this._idBodyAngleX = id(CubismDefaultParameterId.ParamBodyAngleX);
-    this._idEarL = id('ParamEarL');
-    this._idEarR = id('ParamEarR');
+    // 猫耳：旧模型的 ParamEarL/R 在新模型上不存在；新模型耳朵由物理输出
+    // Param9/Param13（左/右晃动1，cdi3「猫耳」组）驱动。探测后二选一，
+    // 写入点在物理之后（EarChannel），加写即可生效。
+    const hasParam = (name: string): boolean => {
+      for (let i = 0; i < this._model.getParameterCount(); i++) {
+        if (this._model.getParameterId(i).getString() === name) return true;
+      }
+      return false;
+    };
+    const idEarL = id(hasParam('ParamEarL') ? 'ParamEarL' : 'Param9');
+    const idEarR = id(hasParam('ParamEarR') ? 'ParamEarR' : 'Param13');
+    this._idEarL = idEarL;
+    this._idEarR = idEarR;
     this._idCheek = id('ParamCheek');
+    this._idEyeBallX = id('ParamEyeBallX');
+    this._idEyeBallY = id('ParamEyeBallY');
 
-    // 占位动作库（官方示例动作，Aliya 动作导出后替换文件即可）
+    // 手部物理链（cdi「右手」组：ArtMesh61 五段旋转，物理输出，BodyAngleX/Z
+    // 驱动手自然摆动；负角为抬起）。动作曲线写不住（物理每帧覆盖），
+    // 抬手走 HandRaiseChannel 在物理后加写。ParamArmL01/02、R01/02 在该
+    // 模型上未绑定任何变形器（满量程位移≈0），不可用。
+    const idsHandR: CubismIdHandle[] = [];
+    for (let s = 1; s <= 5; s++) {
+      idsHandR.push(id(`Param_Angle_Rotation_${s}_ArtMesh61`));
+    }
+
+    // 视线控制器（唯一所有者）与覆盖通道装配（固定顺序）
+    this._gaze = new GazeController(look, this._idEyeBallX, this._idEyeBallY);
+    this._chInteraction = new InteractionOffsetChannel({
+      angleX: this._idAngleX,
+      angleY: this._idAngleY,
+      angleZ: this._idAngleZ,
+      bodyAngleX: this._idBodyAngleX,
+    });
+    this._chEye = new EyeOverrideChannel({
+      left: this._eyeBlinkIds[0],
+      right: this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0],
+    });
+    this._chEar = new EarChannel({ left: idEarL, right: idEarR });
+    this._chEar.scale = hasParam('ParamEarL') ? 1 : 12;
+    this._chCheek = new CheekChannel(this._idCheek);
+    this._chHand = new HandRaiseChannel(idsHandR);
+    this._overlays.add(this._chInteraction);
+    this._overlays.add(this._chEye);
+    this._overlays.add(this._chEar);
+    this._overlays.add(this._chCheek);
+    this._overlays.add(this._chHand);
+
+    // 动作库（tools/gen-motions.py 为 Aliya 生成的自编动作）
     await this._preloadMotions();
+
+    // 动作清单元数据（可选：情绪亲和权重；缺失时行为层均匀抽取）
+    try {
+      const buf = await this._fetchArrayBuffer('actions.json');
+      const parsed = JSON.parse(new TextDecoder().decode(buf));
+      if (Array.isArray(parsed.actions)) {
+        this._actionManifest = parsed.actions;
+      }
+    } catch {
+      // 可选文件，缺失不阻塞
+    }
+
+    // 表情库（tools/gen-expressions.py 生成，model3.json Expressions 引用）。
+    // 求值顺序 = CubismUpdateOrder_Expression(300)：眨眼后、呼吸/物理前，
+    // Add 混合叠加在动作结果之上，且不进 saveParameters 快照（每帧重施加）。
+    await this._preloadExpressions();
+    this._updateScheduler.addUpdatableList(
+      new CubismExpressionUpdater(this._expressionManager)
+    );
 
     this._ready = true;
   }
 
+  private async _preloadExpressions(): Promise<void> {
+    const count = this._setting.getExpressionCount
+      ? this._setting.getExpressionCount()
+      : 0;
+    for (let i = 0; i < count; i++) {
+      const name = this._setting.getExpressionName(i);
+      const file = this._setting.getExpressionFileName(i);
+      if (!name || !file) continue;
+      try {
+        const buffer = await this._fetchArrayBuffer(file);
+        this._expressions.set(
+          name,
+          CubismExpressionMotion.create(buffer, buffer.byteLength)
+        );
+      } catch {
+        // 单个表情缺失不阻塞加载
+      }
+    }
+  }
+
+  /** 可用表情名列表（AI/调试用）。 */
+  public getExpressionNames(): string[] {
+    return Array.from(this._expressions.keys());
+  }
+
+  /** 当前表情名（null = 无）。 */
+  public getCurrentExpression(): string | null {
+    return this._currentExpression;
+  }
+
+  /**
+   * 切换表情（交叉淡入淡出由 exp3.json 的 Fade 时间控制）。
+   * @param name 表情名；null 或 'neutral' 清除表情
+   * @returns 是否成功
+   */
+  public startExpression(name: string | null): boolean {
+    if (name === null || name === 'neutral') {
+      // 播放空表情触发旧的淡出
+      const neutral = this._expressions.get('neutral');
+      if (neutral) this._expressionManager.startMotion(neutral, false);
+      this._currentExpression = null;
+      this._gaze.setExpression(null);
+      return true;
+    }
+    const expr = this._expressions.get(name);
+    if (!expr) return false;
+    this._expressionManager.startMotion(expr, false);
+    this._currentExpression = name;
+    // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
+    this._gaze.setExpression(name);
+    return true;
+  }
+
   public isReady(): boolean {
     return this._ready;
+  }
+
+  /** 动作清单元数据（actions.json；null = 未提供）。 */
+  public get actionManifest(): ActionManifestEntry[] | null {
+    return this._actionManifest;
   }
 
   /** 模型静态包围盒宽（模型坐标单位） */
@@ -388,21 +529,23 @@ export class PetModel
       false,
       MotionPriority.Normal
     );
+    // 挥手联动抬手包络；其他动作打断时平滑放下
+    if (name === 'wave') {
+      this._chHand.trigger();
+    } else {
+      this._chHand.release();
+    }
     return true;
   }
 
   // ---------- PetBehaviorHost：视线 ----------
 
   setLookTarget(x01: number, y01: number): void {
-    this._lookTargetX = x01 * 2 - 1;
-    this._lookTargetY = y01 * 2 - 1;
-    this._lookActive = true;
+    this._gaze.setTarget(x01, y01);
   }
 
   clearLookTarget(): void {
-    this._lookActive = false;
-    this._lookTargetX = 0;
-    this._lookTargetY = 0;
+    this._gaze.clearTarget();
   }
 
   // ---------- InteractionTarget ----------
@@ -468,10 +611,10 @@ export class PetModel
     angleZ: number,
     bodyAngleX: number
   ): void {
-    this._intAngleX = angleX;
-    this._intAngleY = angleY;
-    this._intAngleZ = angleZ;
-    this._intBodyX = bodyAngleX;
+    this._chInteraction.angleX = angleX;
+    this._chInteraction.angleY = angleY;
+    this._chInteraction.angleZ = angleZ;
+    this._chInteraction.bodyX = bodyAngleX;
   }
 
   public setEyeOverride(
@@ -479,9 +622,9 @@ export class PetModel
     leftOpen: number,
     rightOpen: number
   ): void {
-    this._eyeOverrideEnabled = enabled;
-    this._eyeOverrideL = leftOpen;
-    this._eyeOverrideR = rightOpen;
+    this._chEye.enabled = enabled;
+    this._chEye.left = leftOpen;
+    this._chEye.right = rightOpen;
   }
 
   public setEarInteraction(
@@ -489,101 +632,51 @@ export class PetModel
     leftValue: number,
     rightValue: number
   ): void {
-    this._earEnabled = enabled;
-    this._earL = leftValue;
-    this._earR = rightValue;
+    this._chEar.enabled = enabled;
+    this._chEar.left = leftValue;
+    this._chEar.right = rightValue;
   }
 
   public setFaceCheek(enabled: boolean, value: number): void {
-    this._cheekEnabled = enabled;
-    this._cheek = value;
+    this._chCheek.enabled = enabled;
+    this._chCheek.value = value;
   }
 
   public setPettingLookAtReduction(enabled: boolean): void {
     this._lookAtReduction = enabled;
   }
 
-  // ---------- 每帧 ----------
+  // ---------- 每帧（五阶段流水线） ----------
 
   public update(deltaTimeSeconds: number): void {
     if (!this._ready) return;
     const model = this._model;
 
+    // 1. 恢复上一帧保存的基准
     model.loadParameters();
 
-    // 动作（播完自动解除优先级；占位动作库无 Idle 循环，呼吸接管待机）
+    // 2. 动作（可互相打断，交叉淡出；播完自动解除，待机由呼吸接管）
     this._motionUpdated = this._motionManager.updateMotion(
       model,
       deltaTimeSeconds
     );
-
     model.saveParameters();
 
-    // 物理 → 眨眼（动作/覆盖期间自动暂停）→ 呼吸
+    // 3. 调度器：眨眼(200) → 表情(300) → 呼吸(500) → 物理(600)
     this._updateScheduler.onLateUpdate(model, deltaTimeSeconds);
 
-    // 视线跟随（一阶滞后平滑；抚摸期间降权重；清除目标后回中）
-    this._updateLook(deltaTimeSeconds);
+    // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
+    //    + 表情注视偏移 → 眼球总钳制）
+    this._gaze.update(model, deltaTimeSeconds, {
+      motionActive: this._motionUpdated,
+      reduction: this._lookAtReduction ? PetModel._lookReductionScale : 1,
+    });
 
-    // 互动写入：头部偏移（加性）
-    if (this._intAngleX !== 0) {
-      model.addParameterValueById(this._idAngleX, this._intAngleX);
-    }
-    if (this._intAngleY !== 0) {
-      model.addParameterValueById(this._idAngleY, this._intAngleY);
-    }
-    if (this._intAngleZ !== 0) {
-      model.addParameterValueById(this._idAngleZ, this._intAngleZ);
-    }
-    if (this._intBodyX !== 0) {
-      model.addParameterValueById(this._idBodyAngleX, this._intBodyX);
-    }
-
-    // 眼睛覆盖（绝对值；覆盖期间眨眼已被调度器跳过）
-    if (this._eyeOverrideEnabled) {
-      if (this._eyeBlinkIds[0]) {
-        model.setParameterValueById(this._eyeBlinkIds[0], this._eyeOverrideL);
-      }
-      if (this._eyeBlinkIds[1]) {
-        model.setParameterValueById(this._eyeBlinkIds[1], this._eyeOverrideR);
-      }
-    }
-
-    // 猫耳 / 脸红（参数缺失时写入无害——Framework 落到虚拟参数表）
-    if (this._earEnabled) {
-      model.addParameterValueById(this._idEarL, this._earL);
-      model.addParameterValueById(this._idEarR, this._earR);
-    }
-    if (this._cheekEnabled) {
-      model.setParameterValueById(this._idCheek, this._cheek);
-    }
+    // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
+    //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
+    this._overlays.apply(model, deltaTimeSeconds);
 
     model.update();
-  }
-
-  private _updateLook(dt: number): void {
-    const targetX = this._lookActive ? this._lookTargetX : 0;
-    const targetY = this._lookActive ? this._lookTargetY : 0;
-    const k = 1.0 - Math.exp(-dt / PetModel._lookTauSeconds);
-    this._lookCurrentX += (targetX - this._lookCurrentX) * k;
-    this._lookCurrentY += (targetY - this._lookCurrentY) * k;
-
-    // 静止且已回中：跳过写入
-    if (
-      !this._lookActive &&
-      Math.abs(this._lookCurrentX) < 0.001 &&
-      Math.abs(this._lookCurrentY) < 0.001
-    ) {
-      return;
-    }
-    const scale = this._lookAtReduction
-      ? PetModel._lookReductionScale
-      : 1.0;
-    this._look.updateParameters(
-      this._model,
-      this._lookCurrentX * scale,
-      this._lookCurrentY * scale
-    );
   }
 
   public draw(matrix: CubismMatrix44): void {

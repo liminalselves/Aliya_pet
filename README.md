@@ -66,7 +66,7 @@ redesign/                 # 重写版（当前主产品）
 │   │   ├── dialogue/     # 台词分页/播放/气泡
 │   │   ├── behavior.ts   # 自动动作、随机台词、视线跟随
 │   │   └── settings.ts   # 设置存储（localStorage）
-│   └── assets/live2d/aliya/   # 模型 + 动作（当前为官方示例占位动作）
+│   └── assets/live2d/aliya/   # 模型 + 动作（自编动作，tools/gen-motions.py 生成）
 ├── src-tauri/            # Windows 壳（Rust）：窗口/托盘/自启/设置子窗口
 ├── android/              # Android 壳（Kotlin）：Activity/悬浮窗服务/桥
 └── tools/                # 开发调试脚本（CDP 检查/截屏/CPU 测量）
@@ -82,10 +82,16 @@ scripts/                  # 旧版构建/验证脚本
 - `docs/ARCHITECTURE.md` — 架构、渲染/布局算法、平台适配与双端差异
 - `docs/BUILD.md` — Windows / Android 构建、依赖与调试工具
 - `docs/ANDROID.md` — Android 壳设计（悬浮窗/前台服务/JS 桥/权限）
-- `docs/ACTIONS.md` — 动作接入指南（替换占位动作 + 余量重新测量）
+- `docs/ACTIONS.md` — 动作接入指南（自编动作工程约束 + 余量重新测量）
+- `docs/MODEL.md` — 模型能力图谱（参数表/物理链/值域坑）
+- `docs/AI-API.md` — PetAI 对外接口（表情/情绪/动作/视线 + 事件总线）
 
 ## 说明
 
-- **动作库**：当前 9 个动作是官方示例（Hiyori）的占位文件，Aliya 真动作导出后
-  直接替换同名文件即可（见 `docs/ACTIONS.md`）。
+- **动作库**：9 个动作是为当前 Aliya 模型自编的 motion3.json，由
+  `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。
+- **表情与情绪**：12 个 exp3.json 表情（`gen-expressions.py` 生成）+ 情绪
+  引擎（心境→默认表情、动作选择加权、自然衰减），经 `window.petAI` 语义
+  API 暴露给 AI/自动化（见 `docs/AI-API.md`）；设置窗口有对应的
+  「表情与情绪」控制面板（表情预览/情绪切换，与 AI 共享状态源）。
 - **二创声明**：本程序为二创桌宠，人物原创为《彼方的她》。

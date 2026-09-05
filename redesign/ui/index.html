@@ -23,6 +23,8 @@
     left: 0;
     right: 0;
     margin: 0 auto;
+    /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
+    box-sizing: border-box;
     width: fit-content;
     max-width: min(82%, 300px);
     -webkit-text-size-adjust: 100%;

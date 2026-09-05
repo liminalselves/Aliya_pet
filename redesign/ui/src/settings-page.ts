@@ -1,8 +1,9 @@
 /**
  * 设置窗口页面（独立 webview）：
  * 改动 → 写 localStorage + emitTo('pet', 'settings-changed') 实时生效；
- * 动作/台词按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
- * 监听 'settings-changed'（托盘改动经 pet 广播）刷新控件。
+ * 动作/台词/表情/情绪按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
+ * 监听 'settings-changed'（托盘改动经 pet 广播）刷新控件、
+ * 'pet-mood'（pet 情绪变化）刷新情绪高亮。
  */
 
 import {
@@ -22,6 +23,7 @@ import {
   shellAction,
 } from './platform';
 import { ACTION_LIBRARY } from './behavior';
+import { MOODS } from './emotion';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
@@ -38,12 +40,42 @@ const ACTION_LABELS: Record<string, string> = {
   walk: '走动',
 };
 
+/** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */
+const EXPRESSION_LABELS: Record<string, string> = {
+  happy: '开心',
+  angry: '生气',
+  sad: '难过',
+  surprised: '惊讶',
+  shy: '害羞',
+  sleepy: '困倦',
+  smug: '得意',
+  speechless: '无语',
+  worried: '担忧',
+  serious: '认真',
+  hit: '受击',
+};
+
+/** 情绪面板：emotion.ts MOODS 键 → 中文。 */
+const MOOD_LABELS: Record<string, string> = {
+  neutral: '平静',
+  happy: '开心',
+  cheerful: '愉快',
+  angry: '生气',
+  sad: '难过',
+  shy: '害羞',
+  sleepy: '困倦',
+  smug: '得意',
+  curious: '好奇',
+  speechless: '无语',
+};
+
 type Emit = (event: string, payload: unknown) => void;
 type Listen = (event: string, cb: () => void) => void;
 
 let emitToPet: Emit = () => {};
 let emitToSettings: Emit = () => {};
 let onSettingsChanged: Listen = () => {};
+let onMoodChanged: (cb: (mood: string) => void) => void = () => {};
 let invokeCmd: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) =
   () => Promise.resolve(null);
 
@@ -59,6 +91,15 @@ try {
   };
   onSettingsChanged = (event, cb) => {
     ev.listen(event, cb).catch(() => {});
+  };
+  onMoodChanged = (cb) => {
+    ev
+      .listen<{ mood: string }>('pet-mood', (e) => {
+        if (e.payload && typeof e.payload.mood === 'string') {
+          cb(e.payload.mood);
+        }
+      })
+      .catch(() => {});
   };
   invokeCmd = (cmd, args): Promise<unknown> =>
     invoke<unknown>(cmd, args).catch((): unknown => null);
@@ -197,6 +238,64 @@ if (platform !== 'android') {
   speech.textContent = '随机说一句';
   speech.addEventListener('click', () => trayAction('random-speech'));
   box.appendChild(speech);
+}
+
+// ---- 表情与情绪 ----（依赖跨窗口事件，桌面端专属）
+// 表情 = 临时预览（8s 后自动回当前情绪的默认表情）；
+// 情绪 = 持续心境（默认表情 + 动作选择加权 + 到期自然回落「平静」）。
+const moodButtons = new Map<string, HTMLButtonElement>();
+let currentMood = 'neutral';
+
+function refreshMoodHighlight(): void {
+  for (const [name, btn] of moodButtons) {
+    btn.classList.toggle('active', name === currentMood);
+  }
+}
+
+if (platform !== 'android') {
+  const box = section('表情与情绪');
+
+  // 表情（临时预览）
+  const exprHint = document.createElement('div');
+  exprHint.className = 'hint';
+  exprHint.textContent = '表情（点击预览，8 秒后自动恢复）';
+  box.appendChild(exprHint);
+  const exprGrid = document.createElement('div');
+  exprGrid.className = 'grid';
+  for (const [name, label] of Object.entries(EXPRESSION_LABELS)) {
+    const b = document.createElement('button');
+    b.className = 'act';
+    b.textContent = label;
+    b.addEventListener('click', () =>
+      trayAction('express', { name, duration: 8 })
+    );
+    exprGrid.appendChild(b);
+  }
+  box.appendChild(exprGrid);
+  const clearExpr = document.createElement('button');
+  clearExpr.className = 'act wide';
+  clearExpr.textContent = '恢复默认表情';
+  clearExpr.addEventListener('click', () => trayAction('clear-expression'));
+  box.appendChild(clearExpr);
+
+  // 情绪（持续心境）
+  const moodHint = document.createElement('div');
+  moodHint.className = 'hint';
+  moodHint.textContent =
+    '情绪（持续心境：影响默认表情与自发动作，一段时间后自然平静）';
+  box.appendChild(moodHint);
+  const moodGrid = document.createElement('div');
+  moodGrid.className = 'grid';
+  for (const name of Object.keys(MOODS)) {
+    const b = document.createElement('button');
+    b.className = 'act';
+    b.textContent = MOOD_LABELS[name] ?? name;
+    b.addEventListener('click', () => trayAction('set-mood', { name }));
+    moodButtons.set(name, b);
+    moodGrid.appendChild(b);
+  }
+  box.appendChild(moodGrid);
+  refreshMoodHighlight();
 }
 
 // 省电模式（所有平台；移动端收益最大）
@@ -474,6 +573,12 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
 onSettingsChanged('settings-changed', () => {
   settings = loadSettings();
   refreshControls();
+});
+
+// pet 窗口情绪变化（petAI/托盘/自然回落）→ 刷新情绪高亮
+onMoodChanged((mood: string) => {
+  currentMood = mood;
+  refreshMoodHighlight();
 });
 
 // 托盘"关于"入口：滚动到底部的关于区

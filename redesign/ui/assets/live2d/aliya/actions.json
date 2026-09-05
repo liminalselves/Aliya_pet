@@ -1,0 +1,14 @@
+{
+  "_comment": "动作清单元数据：自动动作抽取权重与情绪亲和。category: idle=待机演出, emotion=情绪表达, reaction=互动反应。moods: 情绪下抽取倍率（缺省 1）。weight: 基础权重。修改后重新构建即可（随模型目录分发）。",
+  "actions": [
+    { "name": "nod",     "category": "idle",    "weight": 1.0, "moods": { "happy": 1.5, "shy": 2.5 } },
+    { "name": "sway",    "category": "idle",    "weight": 1.2, "moods": { "happy": 1.6, "sad": 2.0, "smug": 2.0 } },
+    { "name": "shake",   "category": "idle",    "weight": 0.8, "moods": { "angry": 2.5 } },
+    { "name": "stretch", "category": "idle",    "weight": 0.9, "moods": { "sleepy": 2.5 } },
+    { "name": "wave",    "category": "emotion", "weight": 0.7, "moods": { "happy": 2.5, "shy": 1.2 } },
+    { "name": "doubt",   "category": "emotion", "weight": 0.8, "moods": { "curious": 3.0, "speechless": 2.0 } },
+    { "name": "angry",   "category": "emotion", "weight": 0.6, "moods": { "angry": 3.5 } },
+    { "name": "yawn",    "category": "idle",    "weight": 0.7, "moods": { "sleepy": 3.5 } },
+    { "name": "walk",    "category": "idle",    "weight": 0.9, "moods": { "curious": 2.0, "happy": 1.5 } }
+  ]
+}

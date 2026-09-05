@@ -32,7 +32,14 @@
     background: #38303c; color: #e8e2e6; cursor: pointer; font-size: 12px;
   }
   button.act:hover { background: #453c49; }
+  button.act.active {
+    border-color: #7d5ba6; background: #4d3d61; color: #fff;
+  }
   button.wide { width: 100%; margin-top: 6px; }
+
+  /* 分组小标题（表情/情绪两行说明） */
+  .hint { color: #8d7f8d; font-size: 11px; margin: 10px 2px 6px; }
+  .hint:first-child { margin-top: 0; }
 
   /* 开关 */
   .sw { position: relative; width: 36px; height: 20px; flex: none; cursor: pointer; }

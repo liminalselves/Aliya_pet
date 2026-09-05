@@ -7,6 +7,8 @@ import { HitAreas } from './interaction/hit-areas';
 import { InteractionService } from './interaction/interaction';
 import { PointerContext } from './interaction/petting-recognizer';
 import { BehaviorService } from './behavior';
+import { MoodEngine } from './emotion';
+import { PetAI } from './pet-ai';
 import {
   PetSettings,
   clampScale,
@@ -49,6 +51,8 @@ export class PetApp {
   private _bubble: DialogueBubble = null;
   private _interaction: InteractionService = null;
   private _behavior: BehaviorService = null;
+  private _moodEngine: MoodEngine = null;
+  private _ai: PetAI = null;
 
   // Tauri 窗口拖动
   private _tauriWindow: TauriWindow | null = null;
@@ -111,12 +115,12 @@ export class PetApp {
   private static readonly _dragThresholdPx = 5;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.45。
-   * 占位动作（Hiyori）实测最大摆动：左 -0.444 / 右 0.456 / 上 0.557（模型单位，
-   * 静态包围盒 0.652×1.018），1.18 余量下 stretch/sway/wave 会把头发甩出窗口；
-   * 1.45 = 最差帧需求 1.40 × 1.05 安全余量。Aliya 真动作接入后重新测量调回。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.22。
+   * Aliya 自编动作（tools/gen-motions.py）实测最差帧：水平 maxX 0.374 /
+   * 垂直 maxY 0.517（模型单位，静态包围盒 0.636×1.011）；需求 水平 1.156 /
+   * 垂直 1.023，1.22 = 最差 1.156 × 1.05 安全余量（测量方法见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.45;
+  private static readonly _renderMarginRatio = 1.22;
 
   /** 窗口尺寸余量：窗口 = 675×scale × 1.18（对齐 Flutter ComputeTargetPixelSize）。 */
   private static readonly _windowMarginRatio = 1.18;
@@ -278,7 +282,28 @@ export class PetApp {
       this._model?.isReady() ? this._model : null
     );
     this._behavior.onRandomSpeech = () => this._playRandom();
+    this._behavior.setActionMeta(this._model.actionManifest);
     this._behavior.start();
+
+    // 情绪引擎（心境 → 默认表情 + 动作选择加权）+ AI 对外 API
+    this._moodEngine = new MoodEngine(this._model);
+    this._moodEngine.onMoodChanged((mood) => {
+      this._behavior?.setMood(mood.name);
+      this._broadcastMood(mood.name);
+    });
+    this._ai = new PetAI({
+      model: () => (this._model?.isReady() ? this._model : null),
+      moodEngine: () => this._moodEngine,
+      playAction: (name) => {
+        const ok = this._model?.playAction(name) ?? false;
+        if (ok) this._behavior?.notifyManualAction();
+        return ok;
+      },
+    });
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>).petAI = this._ai;
+      (window as unknown as Record<string, unknown>).__mood = this._moodEngine;
+    }
 
     this._wirePointerEvents();
     this._wireSettingsSync();
@@ -477,13 +502,16 @@ export class PetApp {
           if (!e.payload || typeof e.payload !== 'object') return;
           this.applySettings(e.payload, false);
         });
-        // 托盘动作
-        ev.listen<{ action: string; value?: boolean; name?: string }>(
-          'tray-action',
-          (e) => {
-            const p = e.payload;
-            if (!p || typeof p.action !== 'string') return;
-            switch (p.action) {
+        // 托盘/设置窗口动作
+        ev.listen<{
+          action: string;
+          value?: boolean;
+          name?: string;
+          duration?: number;
+        }>('tray-action', (e) => {
+          const p = e.payload;
+          if (!p || typeof p.action !== 'string') return;
+          switch (p.action) {
               case 'cycle-size': {
                 const next = nextSizePreset(this._settings.scale);
                 this.applySettings({ ...this._settings, scale: next }, false);
@@ -502,14 +530,23 @@ export class PetApp {
                 this.resetPosition();
                 break;
               case 'play-action':
-                if (p.name) this._model?.playAction(p.name);
+                if (p.name) this._ai?.play(p.name);
                 break;
               case 'random-speech':
                 this._playRandom();
                 break;
-            }
+              // 表情/情绪（设置窗口「表情与情绪」面板）
+              case 'express':
+                if (p.name) this._ai?.express(p.name, p.duration);
+                break;
+              case 'clear-expression':
+                this._ai?.clearExpression();
+                break;
+              case 'set-mood':
+                if (p.name) this._ai?.setMood(p.name, p.duration);
+                break;
           }
-        );
+        });
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
         ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
@@ -535,6 +572,16 @@ export class PetApp {
     import('@tauri-apps/api/event')
       .then((ev) => {
         ev.emitTo('settings', 'settings-changed', this._settings).catch(() => {});
+      })
+      .catch(() => {});
+  }
+
+  /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
+  private _broadcastMood(name: string): void {
+    if (!this._tauriWindow) return;
+    import('@tauri-apps/api/event')
+      .then((ev) => {
+        ev.emitTo('settings', 'pet-mood', { mood: name }).catch(() => {});
       })
       .catch(() => {});
   }
@@ -1144,11 +1191,21 @@ export class PetApp {
       let k = Math.min(1, (vpW * 0.94) / w0, (vpH * 0.62) / h0);
       k = Math.min(Math.max(k, 0.3), 1);
       if (k < 0.999) {
+        // 布局盒比窗口宽时 margin auto 居中失效（Blink 把 auto 边距钳为 0，
+        // 盒子左对齐、缩放中心偏到窗口右侧 → 气泡右半边被窗口裁掉）。
+        // 改用 left:50% + translateX(-50%) 强制居中（不依赖 auto 边距），
+        // 再在变换里叠加缩放；origin 取顶部，top 按缩放后高度定位才精确。
+        el.style.margin = '0';
+        el.style.left = '50%';
+        el.style.right = 'auto';
         el.style.width = `${w0}px`;
         el.style.maxWidth = 'none';
-        el.style.transformOrigin = '50% 100%';
-        el.style.transform = `scale(${k})`;
+        el.style.transformOrigin = '50% 0%';
+        el.style.transform = `translateX(-50%) scale(${k})`;
       } else {
+        el.style.margin = '';
+        el.style.left = '';
+        el.style.right = '';
         el.style.maxWidth = '';
       }
       this._bubbleScaledH = h0 * k;
@@ -1160,6 +1217,7 @@ export class PetApp {
   private _update(dt: number): void {
     // 互动层先算平滑值并写入模型通道，模型 update 时统一应用
     this._interaction?.tick(dt * 1000);
+    this._moodEngine?.tick(dt);
     this._model?.update(dt);
   }
 

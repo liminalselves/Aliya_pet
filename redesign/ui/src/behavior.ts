@@ -27,6 +27,14 @@ export const ACTION_LIBRARY = [
   'walk',
 ];
 
+/** 动作清单元数据条目（pet-model 从 actions.json 载入后注入）。 */
+export interface ActionMeta {
+  name: string;
+  category?: 'idle' | 'emotion' | 'reaction';
+  weight?: number;
+  moods?: Record<string, number>;
+}
+
 const AUTO_ACTION_MIN_SECONDS = 8;
 const AUTO_ACTION_MAX_SECONDS = 16;
 
@@ -51,11 +59,26 @@ export class BehaviorService {
   /** 随机台词触发回调（上层播放一条随机台词）。 */
   onRandomSpeech: (() => void) | null = null;
 
+  /** 动作元数据（actions.json；注入后自动动作按 权重×情绪亲和 抽取）。 */
+  private _actionMeta: ActionMeta[] | null = null;
+  /** 当前情绪名（用于亲和加权；null = neutral）。 */
+  private _mood: string | null = null;
+
   private _autoActionTimer: ReturnType<typeof setTimeout> | null = null;
   private _randomSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(getHost: () => PetBehaviorHost | null) {
     this._getHost = getHost;
+  }
+
+  /** 注入动作元数据清单（模型加载完成后调用）。 */
+  setActionMeta(meta: ActionMeta[] | null): void {
+    this._actionMeta = meta;
+  }
+
+  /** 同步当前情绪（情绪引擎每次变化时调用）。 */
+  setMood(name: string): void {
+    this._mood = name;
   }
 
   start(): void {
@@ -74,8 +97,30 @@ export class BehaviorService {
 
   // ---------- 动作调度 ----------
 
+  /**
+   * 按权重抽取动作：基础权重（actions.json，缺省 1）× 当前情绪亲和倍率。
+   * 无元数据时退化为均匀抽取。
+   */
   randomActionName(): string {
-    return ACTION_LIBRARY[Math.floor(Math.random() * ACTION_LIBRARY.length)];
+    const meta = this._actionMeta;
+    if (!meta || meta.length === 0) {
+      return ACTION_LIBRARY[Math.floor(Math.random() * ACTION_LIBRARY.length)];
+    }
+    const mood = this._mood ?? 'neutral';
+    const entries = meta.filter((m) => ACTION_LIBRARY.includes(m.name));
+    const weights = entries.map((m) => {
+      const base = typeof m.weight === 'number' && m.weight > 0 ? m.weight : 1;
+      const affinity = m.moods?.[mood] ?? 1;
+      return base * affinity;
+    });
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total <= 0) return ACTION_LIBRARY[0];
+    let roll = Math.random() * total;
+    for (let i = 0; i < entries.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) return entries[i].name;
+    }
+    return entries[entries.length - 1].name;
   }
 
   /** 播放指定动作（点击即播，动作可互相打断，不等待完成）。 */
@@ -88,6 +133,14 @@ export class BehaviorService {
     } catch {
       // 动作播放失败不影响后续
     }
+    this._scheduleNextAutoAction();
+  }
+
+  /**
+   * 手动播过动作后仅重排自动动作定时器（不重播）。
+   * 供 petAI.play 等已直接调用模型播放的入口使用，避免二次播放。
+   */
+  notifyManualAction(): void {
     this._scheduleNextAutoAction();
   }
 

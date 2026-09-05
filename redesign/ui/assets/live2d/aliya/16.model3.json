@@ -1,34 +1,141 @@
 {
-	"Version": 3,
-	"FileReferences": {
-		"Moc": "16.moc3",
-		"Textures": [
-			"16.1024/texture_00.png"
-		],
-		"Physics": "16.physics3.json",
-		"DisplayInfo": "16.cdi3.json",
-		"Motions": {
-			"sway": [{"File": "motions/sway.motion3.json", "FadeInTime": 1.0, "FadeOutTime": 1.0}],
-			"nod": [{"File": "motions/nod.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"shake": [{"File": "motions/shake.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"doubt": [{"File": "motions/doubt.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"wave": [{"File": "motions/wave.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"stretch": [{"File": "motions/stretch.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"angry": [{"File": "motions/angry.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"yawn": [{"File": "motions/yawn.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}],
-			"walk": [{"File": "motions/walk.motion3.json", "FadeInTime": 0.5, "FadeOutTime": 1.0}]
-		}
-	},
-	"Groups": [
-		{
-			"Target": "Parameter",
-			"Name": "EyeBlink",
-			"Ids": []
-		},
-		{
-			"Target": "Parameter",
-			"Name": "LipSync",
-			"Ids": []
-		}
-	]
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "16.moc3",
+    "Textures": [
+      "16.1024/texture_00.png"
+    ],
+    "Physics": "16.physics3.json",
+    "DisplayInfo": "16.cdi3.json",
+    "Motions": {
+      "sway": [
+        {
+          "File": "motions/sway.motion3.json",
+          "FadeInTime": 1.0,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "nod": [
+        {
+          "File": "motions/nod.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "shake": [
+        {
+          "File": "motions/shake.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "doubt": [
+        {
+          "File": "motions/doubt.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "wave": [
+        {
+          "File": "motions/wave.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "stretch": [
+        {
+          "File": "motions/stretch.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "angry": [
+        {
+          "File": "motions/angry.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "yawn": [
+        {
+          "File": "motions/yawn.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "walk": [
+        {
+          "File": "motions/walk.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ]
+    },
+    "Expressions": [
+      {
+        "Name": "neutral",
+        "File": "expressions/neutral.exp3.json"
+      },
+      {
+        "Name": "happy",
+        "File": "expressions/happy.exp3.json"
+      },
+      {
+        "Name": "angry",
+        "File": "expressions/angry.exp3.json"
+      },
+      {
+        "Name": "sad",
+        "File": "expressions/sad.exp3.json"
+      },
+      {
+        "Name": "surprised",
+        "File": "expressions/surprised.exp3.json"
+      },
+      {
+        "Name": "shy",
+        "File": "expressions/shy.exp3.json"
+      },
+      {
+        "Name": "sleepy",
+        "File": "expressions/sleepy.exp3.json"
+      },
+      {
+        "Name": "smug",
+        "File": "expressions/smug.exp3.json"
+      },
+      {
+        "Name": "speechless",
+        "File": "expressions/speechless.exp3.json"
+      },
+      {
+        "Name": "worried",
+        "File": "expressions/worried.exp3.json"
+      },
+      {
+        "Name": "serious",
+        "File": "expressions/serious.exp3.json"
+      },
+      {
+        "Name": "hit",
+        "File": "expressions/hit.exp3.json"
+      }
+    ]
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": []
+    }
+  ]
 }
