@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
@@ -223,6 +223,21 @@ fn open_settings_window(app: &tauri::AppHandle, anchor: Option<&str>) {
         .build();
 }
 
+/// 切换桌宠窗口显隐（托盘左键单击与菜单「显示 / 隐藏桌宠」共用）。
+fn toggle_pet_visibility(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("pet") {
+        match w.is_visible() {
+            Ok(true) => {
+                let _ = w.hide();
+            }
+            _ => {
+                let _ = w.show();
+                let _ = w.unminimize();
+            }
+        }
+    }
+}
+
 fn main() {
     let hit_mask: HitMaskState = Arc::new(Mutex::new(HitMask::default()));
     let hit_mask_for_setup = hit_mask.clone();
@@ -267,21 +282,21 @@ fn main() {
                 .icon(icon)
                 .tooltip("Aliya Pet")
                 .menu(&menu)
+                // 菜单只在右键时弹出；左键切换桌宠显隐
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_pet_visibility(tray.app_handle());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "menu" => open_settings_window(app, None),
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("pet") {
-                            match w.is_visible() {
-                                Ok(true) => {
-                                    let _ = w.hide();
-                                }
-                                _ => {
-                                    let _ = w.show();
-                                    let _ = w.unminimize();
-                                }
-                            }
-                        }
-                    }
+                    "show" => toggle_pet_visibility(app),
                     "cycle_size" => {
                         let _ = app.emit_to(
                             "pet",
