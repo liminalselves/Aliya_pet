@@ -191,9 +191,10 @@ export class BehaviorService {
     const host = this._getHost();
     if (!host) return;
     if (!this.lookAtEnabled || !this.petRunning || this.isDragging) {
-      if (!this.lookAtEnabled) host.clearLookTarget();
+      host.clearLookTarget();
       return;
     }
+    if (!Number.isFinite(pointerNormX) || !Number.isFinite(pointerNormY)) return;
 
     const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
     const rawX = clamp01(pointerNormX);

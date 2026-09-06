@@ -6,12 +6,12 @@
  * 组合行为不可预测，出现瞬断、跳变、瞳孔越程露白。
  *
  * 现在的模型（单一管道，每帧固定四级）：
- *   目标(follow/0) → 目标平滑 → 动作交挖权重 → 写入(头部跟随 + 眼球跟随
- *   + 表情注视偏移[仅眼] → 总钳制)
+ *   目标(follow/0) → 目标平滑 → 头部/眼球分别与动作交挖 → 写入
+ *   (头部跟随 + 眼球跟随 + 表情注视偏移[仅眼] → 总钳制)
  *
- * 所有权规则（写眼球的只有这里与动作曲线；动作播放时跟随权重淡出，
- * 动作曲线独占）：
- *   动作 > 表情偏移 > 指针跟随；抚摸期间跟随增益 ×0.25。
+ * 所有权规则（写眼球的只有这里与动作曲线）：
+ *   头部让动作控制；眼球有目标时跟随，无目标时让动作控制。
+ *   抚摸期间跟随增益 ×0.25。
  *
  * 性能：无每帧分配，全部标量字段复用。
  */
@@ -45,6 +45,8 @@ export interface GazeUpdateOptions {
   motionActive: boolean;
   /** 跟随增益乘数（抚摸期间 0.25）。 */
   reduction: number;
+  /** 最终眼睑开合：半闭眼时收小瞳孔行程，闭眼时回到中心。 */
+  eyeOpenness?: number;
 }
 
 export class GazeController {
@@ -61,6 +63,7 @@ export class GazeController {
   private _x = 0;
   private _y = 0;
   private _weight = 1;
+  private _eyeWeight = 1;
 
   // 表情注视偏移（独立平滑，切表情时交叉淡化）
   private _exprX = 0;
@@ -87,6 +90,7 @@ export class GazeController {
 
   /** 设置注视目标（0..1 归一，y 向上为正；来自指针/AI）。 */
   setTarget(x01: number, y01: number): void {
+    if (!Number.isFinite(x01) || !Number.isFinite(y01)) return;
     this._targetX = Math.min(Math.max(x01 * 2 - 1, -1), 1);
     this._targetY = Math.min(Math.max(y01 * 2 - 1, -1), 1);
     this._active = true;
@@ -112,12 +116,18 @@ export class GazeController {
     this._exprTargetY = g ? g[1] : 0;
   }
 
-  /** 每帧求值（物理之后、model.update 之前调用）。 */
+  /** 每帧求值（表情/互动眼睑之后、物理之前调用）。 */
   update(model: CubismModel, dt: number, opts: GazeUpdateOptions): void {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    dt = Math.min(dt, 0.1);
     // 1) 动作交挖权重（平滑淡入淡出，杜绝瞬断）
     const weightTarget = opts.motionActive ? 0 : 1;
     this._weight +=
       (weightTarget - this._weight) *
+      (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
+    // 有指针目标时眼球持续跟随；头部仍让动作控制。无目标时淡回动作视线。
+    this._eyeWeight +=
+      ((this._active || !opts.motionActive ? 1 : 0) - this._eyeWeight) *
       (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
 
     // 2) 指针目标平滑（无目标时回中）
@@ -136,7 +146,20 @@ export class GazeController {
     //    AngleZ 角落 -8 / BodyAngleX 4 / 眼球 18）——输入已含权重
     const followX = this._x * this._weight * opts.reduction;
     const followY = this._y * this._weight * opts.reduction;
+    const motionX = model.getParameterValueById(this._idEyeBallX);
+    const motionY = model.getParameterValueById(this._idEyeBallY);
     this._look.updateParameters(model, followX, followY);
+    // 用权重混合取代动作眼球与跟随的加性叠加，避免交接时突然撞限位。
+    model.setParameterValueById(
+      this._idEyeBallX,
+      motionX * (1 - this._eyeWeight) +
+        18 * this._x * this._eyeWeight * opts.reduction
+    );
+    model.setParameterValueById(
+      this._idEyeBallY,
+      motionY * (1 - this._eyeWeight) +
+        18 * this._y * this._eyeWeight * opts.reduction
+    );
 
     // 5) 眼球：叠加表情偏移（仅眼）→ 总钳制（跟随 18×follow + 偏移，
     //    与动作注视曲线的交挖瞬态都在安全行程内）
@@ -144,20 +167,14 @@ export class GazeController {
       model.addParameterValueById(this._idEyeBallX, this._exprX);
       model.addParameterValueById(this._idEyeBallY, this._exprY);
     }
-    const limit = GazeController.EYE_LIMIT;
+    const openness = opts.eyeOpenness ?? 1;
+    const limit = GazeController.EYE_LIMIT * Math.min(1, Math.max(0, openness));
     const bx = model.getParameterValueById(this._idEyeBallX);
-    if (bx > limit || bx < -limit) {
-      model.setParameterValueById(
-        this._idEyeBallX,
-        bx > limit ? limit : -limit
-      );
-    }
     const by = model.getParameterValueById(this._idEyeBallY);
-    if (by > limit || by < -limit) {
-      model.setParameterValueById(
-        this._idEyeBallY,
-        by > limit ? limit : -limit
-      );
+    const radius = Math.hypot(bx, by);
+    if (radius > limit) {
+      model.setParameterValueById(this._idEyeBallX, bx * limit / radius);
+      model.setParameterValueById(this._idEyeBallY, by * limit / radius);
     }
   }
 }

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>眼型组合诊断</title>
+<style>body{margin:0;background:#ddd;font:14px sans-serif}#stage{position:fixed;visibility:hidden;width:360px;height:500px}canvas{width:100%;height:100%}#gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px}figure{margin:0;background:white;text-align:center}img{width:100%}</style>
+<div id="stage"></div><div id="gallery"></div>
+<script src="/core/live2dcubismcore.js"></script>
+<script type="module">
+import {PetApp} from '/src/pet-app.ts';
+import {CubismFramework} from '@framework/live2dcubismframework';
+while(true){try{Live2DCubismCore.Version.csmGetLatestMocVersion();break}catch{await new Promise(r=>setTimeout(r,50))}}
+const app=new PetApp();app.initialize();await app.loadModel('/live2d/aliya/16.model3.json');app.setPaused(true);app._behavior.stop();
+const pet=app._model, model=pet._model,canvas=app.getCanvas();canvas.width=360;canvas.height=500;
+const options=new URLSearchParams(location.search);
+if(options.has('legacy')) pet._faceVariantIds=pet._faceVariantIds.slice(0,7);
+const id=name=>CubismFramework.getIdManager().getId(name);
+const set=(name,v)=>model.setParameterValueById(id(name),v);
+const values=new Uint8Array(360*500*4);
+for(let i=0;i<100;i++){pet.update(1/30);app._render();app._gl.readPixels(0,0,360,500,app._gl.RGBA,app._gl.UNSIGNED_BYTE,values);if(values.some((v,j)=>j%4===3&&v))break;await new Promise(r=>setTimeout(r,100))}
+function reset(){pet._motionManager.stopAllMotions();pet._expressionManager.stopAllMotions();pet._currentExpression=null;pet._gaze.setExpression(null);pet.clearLookTarget();pet._chEye.enabled=false;for(let i=0;i<model.getParameterCount();i++)model.setParameterValueByIndex(i,model.getParameterDefaultValue(i));model.saveParameters();}
+function capture(label){app._render();const c=document.createElement('canvas');c.width=320;c.height=250;c.getContext('2d').drawImage(canvas,20,20,320,250,0,0,320,250);const f=document.createElement('figure'),im=new Image();im.src=c.toDataURL();f.append(im,document.createTextNode(label));document.querySelector('#gallery').append(f);}
+if(options.has('expressions')) {
+ for(const name of pet.getExpressionNames()) {
+  reset();pet.startExpression(name);
+  for(let i=0;i<60;i++){pet.update(1/30);app._render();}
+  capture(({neutral:'中性',happy:'开心',angry:'生气',sad:'难过（流泪）',surprised:'惊讶',shy:'害羞',sleepy:'困倦',smug:'得意',speechless:'无语',worried:'担忧',serious:'认真',hit:'受击'})[name] ?? name);
+ }
+} else if(options.has('transition')) {
+ for(const target of ['hit','speechless','sad']) {
+  reset();pet.startExpression('happy');
+  pet._chEye.enabled=true;pet._chEye.left=0;pet._chEye.right=0;
+  for(let i=0;i<90;i++){pet.update(1/30);app._render();}
+  capture(`开心 → ${target} 前`);
+  pet._chEye.enabled=false;
+  pet.startExpression(target);
+  for(let frame=1;frame<=30;frame++) {
+   pet.update(1/30);app._render();
+   if([1,2,4,8,16,30].includes(frame)) capture(`${target} 第${frame}帧`);
+  }
+ }
+} else {
+for(const selector of ['Param33','Param35','Param34']){
+ for(const [x,y] of [[0,0],[-30,0],[30,0],[0,-30],[0,30],[-20,-20],[20,20]]){
+  reset();for(let i=0;i<30;i++)pet.update(1/30);
+  set(selector,1);set('ParamEyeLOpen',1);set('ParamEyeROpen',1);set('ParamEyeLSmile',0);set('ParamEyeRSmile',0);set('ParamAngleX',x);set('ParamAngleY',y);model.update();capture(`${selector} 头 ${x},${y}`);
+ }
+ for(const [x,y] of [[-20,0],[20,0],[0,-20],[0,20]]){
+  reset();for(let i=0;i<30;i++)pet.update(1/30);
+  set(selector,1);set('ParamEyeLOpen',1);set('ParamEyeROpen',1);set('ParamEyeLSmile',0);set('ParamEyeRSmile',0);set('ParamEyeBallX',x);set('ParamEyeBallY',y);model.update();capture(`${selector} 眼 ${x},${y}`);
+ }
+}
+for(const name of ['hit','speechless']){
+ for(const action of ['wave','yawn','stretch']){
+  reset();pet.playAction(action);for(let i=0;i<45;i++)pet.update(1/30);
+  pet.startExpression(name);pet.update(1/30);capture(`${action} → ${name} 首帧`);
+  for(let i=0;i<30;i++)pet.update(1/30);capture(`${action} + ${name} 1s`);
+ }
+ for(const [x,y] of [[0,0],[1,0],[1,1],[0,1]]){
+  reset();pet.startExpression(name);pet.setLookTarget(x,y);
+  for(let i=0;i<60;i++)pet.update(1/30);capture(`${name} 跟随 ${x},${y}`);
+ }
+}
+}
+document.title='眼型组合诊断完成';
+</script></html>

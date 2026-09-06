@@ -22,7 +22,7 @@ cd redesign/ui && npm run build        # 或重新构建让 dist 生效
 | 挥手 | `wave.motion3.json`  | `wave`   | AngleZ 摆动 + 满笑眼/嘴角/张嘴 + **抬右手摇摆**（代码通道，见下） |
 | 伸展 | `stretch.motion3.json` | `stretch` | 闭眼后仰伸懒腰 + 收尾甩头 |
 | 生气 | `angry.motion3.json` | `angry`  | Param32 生气阴影 + 怒眉 + 头部颤抖 |
-| 打哈欠 | `yawn.motion3.json` | `yawn`   | 闭眼大张嘴 + Param34 泪光 |
+| 打哈欠 | `yawn.motion3.json` | `yawn`   | 闭眼大张嘴 + 抬头后仰 |
 | 走路 | `walk.motion3.json`  | `walk`   | BodyAngleZ ±5 步态摇摆 + 身体起伏 |
 
 组名与 `ui/src/behavior.ts` 的 `ACTION_LIBRARY` 一一对应；新增/改名动作请
@@ -33,8 +33,8 @@ cd redesign/ui && npm run build        # 或重新构建让 dist 生效
 
 1. **只写存在的参数**。新模型可用参数见生成器头部注释；**手臂参数
    （ParamArmL01/02、ParamArmR01/02）在该模型上未绑定任何变形器
-   （满量程顶点位移≈0），不要用**。表情参数很丰富（Param32 生气阴影 /
-   Param33 受击 / Param34 流泪 / Param35 无语），优先用表情 + 头/身角度做戏。
+   （满量程顶点位移≈0），不要用**。`Param33/34/35` 会切换整套特殊眼睛，
+   中间值和交叉淡化会产生重影；动作仅保留 0 值复位曲线。
 2. **每条动作必须带全套复位曲线**（生成器的 `base_reset`：16 个表情参数
    归 0、眼睛归 1、头身角度归 0）。否则上一个动作/互动写入的值会经
    `saveParameters` 残留到下一个动作。
@@ -49,7 +49,7 @@ cd redesign/ui && npm run build        # 或重新构建让 dist 生效
    的 ±1 而是 ±30——按 ±1 写只有 3% 行程，几乎看不见。动作带视线表演
    （点头垂眼、疑惑斜瞟、生气下压瞪人等，常用 5~11）。**动作播放期间
    视线跟随按权重平滑交挖**（gaze.ts GazeController 单一所有权：指针跟随
-   ×交挖权重×表情注视偏移→总钳制 ±20），动作曲线与跟随交叉淡化衔接。
+   ×交挖权重×表情注视偏移→动态径向钳制），动作曲线与跟随交叉淡化衔接。
    每条动作必须带眼球复位曲线（base_reset 已含）。方向：X+ 画面右、Y+ 上。
 6. **嘴/眉要动态**：参考旧版 Hiyori 占位动作的节拍风格——眉毛随节拍起伏
    （±0.2~0.7）、嘴角随剧情渐变而非长平台、嘴巴在节拍上轻张轻收

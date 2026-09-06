@@ -84,6 +84,7 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
     std::thread::spawn(move || {
         let mut ignoring = false;
         let mut last_emit = (i32::MIN, i32::MIN);
+        let mut last_emit_at = std::time::Instant::now();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(16));
             let Some(win) = app.get_webview_window("pet") else {
@@ -101,9 +102,12 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
             if unsafe { GetCursorPos(&mut pt) } == 0 {
                 continue;
             }
-            // 视线跟随广播：位置变化才发（事件走 IPC，静默期零开销）
-            if pt.x != last_emit.0 || pt.y != last_emit.1 {
+            // 位置变化立即广播，静止时每秒补发，确保页面重载/恢复不会丢失目标。
+            if pt.x != last_emit.0 || pt.y != last_emit.1
+                || last_emit_at.elapsed() >= std::time::Duration::from_secs(1)
+            {
                 last_emit = (pt.x, pt.y);
+                last_emit_at = std::time::Instant::now();
                 let _ = win.emit("global-mouse", json!({ "x": pt.x, "y": pt.y }));
             }
             let want_ignore = {

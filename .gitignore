@@ -19,7 +19,9 @@ artifacts/
 opencode.json
 
 # redesign 调试工具与临时截图（一次性 CDP 调试脚本、窗口截图产物）
-redesign/tools/
+redesign/tools/*
+!redesign/tools/gen-expressions.py
+!redesign/tools/gen-motions.py
 
 # Kotlin 编译器缓存与错误日志
 .kotlin/

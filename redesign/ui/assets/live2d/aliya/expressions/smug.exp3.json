@@ -25,17 +25,27 @@
   },
   {
    "Id": "ParamEyeLSmile",
-   "Value": 0.8,
+   "Value": 1.0,
    "Blend": "Add"
   },
   {
    "Id": "ParamEyeRSmile",
-   "Value": 0.3,
+   "Value": 0.0,
    "Blend": "Add"
   },
   {
+   "Id": "ParamEyeLOpen",
+   "Value": 0.0,
+   "Blend": "Multiply"
+  },
+  {
+   "Id": "ParamEyeROpen",
+   "Value": 0.95,
+   "Blend": "Multiply"
+  },
+  {
    "Id": "ParamMouthForm",
-   "Value": 0.55,
+   "Value": 0.9,
    "Blend": "Add"
   },
   {

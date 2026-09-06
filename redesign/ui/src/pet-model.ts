@@ -13,10 +13,10 @@ import { CubismEyeBlink } from '@framework/effect/cubismeyeblink';
 import { CubismLook, LookParameterData } from '@framework/effect/cubismlook';
 import { CubismEyeBlinkUpdater } from '@framework/motion/cubismeyeblinkupdater';
 import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
-import { CubismPhysicsUpdater } from '@framework/motion/cubismphysicsupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
+import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { CubismExpressionUpdater } from '@framework/motion/cubismexpressionupdater';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
@@ -83,7 +83,7 @@ export class PetModel
   private readonly _motions = new Map<string, CubismMotion>();
   private _motionUpdated = false;
 
-  // 表情（exp3.json，加性叠加在动作之上；与眨眼/物理共存）。
+  // 表情（exp3.json；眼睑乘法，其余安全参数加性叠加）。
   // 管理器复用 CubismUserModel 基类自带的 _expressionManager。
   private readonly _expressions = new Map<string, CubismExpressionMotion>();
   private _currentExpression: string | null = null;
@@ -115,6 +115,9 @@ export class PetModel
   private _idCheek: CubismIdHandle = null;
   private _idEyeBallX: CubismIdHandle = null;
   private _idEyeBallY: CubismIdHandle = null;
+  /** 会切换整套特殊眼睛、无法安全交叉淡化的模型参数。 */
+  private _unsafeFaceVariantIds: CubismIdHandle[] = [];
+  private _faceVariantIds: CubismIdHandle[] = [];
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -180,9 +183,6 @@ export class PetModel
         this._setting.getPhysicsFileName()
       );
       this.loadPhysics(physicsBuffer, physicsBuffer.byteLength);
-      this._updateScheduler.addUpdatableList(
-        new CubismPhysicsUpdater(this._physics)
-      );
     }
 
     // 纹理 → 渲染器
@@ -273,6 +273,8 @@ export class PetModel
     this._idCheek = id('ParamCheek');
     this._idEyeBallX = id('ParamEyeBallX');
     this._idEyeBallY = id('ParamEyeBallY');
+    this._unsafeFaceVariantIds = [id('Param33'), id('Param34'), id('Param35')];
+    this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
 
     // 手部物理链（cdi「右手」组：ArtMesh61 五段旋转，物理输出，BodyAngleX/Z
     // 驱动手自然摆动；负角为抬起）。动作曲线写不住（物理每帧覆盖），
@@ -300,7 +302,6 @@ export class PetModel
     this._chCheek = new CheekChannel(this._idCheek);
     this._chHand = new HandRaiseChannel(idsHandR);
     this._overlays.add(this._chInteraction);
-    this._overlays.add(this._chEye);
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
@@ -367,15 +368,22 @@ export class PetModel
    */
   public startExpression(name: string | null): boolean {
     if (name === null || name === 'neutral') {
+      if (this._currentExpression === null) return true;
       // 播放空表情触发旧的淡出
       const neutral = this._expressions.get('neutral');
-      if (neutral) this._expressionManager.startMotion(neutral, false);
+      if (neutral) {
+        // 高频切换时旧队列会累积并同时混合；只保留最新请求。
+        this._expressionManager.stopAllMotions();
+        this._expressionManager.startMotion(neutral, false);
+      }
       this._currentExpression = null;
       this._gaze.setExpression(null);
       return true;
     }
     const expr = this._expressions.get(name);
     if (!expr) return false;
+    if (this._currentExpression === name) return true;
+    this._expressionManager.stopAllMotions();
     this._expressionManager.startMotion(expr, false);
     this._currentExpression = name;
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
@@ -512,6 +520,9 @@ export class PetModel
     }
     const motion = this._motions.get(`${group}_${index}`);
     if (!motion) return INVALID_MOTION_HANDLE;
+    // 每次只保留一个动作。连续触发时由新动作自身 fade-in 接管当前姿态，
+    // 避免多个淡出动作叠加写眼睑/笑眼/特殊脸参数。
+    this._motionManager.stopAllMotions();
     return this._motionManager.startMotionPriority(motion, false, priority);
   }
 
@@ -523,7 +534,8 @@ export class PetModel
     const index = Math.floor(Math.random() * count);
     const motion = this._motions.get(`${name}_${index}`);
     if (!motion) return false;
-    // startMotion 会让播放中的动作按 fadeOut 退出，新动作直接上位
+    // 高频入口采用 latest-wins，防止淡出队列无界累积。
+    this._motionManager.stopAllMotions();
     this._motionManager.startMotionPriority(
       motion,
       false,
@@ -660,21 +672,40 @@ export class PetModel
       model,
       deltaTimeSeconds
     );
+    // 特殊眼睛选择器不支持连续混合。即使旧资源或缓存仍写入，也在基准层清零。
+    for (const id of this._unsafeFaceVariantIds) {
+      model.setParameterValueById(id, 0);
+    }
     model.saveParameters();
 
-    // 3. 调度器：眨眼(200) → 表情(300) → 呼吸(500) → 物理(600)
+    // 3. 调度器：眨眼(200) → 表情(300) → 呼吸(500)
     this._updateScheduler.onLateUpdate(model, deltaTimeSeconds);
+    for (const id of this._unsafeFaceVariantIds) {
+      model.setParameterValueById(id, 0);
+    }
+    // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
+    this._chEye.apply(model);
+    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
     this._gaze.update(model, deltaTimeSeconds, {
       motionActive: this._motionUpdated,
       reduction: this._lookAtReduction ? PetModel._lookReductionScale : 1,
+      eyeOpenness: Math.min(
+        model.getParameterValueById(this._eyeBlinkIds[0]),
+        model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
+      ),
     });
+    if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
     // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
+
+    // 在动作、表情淡化、物理和互动之后独占写入整套眼型。
+    // 受击/无语保留原生表现，但不经历会产生重影的中间值。
+    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
 
     model.update();
   }

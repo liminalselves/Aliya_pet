@@ -60,6 +60,7 @@ export class PetApp {
   private _winPhysY = 0;
   private _scaleFactor = 1;
   private _metricsSynced = false;
+  private _windowMoveTask: Promise<void> | null = null;
 
   /** 悬浮窗内容贴合模式：固定尺寸窗口 + 像素掩码穿透（透明区域不挡下层触摸）。 */
   private _wrapWindow = false;
@@ -78,6 +79,7 @@ export class PetApp {
   private _rectDirty = false;
   /** 吸附归位动画令牌：新拖动/新吸附自增打断旧动画。 */
   private _snapAnimToken = 0;
+  private _globalMouse: { x: number; y: number } | null = null;
   private _dpr = 1;
   /** 悬浮窗壳正在原生拖动（窗口由壳独占，暂停矩形下发）。 */
   private _nativeDragging = false;
@@ -221,6 +223,10 @@ export class PetApp {
         this._tauriWindow = m.getCurrentWindow();
         // 启动即暖窗口位置缓存：否则首次拖动的前几帧会把窗口拉向 (0,0)
         this._syncWindowMetrics();
+        this._tauriWindow.onMoved(() => {
+          if (!this._dragging && !this._windowMoveTask) this._syncWindowMetrics();
+        }).catch(() => {});
+        this._tauriWindow.onScaleChanged(() => this._syncWindowMetrics()).catch(() => {});
       })
       .catch(() => {
         this._tauriWindow = null;
@@ -380,7 +386,7 @@ export class PetApp {
           // 窗口不得超过屏幕逻辑尺寸，否则下半身被屏幕边缘裁掉
           let mon: import('@tauri-apps/api/window').Monitor | null = null;
           try {
-            mon = await m.currentMonitor();
+            mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
           } catch {
             mon = null;
           }
@@ -392,10 +398,10 @@ export class PetApp {
             (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
           let scale = s.scale;
           if (mon) {
-            const logW = mon.size.width / mon.scaleFactor;
-            const logH = mon.size.height / mon.scaleFactor;
+            const logW = mon.workArea.size.width / mon.scaleFactor;
+            const logH = mon.workArea.size.height / mon.scaleFactor;
             const minS = Math.max(56 / baseW, 72 / baseH); // 最小可辨识尺寸
-            const maxS = Math.max(0.5, Math.min(logW / baseW, logH / baseH));
+            const maxS = Math.min(logW / baseW, logH / baseH);
             scale = Math.min(Math.max(scale, minS), maxS);
           }
           await win
@@ -465,17 +471,17 @@ export class PetApp {
       .then(async (m) => {
         let mon: import('@tauri-apps/api/window').Monitor | null = null;
         try {
-          mon = await m.currentMonitor();
+          mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
         } catch {
           mon = null;
         }
         if (!mon) return;
         const pos = await win.outerPosition();
         const size = await win.outerSize();
-        const maxX = mon.position.x + mon.size.width - size.width;
-        const maxY = mon.position.y + mon.size.height - size.height;
-        const x = Math.min(Math.max(pos.x, mon.position.x), Math.max(maxX, mon.position.x));
-        const y = Math.min(Math.max(pos.y, mon.position.y), Math.max(maxY, mon.position.y));
+        const maxX = mon.workArea.position.x + mon.workArea.size.width - size.width;
+        const maxY = mon.workArea.position.y + mon.workArea.size.height - size.height;
+        const x = Math.min(Math.max(pos.x, mon.workArea.position.x), Math.max(maxX, mon.workArea.position.x));
+        const y = Math.min(Math.max(pos.y, mon.workArea.position.y), Math.max(maxY, mon.workArea.position.y));
         if (x !== pos.x || y !== pos.y) {
           await win.setPosition(new m.PhysicalPosition(x, y));
           this._winPhysX = x;
@@ -550,14 +556,9 @@ export class PetApp {
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
         ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
-          const sf = this._scaleFactor || 1;
-          const w = window.innerWidth * sf;
-          const h = window.innerHeight * sf;
-          if (w <= 0 || h <= 0) return;
-          this._behavior.updateLookTarget(
-            (e.payload.x - this._winPhysX) / w,
-            (e.payload.y - this._winPhysY) / h
-          );
+          if (Number.isFinite(e.payload.x) && Number.isFinite(e.payload.y)) {
+            this._globalMouse = e.payload;
+          }
         });
       })
       .catch(() => {
@@ -625,12 +626,12 @@ export class PetApp {
     if (!win) return;
     import('@tauri-apps/api/window')
       .then(async (m) => {
-        const mon = await m.currentMonitor();
+        const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
         if (!mon) return;
         const size = await win.outerSize();
-        const x = mon.position.x + Math.round((mon.size.width - size.width) / 2);
+        const x = mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2);
         const y =
-          mon.position.y + Math.round((mon.size.height - size.height) / 2);
+          mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2);
         await win.setPosition(new m.PhysicalPosition(x, y));
         this._winPhysX = x;
         this._winPhysY = y;
@@ -641,7 +642,7 @@ export class PetApp {
       .catch(() => {});
   }
 
-  /** 拖动结束：贴边吸附 + 保存位置。 */
+  /** 拖动结束：钳制到显示器工作区，可选贴边吸附，然后保存位置。 */
   private _onDragFinished(): void {
     if (platform === 'android') {
       this._onDragFinishedAndroid();
@@ -649,23 +650,30 @@ export class PetApp {
     }
     const win = this._tauriWindow;
     if (!win) return;
+    const token = ++this._snapAnimToken;
+    const pendingMove = this._windowMoveTask;
     import('@tauri-apps/api/window')
       .then(async (m) => {
-        if (this._settings.snapEdges) {
-          const mon = await m.currentMonitor();
+        await pendingMove;
+        if (token !== this._snapAnimToken) return;
+        {
+          const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
           if (mon) {
             const size = await win.outerSize();
-            const threshold = Math.round(32 * mon.scaleFactor);
+            const threshold = this._settings.snapEdges ? Math.round(32 * mon.scaleFactor) : 0;
+            if (token !== this._snapAnimToken) return;
             let x = this._winPhysX;
             let y = this._winPhysY;
-            const left = mon.position.x;
-            const top = mon.position.y;
-            const right = mon.position.x + mon.size.width - size.width;
-            const bottom = mon.position.y + mon.size.height - size.height;
+            const left = mon.workArea.position.x;
+            const top = mon.workArea.position.y;
+            const right = Math.max(left, left + mon.workArea.size.width - size.width);
+            const bottom = Math.max(top, top + mon.workArea.size.height - size.height);
             if (Math.abs(x - left) < threshold) x = left;
             else if (Math.abs(x - right) < threshold) x = right;
             if (Math.abs(y - top) < threshold) y = top;
             else if (Math.abs(y - bottom) < threshold) y = bottom;
+            x = Math.min(Math.max(x, left), right);
+            y = Math.min(Math.max(y, top), bottom);
             if (x !== this._winPhysX || y !== this._winPhysY) {
               await win.setPosition(new m.PhysicalPosition(x, y));
               this._winPhysX = x;
@@ -789,11 +797,11 @@ export class PetApp {
     const rw = rect.width || 1;
     const rh = rect.height || 1;
     if (this._wrapWindow && this._model?.isReady()) {
-      return this._wrapToRefNorm(e.offsetX, e.offsetY);
+      return this._wrapToRefNorm(e.clientX - rect.left, e.clientY - rect.top);
     }
     return {
-      nx: Math.min(Math.max(e.offsetX / rw, 0), 1),
-      ny: Math.min(Math.max(e.offsetY / rh, 0), 1),
+      nx: Math.min(Math.max((e.clientX - rect.left) / rw, 0), 1),
+      ny: Math.min(Math.max((e.clientY - rect.top) / rh, 0), 1),
     };
   }
 
@@ -811,8 +819,8 @@ export class PetApp {
     return {
       normX: n.nx,
       normY: n.ny,
-      pxX: e.offsetX * scale,
-      pxY: e.offsetY * scale,
+      pxX: (e.clientX - rect.left) * scale,
+      pxY: (e.clientY - rect.top) * scale,
       dtSeconds: dt,
       leftPressed: this._leftDown,
       isSecondary,
@@ -825,6 +833,8 @@ export class PetApp {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (!e.isPrimary) return;
+      this._snapAnimToken++;
       // 透明像素兜底：壳穿透生效前的竞态，落在透明区的事件不触发互动
       if (
         platform === 'tauri' &&
@@ -849,7 +859,9 @@ export class PetApp {
       const ctx = this._ctx(e, isSecondary);
       this._touchPetting = isTouchDevice && isSecondary && e.button === 0;
       // 视线跟随：按下即更新目标（轻点不移动也要看向触点）
-      this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
+        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      }
 
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
@@ -861,7 +873,9 @@ export class PetApp {
       if (e.button !== 0) return;
 
       this._leftDown = true;
-      this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
+        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      }
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
@@ -875,9 +889,12 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointermove', (e) => {
+      if (!e.isPrimary) return;
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
-      this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
+        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
+      }
 
       if (this._dragCandidate && this._leftDown && !handled) {
         if (!this._dragging) {
@@ -902,6 +919,7 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointerup', (e) => {
+      if (!e.isPrimary) return;
       const viaPetting = e.button === 2 || this._touchPetting;
       const ctx = this._ctx(e, viaPetting);
       const handled = this._interaction?.onPointerUp(ctx) ?? false;
@@ -929,6 +947,15 @@ export class PetApp {
       this._cancelTouchPetting();
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
+    });
+    canvas.addEventListener('lostpointercapture', () => {
+      if (this._dragging && !this._wrapWindow) this._onDragFinished();
+      this._cancelTouchPetting();
+      if (this._wrapWindow) androidShell()?.setInteracting(false);
+      this._resetDragState();
+    });
+    canvas.addEventListener('pointerleave', () => {
+      if (platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
     });
     window.addEventListener('blur', () => {
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -965,8 +992,10 @@ export class PetApp {
     if (!win) return;
     Promise.all([win.outerPosition(), win.scaleFactor()])
       .then(([pos, sf]) => {
-        this._winPhysX = pos.x;
-        this._winPhysY = pos.y;
+        if (!this._dragging && !this._windowMoveTask) {
+          this._winPhysX = pos.x;
+          this._winPhysY = pos.y;
+        }
         this._scaleFactor = sf;
         this._metricsSynced = true;
       })
@@ -986,12 +1015,23 @@ export class PetApp {
     if (!win || !this._metricsSynced) return;
     this._winPhysX += Math.round(deltaCssX * this._scaleFactor);
     this._winPhysY += Math.round(deltaCssY * this._scaleFactor);
-    import('@tauri-apps/api/window')
-      .then((m) => {
-        win.setPosition(new m.PhysicalPosition(this._winPhysX, this._winPhysY));
+    if (this._windowMoveTask) return;
+    this._windowMoveTask = import('@tauri-apps/api/window')
+      .then(async (m) => {
+        // 串行提交并合并期间新增的位移，防止 IPC 回包乱序把窗口拉回旧位置。
+        let x: number, y: number;
+        do {
+          x = this._winPhysX;
+          y = this._winPhysY;
+          await win.setPosition(new m.PhysicalPosition(x, y));
+        } while (x !== this._winPhysX || y !== this._winPhysY);
       })
       .catch(() => {
-        // 浏览器环境：忽略
+        this._windowMoveTask = null;
+        this._syncWindowMetrics();
+      })
+      .finally(() => {
+        this._windowMoveTask = null;
       });
   }
 
@@ -1142,6 +1182,14 @@ export class PetApp {
     const dt = minInterval / 1000;
     // 画布尺寸在渲染帧内同步：重置缓冲后立即重绘，合成器永远拿不到空帧
     this._resizeCanvas();
+    // 每帧从同一个物理坐标源换算；鼠标静止时窗口移动/镜像/拖动结束也能恢复。
+    if (this._globalMouse && this._metricsSynced && !this._wrapWindow) {
+      const w = window.innerWidth * this._scaleFactor;
+      const h = window.innerHeight * this._scaleFactor;
+      if (w > 0 && h > 0) this._behavior?.updateLookTarget(
+        (this._globalMouse.x - this._winPhysX) / w,
+        (this._globalMouse.y - this._winPhysY) / h);
+    }
     this._update(dt);
     // 贴合模式先下发窗口矩形（渲染矩阵使用同一套矩形，变化有一帧过渡）
     if (this._wrapWindow) this._syncWrapWindow();

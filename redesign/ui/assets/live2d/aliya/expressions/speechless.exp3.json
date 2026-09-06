@@ -4,33 +4,18 @@
  "FadeOutTime": 0.5,
  "Parameters": [
   {
-   "Id": "Param35",
-   "Value": 1.0,
-   "Blend": "Add"
-  },
-  {
    "Id": "ParamMouthForm",
    "Value": -0.5,
    "Blend": "Add"
   },
   {
-   "Id": "ParamEyeLOpen",
-   "Value": -0.15,
+   "Id": "ParamBrowLY",
+   "Value": -0.18,
    "Blend": "Add"
   },
   {
-   "Id": "ParamEyeROpen",
-   "Value": -0.15,
-   "Blend": "Add"
-  },
-  {
-   "Id": "ParamEyeLSmile",
-   "Value": 0.25,
-   "Blend": "Add"
-  },
-  {
-   "Id": "ParamEyeRSmile",
-   "Value": 0.25,
+   "Id": "ParamBrowRY",
+   "Value": -0.18,
    "Blend": "Add"
   }
  ]

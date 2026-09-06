@@ -20,28 +20,33 @@
   },
   {
    "Id": "ParamBrowLY",
-   "Value": -0.6,
+   "Value": -0.85,
    "Blend": "Add"
   },
   {
    "Id": "ParamBrowRY",
-   "Value": -0.6,
+   "Value": -0.85,
    "Blend": "Add"
   },
   {
    "Id": "ParamMouthForm",
-   "Value": -0.8,
+   "Value": -1.0,
+   "Blend": "Add"
+  },
+  {
+   "Id": "ParamMouthOpenY",
+   "Value": 0.25,
    "Blend": "Add"
   },
   {
    "Id": "ParamEyeLOpen",
-   "Value": 0.08,
-   "Blend": "Add"
+   "Value": 0.8,
+   "Blend": "Multiply"
   },
   {
    "Id": "ParamEyeROpen",
-   "Value": 0.08,
-   "Blend": "Add"
+   "Value": 0.8,
+   "Blend": "Multiply"
   }
  ]
 }

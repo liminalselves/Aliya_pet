@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Aliya 视觉回归运行中</title>
+  <style>
+    body { margin: 0; background: #e9e9e9; font: 13px sans-serif; }
+    #stage { position: fixed; width: 360px; height: 500px; visibility: hidden; }
+    canvas { width: 100%; height: 100%; }
+    #gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 4px; }
+    figure { margin: 0; padding: 4px; background: white; text-align: center; }
+    img { display: block; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="gallery"></div>
+  <script src="/core/live2dcubismcore.js"></script>
+  <script type="module">
+    import { PetApp } from '/src/pet-app.ts';
+    import { CubismFramework } from '@framework/live2dcubismframework';
+    import { FACE_VARIANT_PARAMETERS } from '/src/face-variant.ts';
+
+    while (true) {
+      try {
+        Live2DCubismCore.Version.csmGetLatestMocVersion();
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    const app = new PetApp();
+    app.initialize();
+    await app.loadModel('/live2d/aliya/16.model3.json');
+    app.setPaused(true);
+    app._behavior.stop();
+    const pet = app._model;
+    const model = pet._model;
+    const canvas = app.getCanvas();
+    canvas.width = 360;
+    canvas.height = 500;
+    pet._eyeBlink._nextBlinkingTime = 1e9;
+
+    function reset() {
+      pet._motionManager.stopAllMotions();
+      pet._expressionManager.stopAllMotions();
+      pet._currentExpression = null;
+      pet._gaze.setExpression(null);
+      pet.clearLookTarget();
+      for (let i = 0; i < model.getParameterCount(); i++) {
+        model.setParameterValueByIndex(i, model.getParameterDefaultValue(i));
+      }
+      model.saveParameters();
+    }
+
+    function step(frames) {
+      for (let i = 0; i < frames; i++) {
+        pet.update(1 / 30);
+        checkEyes();
+        app._render();
+      }
+      app._render();
+    }
+
+    function checkEyes() {
+      if (['hit', 'speechless', 'sad'].includes(pet.getCurrentExpression())) {
+        for (const [name, expected] of [['ParamEyeLOpen', 1], ['ParamEyeROpen', 1],
+          ['ParamEyeLSmile', 0], ['ParamEyeRSmile', 0]]) {
+          const value = model.getParameterValueById(CubismFramework.getIdManager().getId(name));
+          if (value !== expected) throw new Error(`${name} 正在裁切特殊眼型`);
+        }
+        for (const name of FACE_VARIANT_PARAMETERS.slice(7)) {
+          if (model.getParameterValueById(CubismFramework.getIdManager().getId(name)) !== 0) {
+            throw new Error(`${name} 残留眼部物理，可能遮挡替换眼型`);
+          }
+        }
+      }
+      for (const name of ['Param33', 'Param34', 'Param35']) {
+        const value = model.getParameterValueById(CubismFramework.getIdManager().getId(name));
+        const expression = pet.getCurrentExpression();
+        const expected = (name === 'Param33' && expression === 'hit') ||
+          (name === 'Param34' && expression === 'sad') ||
+          (name === 'Param35' && expression === 'speechless') ? 1 : 0;
+        if (value !== expected) throw new Error(`${expression}: ${name} 应为 ${expected}，实际 ${value}`);
+      }
+    }
+
+    function capture(label) {
+      const figure = document.createElement('figure');
+      const image = new Image();
+      image.src = canvas.toDataURL();
+      figure.append(image, document.createTextNode(label));
+      document.querySelector('#gallery').append(figure);
+    }
+
+    // SDK 在首次绘制时异步加载着色器；必须等真实像素出现，不能把空白截图当通过。
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    let rendered = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      step(1);
+      app._gl.readPixels(0, 0, canvas.width, canvas.height, app._gl.RGBA, app._gl.UNSIGNED_BYTE, pixels);
+      if (pixels.some((value, index) => index % 4 === 3 && value > 0)) {
+        rendered = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!rendered) throw new Error('模型未产生可见像素，视觉回归失败');
+
+    // 用户复现：开心闭眼（或抚摸中）切到专用眼型；物理摆锤带着旧闭眼姿态。
+    for (const name of ['hit', 'speechless', 'sad']) {
+      reset();
+      pet.startExpression('happy');
+      pet._chEye.enabled = true;
+      pet._chEye.left = pet._chEye.right = 0;
+      step(60);
+      capture(`开心闭眼 → ${name} 前`);
+      pet._chEye.enabled = false;
+      pet.startExpression(name);
+      for (let frame = 1; frame <= 60; frame++) {
+        step(1);
+        if ([1, 4, 15, 60].includes(frame)) capture(`${name} 切换第 ${frame} 帧`);
+      }
+    }
+
+    for (const action of ['yawn', 'stretch', 'wave']) {
+      for (const name of ['hit', 'speechless', 'sad']) {
+        reset(); pet.playAction(action); step(45); pet.startExpression(name);
+        step(1); capture(`${action} → ${name} 首帧`); step(60);
+      }
+    }
+
+    for (const name of ['worried', 'hit', 'speechless']) {
+      reset();
+      pet.startExpression(name);
+      step(45);
+      capture(`重点表情 ${name}`);
+    }
+    // 不重置模型，覆盖切换首帧、重复播放及清除表情。
+    for (const name of ['hit', 'speechless', 'hit', 'hit', null, 'speechless', null]) {
+      pet.startExpression(name);
+      step(1);
+      capture(`切换首帧 ${name ?? 'neutral'}`);
+      step(20);
+    }
+    reset();
+    pet.playAction('yawn');
+    for (let part = 1; part <= 8; part++) {
+      step(15);
+      capture(`哈欠 ${part * 0.5}s`);
+    }
+
+    reset();
+    step(30);
+    for (const name of pet.getExpressionNames()) {
+      reset();
+      pet.startExpression(name);
+      step(45);
+      capture(`表情 ${name}`);
+    }
+
+    for (const name of ['nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn', 'walk']) {
+      reset();
+      pet.playAction(name);
+      step(45);
+      capture(`动作 ${name} 1.5s`);
+    }
+
+    reset();
+    const expressions = pet.getExpressionNames().filter((name) => name !== 'neutral');
+    const actions = ['nod', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn', 'walk'];
+    let maxMotionQueue = 0;
+    let maxExpressionQueue = 0;
+    for (let frame = 0; frame < 180; frame++) {
+      if (frame % 2 === 0) pet.startExpression(expressions[(frame / 2) % expressions.length]);
+      if (frame % 3 === 0) pet.playAction(actions[(frame / 3) % actions.length]);
+      pet.update(1 / 30);
+      checkEyes();
+      maxMotionQueue = Math.max(maxMotionQueue, pet._motionManager.getCubismMotionQueueEntries().length);
+      maxExpressionQueue = Math.max(maxExpressionQueue, pet._expressionManager.getCubismMotionQueueEntries().length);
+      if (frame % 30 === 29) {
+        app._render();
+        capture(`高频切换 ${(frame + 1) / 30}s`);
+      }
+    }
+
+    if (maxMotionQueue > 1 || maxExpressionQueue > 1) throw new Error('高频切换产生堆积');
+    document.title = `Aliya 视觉回归完成 · 动作队列${maxMotionQueue} · 表情队列${maxExpressionQueue}`;
+  </script>
+</body>
+</html>
