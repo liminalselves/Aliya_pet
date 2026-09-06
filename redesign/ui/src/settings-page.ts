@@ -11,6 +11,8 @@ import {
   BASE_WINDOW_W,
   BASE_WINDOW_H,
   clampScale,
+  scaleToPercent,
+  percentToScale,
   loadSettings,
   saveSettings,
 } from './settings';
@@ -205,6 +207,16 @@ const refs: {
   scaleVal?: HTMLSpanElement;
 } = {};
 
+// 缩放显示域：设备允许的实际范围 [scaleRangeMin, scaleRangeMax] 线性映射到
+// 10%~100%（实际范围由屏幕推导，与 pet 窗口的设备钳制同一公式）。
+// 查询显示器前的回退范围即滑条原始静态范围。
+let scaleRangeMin = 0.15;
+let scaleRangeMax = 2;
+
+function scalePercent(s: number): number {
+  return Math.round(scaleToPercent(s, scaleRangeMin, scaleRangeMax));
+}
+
 function refreshControls(): void {
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
@@ -213,9 +225,10 @@ function refreshControls(): void {
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
-  if (refs.scaleSlider) refs.scaleSlider.value = String(settings.scale);
+  if (refs.scaleSlider)
+    refs.scaleSlider.value = String(scalePercent(settings.scale));
   if (refs.scaleVal)
-    refs.scaleVal.textContent = `${Math.round(settings.scale * 100)}%`;
+    refs.scaleVal.textContent = `${scalePercent(settings.scale)}%`;
   if (refs.batterySaver)
     refs.batterySaver.checked = settings.batterySaver === true;
 }
@@ -366,65 +379,67 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   plus.textContent = '+';
   const slider = document.createElement('input');
   slider.type = 'range';
-  slider.min = '0.15';
-  slider.max = '2';
-  slider.step = '0.05';
-  slider.value = String(settings.scale);
-  // 滑块上限按屏幕尺寸收敛（与 pet 窗口的设备钳制一致）
+  // 显示百分比域：10%~100%（实际缩放范围经线性映射，不改实际上下限）
+  slider.min = '10';
+  slider.max = '100';
+  slider.step = '1';
+  slider.value = String(scalePercent(settings.scale));
+  const val = document.createElement('span');
+  val.className = 'val';
+  val.textContent = `${scalePercent(settings.scale)}%`;
+  refs.scaleSlider = slider;
+  refs.scaleVal = val;
+  // 实际范围按屏幕尺寸推导（与 pet 窗口的设备钳制同一公式），到位后刷新滑杆位置
   if (platform === 'android') {
     try {
       const m = JSON.parse(androidShell()?.getMetrics() ?? '') as {
         screenW: number;
         screenH: number;
       };
-      if (m.screenW > 0) {
-        const maxS = Math.max(
+      if (m.screenW > 0 && m.screenH > 0) {
+        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
+        scaleRangeMax = Math.max(
           0.5,
           Math.min(m.screenW / BASE_WINDOW_W, m.screenH / BASE_WINDOW_H)
         );
-        slider.max = String(Math.min(2, Math.floor(maxS * 20) / 20));
+        refreshControls();
       }
     } catch {
-      // 保持默认上限
+      // 保持默认范围
     }
   } else
-  import('@tauri-apps/api/window')
-    .then(async (m) => {
-      let mon: import('@tauri-apps/api/window').Monitor | null = null;
-      try {
-        mon = await m.currentMonitor();
-      } catch {
-        mon = null;
-      }
-      if (!mon) return;
-      const logW = mon.size.width / mon.scaleFactor;
-      const logH = mon.size.height / mon.scaleFactor;
-      const maxS = Math.max(
-        0.5,
-        Math.min(logW / BASE_WINDOW_W, logH / BASE_WINDOW_H)
-      );
-      slider.max = String(Math.min(2, Math.floor(maxS * 20) / 20));
-    })
-    .catch(() => {});
-  const val = document.createElement('span');
-  val.className = 'val';
-  val.textContent = `${Math.round(settings.scale * 100)}%`;
-  const applyScale = (v: number) => {
-    // 加减按钮与滑杆同域：钳到 [min, max]（上限按屏幕尺寸动态收敛过）
-    const lo = Number(slider.min);
-    const hi = Number(slider.max);
+    import('@tauri-apps/api/window')
+      .then(async (m) => {
+        let mon: import('@tauri-apps/api/window').Monitor | null = null;
+        try {
+          mon = await m.currentMonitor();
+        } catch {
+          mon = null;
+        }
+        if (!mon) return;
+        const logW = mon.workArea.size.width / mon.scaleFactor;
+        const logH = mon.workArea.size.height / mon.scaleFactor;
+        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
+        scaleRangeMax = Math.min(logW / BASE_WINDOW_W, logH / BASE_WINDOW_H);
+        refreshControls();
+      })
+      .catch(() => {});
+  const commitScale = (v: number) => {
+    // 滑杆/加减按钮统一在实际缩放域钳到设备范围，再换算显示百分比
     const s = clampScale(
-      Math.min(Math.max(Math.round(v * 100) / 100, lo), hi)
+      Math.min(Math.max(v, scaleRangeMin), scaleRangeMax)
     );
-    slider.value = String(s);
-    val.textContent = `${Math.round(s * 100)}%`;
+    slider.value = String(scalePercent(s));
+    val.textContent = `${scalePercent(s)}%`;
     update({ scale: s });
   };
-  minus.addEventListener('click', () => applyScale(settings.scale / 1.08));
-  plus.addEventListener('click', () => applyScale(settings.scale * 1.08));
-  slider.addEventListener('input', () => applyScale(Number(slider.value)));
-  refs.scaleSlider = slider;
-  refs.scaleVal = val;
+  minus.addEventListener('click', () => commitScale(settings.scale / 1.08));
+  plus.addEventListener('click', () => commitScale(settings.scale * 1.08));
+  slider.addEventListener('input', () =>
+    commitScale(
+      percentToScale(Number(slider.value), scaleRangeMin, scaleRangeMax)
+    )
+  );
   wrap.appendChild(minus);
   wrap.appendChild(slider);
   wrap.appendChild(plus);

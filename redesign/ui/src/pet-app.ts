@@ -352,6 +352,63 @@ export class PetApp {
   }
 
   /**
+   * 设备允许的缩放范围（对齐 Flutter ScalePolicy：窗口不得超过屏幕
+   * 逻辑工作区，否则下半身被屏幕边缘裁掉；下限为最小可辨识尺寸）。
+   */
+  private _scaleLimitsFrom(
+    mon: import('@tauri-apps/api/window').Monitor | null,
+    baseW: number,
+    baseH: number
+  ): { minS: number; maxS: number } | null {
+    if (!mon) return null;
+    const logW = mon.workArea.size.width / mon.scaleFactor;
+    const logH = mon.workArea.size.height / mon.scaleFactor;
+    return {
+      minS: Math.max(56 / baseW, 72 / baseH),
+      maxS: Math.min(logW / baseW, logH / baseH),
+    };
+  }
+
+  /** 当前窗口基准尺寸（模型加载后用实测包围盒，否则用默认比例）。 */
+  private _baseWindowSize(): { baseW: number; baseH: number } {
+    const baseH = 675 * PetApp._windowMarginRatio;
+    const baseW =
+      baseH *
+      (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
+    return { baseW, baseH };
+  }
+
+  /**
+   * 异步查询设备缩放范围（托盘「切换尺寸」用）。
+   * 查不到显示器时回退到与设置页一致的默认范围 [0.15, 2.0]。
+   */
+  private async _deviceScaleRange(): Promise<{ minS: number; maxS: number }> {
+    try {
+      const m = await import('@tauri-apps/api/window');
+      let mon: import('@tauri-apps/api/window').Monitor | null = null;
+      try {
+        mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+      } catch {
+        mon = null;
+      }
+      const { baseW, baseH } = this._baseWindowSize();
+      return (
+        this._scaleLimitsFrom(mon, baseW, baseH) ?? { minS: 0.15, maxS: 2.0 }
+      );
+    } catch {
+      return { minS: 0.15, maxS: 2.0 };
+    }
+  }
+
+  /** 托盘「切换尺寸」：在百分比域循环 10%→50%→100%（档位由设备范围换算，不会越界）。 */
+  private async _cycleSize(): Promise<void> {
+    const { minS, maxS } = await this._deviceScaleRange();
+    const next = nextSizePreset(this._settings.scale, minS, maxS);
+    this.applySettings({ ...this._settings, scale: next }, false);
+    this._broadcastSettings();
+  }
+
+  /**
    * 应用设置。restoreWindow=true 时恢复保存的窗口位置（仅启动）。
    * 窗口操作需要 Tauri 环境，浏览器 dev 下静默跳过。
    */
@@ -392,17 +449,11 @@ export class PetApp {
           }
           // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
           //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
-          const baseH = 675 * PetApp._windowMarginRatio;
-          const baseW =
-            baseH *
-            (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
+          const { baseW, baseH } = this._baseWindowSize();
           let scale = s.scale;
-          if (mon) {
-            const logW = mon.workArea.size.width / mon.scaleFactor;
-            const logH = mon.workArea.size.height / mon.scaleFactor;
-            const minS = Math.max(56 / baseW, 72 / baseH); // 最小可辨识尺寸
-            const maxS = Math.min(logW / baseW, logH / baseH);
-            scale = Math.min(Math.max(scale, minS), maxS);
+          const limits = this._scaleLimitsFrom(mon, baseW, baseH);
+          if (limits) {
+            scale = Math.min(Math.max(scale, limits.minS), limits.maxS);
           }
           await win
             .setSize(new m.LogicalSize(baseW * scale, baseH * scale))
@@ -519,9 +570,7 @@ export class PetApp {
           if (!p || typeof p.action !== 'string') return;
           switch (p.action) {
               case 'cycle-size': {
-                const next = nextSizePreset(this._settings.scale);
-                this.applySettings({ ...this._settings, scale: next }, false);
-                this._broadcastSettings();
+                void this._cycleSize();
                 break;
               }
               case 'always-on-top':

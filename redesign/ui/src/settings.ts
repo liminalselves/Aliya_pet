@@ -54,12 +54,53 @@ export function clampScale(v: number): number {
   return Math.min(Math.max(v, 0.1), 8.0);
 }
 
-/** 尺寸档位（托盘"切换尺寸"循环）。 */
-export const SIZE_PRESETS = [0.5, 1.0, 2.0];
+/**
+ * 显示百分比域：设备允许的实际缩放范围 [minS, maxS] 线性映射到 10%~100%。
+ * 实际范围不变（仍由屏幕工作区推导），百分比只是展示/档位的换算域。
+ */
+export const SCALE_PERCENT_MIN = 10;
+export const SCALE_PERCENT_MAX = 100;
 
-export function nextSizePreset(current: number): number {
-  const idx = SIZE_PRESETS.findIndex((p) => Math.abs(p - current) < 0.005);
-  return SIZE_PRESETS[(idx + 1 + SIZE_PRESETS.length) % SIZE_PRESETS.length];
+/** 实际缩放 → 显示百分比（结果钳制在 [10, 100]）。 */
+export function scaleToPercent(
+  scale: number,
+  minS: number,
+  maxS: number
+): number {
+  if (maxS - minS < 1e-6) return SCALE_PERCENT_MAX;
+  const t = (clampScale(scale) - minS) / (maxS - minS);
+  const k = Math.min(Math.max(t, 0), 1);
+  return SCALE_PERCENT_MIN + (SCALE_PERCENT_MAX - SCALE_PERCENT_MIN) * k;
+}
+
+/** 显示百分比 → 实际缩放（结果钳制在 [minS, maxS]）。 */
+export function percentToScale(
+  percent: number,
+  minS: number,
+  maxS: number
+): number {
+  if (maxS - minS < 1e-6) return maxS;
+  const t = (percent - SCALE_PERCENT_MIN) / (SCALE_PERCENT_MAX - SCALE_PERCENT_MIN);
+  const k = Math.min(Math.max(t, 0), 1);
+  return minS + (maxS - minS) * k;
+}
+
+/** 尺寸档位（托盘"切换尺寸"循环，百分比域）。 */
+export const SIZE_PRESETS = [SCALE_PERCENT_MIN, 50, SCALE_PERCENT_MAX];
+
+/**
+ * 循环到下一个尺寸档位：10% → 50% → 100% → 10%。
+ * 档位取自设备范围 [minS, maxS] 的百分比域，天然不会越过上下限；
+ * 当前值不在档位上时，跳到比它大的下一档（没有更大的则回到最小档）。
+ */
+export function nextSizePreset(
+  current: number,
+  minS: number,
+  maxS: number
+): number {
+  const pct = scaleToPercent(current, minS, maxS);
+  const next = SIZE_PRESETS.find((p) => p > pct + 0.5) ?? SIZE_PRESETS[0];
+  return percentToScale(next, minS, maxS);
 }
 
 export function loadSettings(): PetSettings {
