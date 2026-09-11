@@ -89,7 +89,14 @@ export class CheekChannel implements OverlayChannel {
   }
 }
 
-/** 挥手抬手：五段右手旋转链（物理输出），包络 0.45s 举 → 摆 → 0.6s 放。 */
+/** 新版挥手选择器及两段物理输出；旧版继续使用五段右手链。 */
+export interface NativeWaveIds {
+  enabled: CubismIdHandle;
+  forearm: CubismIdHandle;
+  hand: CubismIdHandle;
+}
+
+/** 挥手包络；统一在物理之后写入，结束及打断时恢复默认姿态。 */
 export class HandRaiseChannel implements OverlayChannel {
   readonly name = 'hand-raise';
   private static readonly SEGMENTS = 5;
@@ -100,10 +107,16 @@ export class HandRaiseChannel implements OverlayChannel {
   private _target = 0;
   private _t = -1;
 
-  constructor(private readonly ids: CubismIdHandle[]) {}
+  private _phase = 0;
+
+  constructor(
+    private readonly ids: CubismIdHandle[],
+    private readonly nativeWave: NativeWaveIds | null = null
+  ) {}
 
   /** 触发挥手联动；非 wave 动作播放时调用则以平滑放下收场。 */
   trigger(): void {
+    if (this._raise <= 0.001) this._phase = 0;
     this._t = 0;
   }
   release(): void {
@@ -114,6 +127,8 @@ export class HandRaiseChannel implements OverlayChannel {
   }
 
   apply(model: CubismModel, dt: number): void {
+    if (!Number.isFinite(dt) || dt < 0) dt = 0;
+    this._phase += dt;
     // 包络：0.45s 举起 → 保持摆动 → 2.55s 起 0.6s 放下（对齐 wave 内容 3.0s）
     if (this._t >= 0) {
       this._t += dt;
@@ -129,10 +144,27 @@ export class HandRaiseChannel implements OverlayChannel {
     this._raise +=
       (this._target - this._raise) *
       (1 - Math.exp(-dt / HandRaiseChannel.TAU_SECONDS));
-    if (this._raise <= 0.001) return;
+    if (this._raise <= 0.001) this._raise = 0;
+
+    if (this.nativeWave) {
+      // Param30 同时切换手臂图层，使用端点避免两套手臂交叉透明。
+      // 两段摆动随包络回落；每帧显式复位，防止物理或旧动作残留。
+      const active = this._raise > 0;
+      model.setParameterValueById(this.nativeWave.enabled, active ? 1 : 0);
+      model.setParameterValueById(
+        this.nativeWave.forearm,
+        active ? Math.sin(this._phase * 10) * 0.65 * this._raise : 0
+      );
+      model.setParameterValueById(
+        this.nativeWave.hand,
+        active ? Math.sin(this._phase * 10 - 0.6) * 0.8 * this._raise : 0
+      );
+      return;
+    }
+    if (this._raise === 0) return;
 
     const swayT = Math.max(this._t, 0);
-    for (let s = 0; s < HandRaiseChannel.SEGMENTS; s++) {
+    for (let s = 0; s < Math.min(this.ids.length, HandRaiseChannel.SEGMENTS); s++) {
       const lift = -45 * this._raise; // 右手链负角为抬
       const sway =
         Math.sin(swayT * 13.8 - s * 0.6) *

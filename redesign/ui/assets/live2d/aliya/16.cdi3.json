@@ -32,6 +32,36 @@
 			"Name": "身体旋转 Y"
 		},
 		{
+			"Id": "Param_Angle_B_BODY_6",
+			"GroupId": "ParamGroup25",
+			"Name": "[0]左手"
+		},
+		{
+			"Id": "Param_Angle_B_BODY_7",
+			"GroupId": "ParamGroup25",
+			"Name": "[1]左手"
+		},
+		{
+			"Id": "Param_Angle_B_BODY_8",
+			"GroupId": "ParamGroup25",
+			"Name": "[2]左手"
+		},
+		{
+			"Id": "Param_Angle_B_BODY_9",
+			"GroupId": "ParamGroup23",
+			"Name": "[0]右手"
+		},
+		{
+			"Id": "Param_Angle_B_BODY_10",
+			"GroupId": "ParamGroup23",
+			"Name": "[1]右手"
+		},
+		{
+			"Id": "Param_Angle_B_BODY_11",
+			"GroupId": "ParamGroup23",
+			"Name": "[2]右手"
+		},
+		{
 			"Id": "ParamMouthForm",
 			"GroupId": "ParamGroup",
 			"Name": "嘴 变形"
@@ -227,6 +257,31 @@
 			"Name": "无语"
 		},
 		{
+			"Id": "Param30",
+			"GroupId": "ParamGroup9",
+			"Name": "挥手(开关)"
+		},
+		{
+			"Id": "Param37",
+			"GroupId": "ParamGroup9",
+			"Name": "鼓嘴L"
+		},
+		{
+			"Id": "Param39",
+			"GroupId": "ParamGroup9",
+			"Name": "嘴努子"
+		},
+		{
+			"Id": "Param31",
+			"GroupId": "ParamGroup24",
+			"Name": "小臂挥手"
+		},
+		{
+			"Id": "Param36",
+			"GroupId": "ParamGroup24",
+			"Name": "手部挥手"
+		},
+		{
 			"Id": "ParamBreath",
 			"GroupId": "",
 			"Name": "呼吸"
@@ -242,14 +297,14 @@
 			"Name": "左前腕"
 		},
 		{
-			"Id": "ParamArmR02",
-			"GroupId": "ParamGroup19",
-			"Name": "右前腕"
-		},
-		{
 			"Id": "ParamArmR01",
 			"GroupId": "ParamGroup19",
 			"Name": "右上腕"
+		},
+		{
+			"Id": "ParamArmR02",
+			"GroupId": "ParamGroup19",
+			"Name": "右前腕"
 		},
 		{
 			"Id": "Param4",
@@ -575,56 +630,6 @@
 			"Id": "Param_Angle_Rotation_3_ArtMesh42",
 			"GroupId": "ParamGroup22",
 			"Name": "[2]领带"
-		},
-		{
-			"Id": "Param_Angle_Rotation_1_ArtMesh60",
-			"GroupId": "ParamGroup23",
-			"Name": "[0]左手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_2_ArtMesh60",
-			"GroupId": "ParamGroup23",
-			"Name": "[1]左手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_3_ArtMesh60",
-			"GroupId": "ParamGroup23",
-			"Name": "[2]左手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_4_ArtMesh60",
-			"GroupId": "ParamGroup23",
-			"Name": "[3]左手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_5_ArtMesh60",
-			"GroupId": "ParamGroup23",
-			"Name": "[4]左手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_1_ArtMesh61",
-			"GroupId": "ParamGroup24",
-			"Name": "[0]右手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_2_ArtMesh61",
-			"GroupId": "ParamGroup24",
-			"Name": "[1]右手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_3_ArtMesh61",
-			"GroupId": "ParamGroup24",
-			"Name": "[2]右手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_4_ArtMesh61",
-			"GroupId": "ParamGroup24",
-			"Name": "[3]右手"
-		},
-		{
-			"Id": "Param_Angle_Rotation_5_ArtMesh61",
-			"GroupId": "ParamGroup24",
-			"Name": "[4]右手"
 		}
 	],
 	"ParameterGroups": [
@@ -637,6 +642,16 @@
 			"Id": "ParamGroup7",
 			"GroupId": "",
 			"Name": "身体"
+		},
+		{
+			"Id": "ParamGroup25",
+			"GroupId": "",
+			"Name": "左手"
+		},
+		{
+			"Id": "ParamGroup23",
+			"GroupId": "",
+			"Name": "右手"
 		},
 		{
 			"Id": "ParamGroup",
@@ -677,6 +692,11 @@
 			"Id": "ParamGroup9",
 			"GroupId": "",
 			"Name": "表情"
+		},
+		{
+			"Id": "ParamGroup24",
+			"GroupId": "",
+			"Name": "挥手"
 		},
 		{
 			"Id": "ParamGroup8",
@@ -737,55 +757,9 @@
 			"Id": "ParamGroup22",
 			"GroupId": "",
 			"Name": "领带"
-		},
-		{
-			"Id": "ParamGroup23",
-			"GroupId": "",
-			"Name": "左手"
-		},
-		{
-			"Id": "ParamGroup24",
-			"GroupId": "",
-			"Name": "右手"
 		}
 	],
 	"Parts": [
-		{
-			"Id": "Part",
-			"Name": "眼睫毛"
-		},
-		{
-			"Id": "Part2",
-			"Name": "眉毛"
-		},
-		{
-			"Id": "Part3",
-			"Name": "刘海"
-		},
-		{
-			"Id": "FrontHair",
-			"Name": "FrontHair"
-		},
-		{
-			"Id": "Part5",
-			"Name": "猫耳"
-		},
-		{
-			"Id": "Part6",
-			"Name": "眼睛"
-		},
-		{
-			"Id": "Part7",
-			"Name": "脸"
-		},
-		{
-			"Id": "Part8",
-			"Name": "衣服+身体"
-		},
-		{
-			"Id": "Part13",
-			"Name": "底发"
-		},
 		{
 			"Id": "Part01Core",
 			"Name": "コア"
@@ -837,22 +811,6 @@
 		{
 			"Id": "Part01Body",
 			"Name": "体"
-		},
-		{
-			"Id": "Part9",
-			"Name": "右手臂"
-		},
-		{
-			"Id": "Part10",
-			"Name": "左手臂"
-		},
-		{
-			"Id": "Part11",
-			"Name": "侧发2"
-		},
-		{
-			"Id": "Part12",
-			"Name": "腿部"
 		},
 		{
 			"Id": "Part4",
@@ -919,28 +877,36 @@
 			"Name": "马尾(旋转)"
 		},
 		{
+			"Id": "ArtMesh6_Skinning",
+			"Name": "左大臂(蒙皮)"
+		},
+		{
+			"Id": "ArtMesh3_Skinning",
+			"Name": "右大臂(蒙皮)"
+		},
+		{
+			"Id": "ArtMesh15_Skinning",
+			"Name": "右小臂(蒙皮)"
+		},
+		{
+			"Id": "ArtMesh19_Skinning",
+			"Name": "右手(蒙皮)"
+		},
+		{
+			"Id": "ArtMesh35_Skinning",
+			"Name": "左小臂(蒙皮)"
+		},
+		{
+			"Id": "ArtMesh126_Skinning",
+			"Name": "左手(蒙皮)"
+		},
+		{
 			"Id": "ArtMesh42_Skinning",
 			"Name": "领带(蒙皮)"
 		},
 		{
 			"Id": "Part24",
 			"Name": "领带(旋转)"
-		},
-		{
-			"Id": "ArtMesh60_Skinning",
-			"Name": "左手(蒙皮)"
-		},
-		{
-			"Id": "Part25",
-			"Name": "左手(旋转)"
-		},
-		{
-			"Id": "ArtMesh61_Skinning",
-			"Name": "右手(蒙皮)"
-		},
-		{
-			"Id": "Part26",
-			"Name": "右手(旋转)"
 		},
 		{
 			"Id": "Part23",
@@ -955,6 +921,10 @@
 		[
 			"ParamAngleX",
 			"ParamAngleY"
+		],
+		[
+			"ParamMouthForm",
+			"ParamMouthOpenY"
 		],
 		[
 			"Param",

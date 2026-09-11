@@ -276,13 +276,15 @@ export class PetModel
     this._unsafeFaceVariantIds = [id('Param33'), id('Param34'), id('Param35')];
     this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
 
-    // 手部物理链（cdi「右手」组：ArtMesh61 五段旋转，物理输出，BodyAngleX/Z
-    // 驱动手自然摆动；负角为抬起）。动作曲线写不住（物理每帧覆盖），
-    // 抬手走 HandRaiseChannel 在物理后加写。ParamArmL01/02、R01/02 在该
-    // 模型上未绑定任何变形器（满量程位移≈0），不可用。
+    // 按真实参数探测新版挥手能力；缺少参数时保留旧模型的五段链。
+    // 不向 SDK 创建的虚拟参数写入，两个版本均在物理后统一控制。
+    const nativeWave = ['Param30', 'Param31', 'Param36'].every(hasParam)
+      ? { enabled: id('Param30'), forearm: id('Param31'), hand: id('Param36') }
+      : null;
     const idsHandR: CubismIdHandle[] = [];
     for (let s = 1; s <= 5; s++) {
-      idsHandR.push(id(`Param_Angle_Rotation_${s}_ArtMesh61`));
+      const name = `Param_Angle_Rotation_${s}_ArtMesh61`;
+      if (hasParam(name)) idsHandR.push(id(name));
     }
 
     // 视线控制器（唯一所有者）与覆盖通道装配（固定顺序）
@@ -300,7 +302,7 @@ export class PetModel
     this._chEar = new EarChannel({ left: idEarL, right: idEarR });
     this._chEar.scale = hasParam('ParamEarL') ? 1 : 12;
     this._chCheek = new CheekChannel(this._idCheek);
-    this._chHand = new HandRaiseChannel(idsHandR);
+    this._chHand = new HandRaiseChannel(idsHandR, nativeWave);
     this._overlays.add(this._chInteraction);
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
@@ -523,7 +525,12 @@ export class PetModel
     // 每次只保留一个动作。连续触发时由新动作自身 fade-in 接管当前姿态，
     // 避免多个淡出动作叠加写眼睑/笑眼/特殊脸参数。
     this._motionManager.stopAllMotions();
-    return this._motionManager.startMotionPriority(motion, false, priority);
+    const handle = this._motionManager.startMotionPriority(motion, false, priority);
+    if (handle !== INVALID_MOTION_HANDLE) {
+      if (group === 'wave') this._chHand.trigger();
+      else this._chHand.release();
+    }
+    return handle;
   }
 
   /** PetBehaviorHost：播放语义动作（可互相打断，队列自带交叉淡出）。 */

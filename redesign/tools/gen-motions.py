@@ -6,8 +6,8 @@ Aliya 动作库生成器（重做版模型 aliya(重置) 专用）。
 redesign/ui/assets/live2d/aliya/motions/ 下 9 个同名动作文件。
 
 设计约束（重做版模型实测）：
-- 手臂参数 ParamArmL01/02、ParamArmR01/02 未绑定变形器（满量程位移≈0），不使用；
-  抬手能力在代码侧（pet-model._handRaiseR 通道写手部物理链），见 docs/ACTIONS.md；
+- PET 版的手臂参数已绑定；此处保留现有动作配方，不直接写手臂；
+  挥手由 HandRaiseChannel 驱动 Param30/31/36（旧版回退五段链），见 docs/ACTIONS.md；
 - Param33/34/35 会切换特殊眼睛，动作只能写 0 复位，禁止用中间值做效果；
 - 头部：ParamAngleX(+右转)/Y(+抬头)/Z(+左倾) ±30，身体 ParamBodyAngle* ±10；
 - 运行时无 Idle 动作：saveParameters 会保留动作结束值，因此

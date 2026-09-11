@@ -4,11 +4,67 @@ import {readFileSync,readdirSync} from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 const root=new URL('../',import.meta.url);
+test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
+ const base=new URL('assets/live2d/aliya/',root);
+ const json=file=>JSON.parse(readFileSync(new URL(file,base)));
+ const refs=json('16.model3.json').FileReferences;
+ const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
+ assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
+ assert.equal(Object.keys(refs.Motions).length,9);assert.equal(refs.Expressions.length,12);
+ for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
+ for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
+ for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
+ for(const group of json(refs.Physics).PhysicsSettings){for(const p of group.Input)assert.ok(ids.has(p.Source.Id),p.Source.Id);for(const p of group.Output)assert.ok(ids.has(p.Destination.Id),p.Destination.Id)}
+ for(const id of ['Param30','Param31','Param36'])assert.ok(ids.has(id));
+});
 function load(name,imports={}){
  const code=ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2021}}).outputText;
  const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??{},console,setTimeout,clearTimeout});return exports;
 }
 const {GazeController}=load('gaze');
+
+const {HandRaiseChannel}=load('overlay');
+function waveHarness(native=true){
+ const values=new Map();
+ const ids=['r1','r2','r3','r4','r5'];
+ const channel=new HandRaiseChannel(native?[]:ids,native?{enabled:'Param30',forearm:'Param31',hand:'Param36'}:null);
+ const model={setParameterValueById:(id,v)=>values.set(id,v),addParameterValueById:(id,v)=>values.set(id,(values.get(id)??0)+v)};
+ return {values,channel,step(dt){values.clear();channel.apply(model,dt)}};
+}
+test('新版挥手在15/30/60fps均产生摆动并完整复位，不写旧手链',()=>{
+ for(const fps of [15,30,60]){
+  const h=waveHarness();h.channel.trigger();let min=0,max=0;
+  for(let i=0;i<fps*6;i++){
+   h.step(1/fps);const v=h.values.get('Param31');min=Math.min(min,v);max=Math.max(max,v);
+   assert.ok([0,1].includes(h.values.get('Param30')));
+   for(const [id,value] of h.values){assert.ok(['Param30','Param31','Param36'].includes(id));assert.ok(Number.isFinite(value)&&Math.abs(value)<=1)}
+  }
+  assert.ok(min<-.4&&max>.4);assert.equal(h.channel.raising,0);
+  assert.deepEqual([...h.values.values()],[0,0,0]);
+ }
+});
+test('挥手连续重触发和打断后复位，异常时间步不污染状态',()=>{
+ const h=waveHarness();h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);
+ h.channel.trigger();h.step(1/30);assert.ok(h.channel.raising>.5);
+ for(const dt of [NaN,Infinity,-1]){h.step(dt);for(const value of h.values.values())assert.ok(Number.isFinite(value))}
+ h.channel.release();for(let i=0;i<60;i++)h.step(1/30);
+ assert.equal(h.channel.raising,0);assert.deepEqual([...h.values.values()],[0,0,0]);
+ h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);assert.equal(h.values.get('Param30'),1);
+});
+test('当前模型继续抬起旧版五段手链，结束后停止覆盖物理',()=>{
+ const h=waveHarness(false);h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);
+ assert.equal(h.values.size,5);for(const v of h.values.values())assert.ok(v<-30);
+ for(let i=0;i<180;i++)h.step(1/30);assert.equal(h.values.size,0);
+});
+test('按优先级播放及随机播放同样触发挥手，被拒绝的动作不影响当前手势',()=>{
+ const {PetModel}=load('pet-model',{'@framework/model/cubismusermodel':{CubismUserModel:class{}}});
+ const m=Object.create(PetModel.prototype);let triggered=0,released=0;
+ Object.assign(m,{_ready:true,_motions:new Map([['wave_0',{}],['nod_0',{}]]),_setting:{getMotionCount:()=>1},_chHand:{trigger(){triggered++},release(){released++}},_motionManager:{getCurrentPriority:()=>0,stopAllMotions(){},startMotionPriority:()=>1}});
+ assert.equal(m.startRandomMotion('wave',2),1);assert.equal(triggered,1);
+ assert.equal(m.startMotion('nod',0,2),1);assert.equal(released,1);
+ assert.equal(m.startMotion('wave',0,0),-1);assert.equal(triggered,1);
+ assert.equal(m.startMotion('missing',0,2),-1);assert.equal(released,1);
+});
 test('受击和无语恢复专用眼型，切换与清除始终互斥且无中间值',()=>{
  const {applyFaceVariant,FACE_VARIANT_PARAMETERS}=load('face-variant');
  const values=new Map();
