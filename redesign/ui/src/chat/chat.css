@@ -1,0 +1,127 @@
+#chat-ui { position:fixed; inset:0; z-index:30; pointer-events:none; color:#edeaf2; font:12.5px/1.6 "Segoe UI","Microsoft YaHei",sans-serif; }
+#chat-ui * { box-sizing:border-box; }
+#chat-ui [hidden] { display:none!important; }
+#chat-ui button,#chat-ui input,#chat-ui textarea { font:inherit; }
+#chat-ui button { cursor:pointer; color:inherit; background:transparent; border:0; border-radius:5px; padding:3px 7px; }
+#chat-ui button:hover { background:#ffffff18; }
+#chat-ui button:disabled { opacity:.5; cursor:default; }
+#chat-ui button:focus-visible,#chat-ui textarea:focus-visible,#chat-ui input:focus-visible { outline:2px solid #bca5df; outline-offset:1px; }
+.chat-launcher { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:5px 14px; border-radius:999px; border:1px solid #b9a4d45c; background:#211d2ad9; color:#d6c2ed; font:12px/1 "Segoe UI","Microsoft YaHei",sans-serif; letter-spacing:.08em; cursor:pointer; pointer-events:auto; box-shadow:0 3px 10px #0006; backdrop-filter:blur(6px); transition:background .15s ease,color .15s ease,box-shadow .15s ease,transform .15s ease; }
+.chat-launcher svg { display:block; flex:none; }
+.chat-launcher:hover { background:#2d2837; transform:translateX(-50%) translateY(-1px); box-shadow:0 6px 14px #0007; }
+.chat-launcher:active { transform:translateX(-50%); }
+.chat-launcher.open { background:#bca5df; border-color:#bca5df; color:#241f2e; }
+/* 内嵌模式（Android/web）下 #chat-ui button 基础样式优先级更高，需要覆盖回来 */
+#chat-ui .chat-launcher { border:1px solid #b9a4d45c; background:#211d2ad9; padding:5px 14px; }
+#chat-ui .chat-launcher:hover { background:#2d2837; }
+#chat-ui .chat-launcher.open,#chat-ui .chat-launcher.open:hover { background:#bca5df; color:#241f2e; }
+/* 独立 chat 原生窗口由 pet 下方按钮开关；这里不能再出现第二个备用入口。 */
+body.chat-window #chat-ui .chat-launcher { display:none!important; }
+/* pet 侧按钮用 hidden 属性隐藏：.chat-launcher 的 display:flex 会压过 UA 的 [hidden] 规则，必须显式补。 */
+.chat-launcher[hidden] { display:none!important; }
+/* chat-shell 把回复与输入框组成一张贴着模型脚底的卡片；不再在透明大窗口里上下分散。
+   container-type 让字号随窗口宽度自适应（chat 宽 = pet 宽 × 1.18，档位变化大）。 */
+.chat-shell { position:absolute; inset:0 8px 6px; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-start; container-type:inline-size; }
+/* 半透明面板：轻微透出桌面与模型，接近萝莉斯的轻盈感而非实心色块。 */
+.gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - 52px); border:1px solid rgba(203,183,228,.22); border-bottom:0; border-radius:9px 9px 0 0; background:linear-gradient(180deg,rgba(45,38,58,.74),rgba(35,29,46,.80)); pointer-events:auto; display:flex; flex-direction:column; box-shadow:0 8px 22px rgba(0,0,0,.32); overflow:hidden; }
+/* 连接/会话/历史屏需要完整高度；回复页只有一句，内容决定高度但至少保持可读。 */
+.chat-shell.with-panel .gal-panel { min-height:min(96px,calc(100% - 52px)); }
+.gal-nameplate { display:flex; align-items:center; gap:7px; min-height:23px; padding:2px 10px; border-radius:8px 8px 0 0; background:linear-gradient(180deg,rgba(203,182,234,.90),rgba(180,155,221,.84)); color:#2a2138; user-select:none; flex:none; box-shadow:inset 0 -1px #00000024; }
+.gal-nameplate strong { font-size:clamp(11px,3.8cqw,12.5px); font-weight:700; letter-spacing:.06em; }
+.gal-nameplate .panel-title { color:#5a4874; font-size:9.5px; }
+.gal-nameplate .close-panel { margin-left:auto; padding:0 6px; border-radius:6px; color:#3d2f52; font-size:13px; line-height:1.2; }
+.gal-nameplate .close-panel:hover { background:#0000001f; }
+.gal-content { flex:1; min-height:0; padding:8px 12px; overflow:auto; scrollbar-width:thin; scrollbar-color:#6a5a7e66 transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content::selection,.message-text::selection { background:#7a5fa880; }
+.gal-content::-webkit-scrollbar { width:5px; height:5px; }
+.gal-content::-webkit-scrollbar-thumb { background:#6a5a7e80; border-radius:3px; }
+.gal-content::-webkit-scrollbar-track { background:transparent; }
+.gal-panel.replying .gal-content { cursor:pointer; }
+/* 回复分页：MSK 分段一段一页，图片/贴纸收敛到对话框尺度 */
+.gal-content .msk-segment + .msk-segment { margin-top:0; }
+.gal-content .msk-draw-image { max-height:140px; border-radius:6px; }
+.gal-content .msk-sticker { height:72px; }
+.gal-content .msk-attachment-img { max-height:160px; border-color:#4a4059; background:#2e2839; }
+.gal-content .msk-draw-card { background:#2e2839; border-color:#4a4059; }
+.gal-content .msk-draw-head { color:#cbb8e4; border-bottom-color:#4a4059; }
+.gal-content .msk-draw-state { color:#b3a7c4; }
+.gal-content .msk-draw-btn { background:#3a3248; border-color:#5a4d6e; color:#d9c9ee; }
+/* 逐字播放：原子元素隐藏时保留占位（布局稳定），揭示时整块淡入 */
+.tw-atomic { visibility:hidden; }
+.tw-reveal { animation:tw-pop .25s ease-out; }
+@keyframes tw-pop { from { opacity:0; transform:translateY(4px); } }
+.gal-page-in { animation:gal-page-in .16s ease-out; }
+@keyframes gal-page-in { from { opacity:0; } }
+.gal-content h2 { font-size:13.5px; margin:0 0 6px; }
+.gal-content p { margin:0 0 7px; }
+.gal-content details { margin-top:10px; }
+.gal-content summary { cursor:pointer; color:#b8aec5; }
+.gal-content .muted-note { color:#9b8fb0; font-size:11px; margin:2px 0; }
+/* 按钮分级：主操作紫色药丸（与发送一致），次要 ghost 淡边框，避免满屏裸文字按钮。 */
+.gal-content .btn-primary { background:#bca5df!important; color:#241f2e!important; border-radius:999px!important; padding:4px 14px!important; font-weight:600; }
+.gal-content .btn-primary:hover { background:#cbb6ea!important; }
+/* #chat-ui button 的 ID 规则会压过这里的 border/radius，必须 !important。 */
+.gal-content .ghost { border:1px solid #ffffff2e!important; border-radius:999px!important; padding:3px 11px!important; font-size:.92em; color:#c9c0d6; }
+.gal-content .ghost:hover { border-color:#ffffff4a!important; background:#ffffff12; }
+.auth-actions { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
+.gal-content form.manual { display:flex; gap:6px; margin:6px 0 0; }
+.gal-content form.manual input { flex:1; }
+.gal-content input { min-width:0; width:100%; color:inherit; background:#ffffff0e; border:1px solid #ffffff38; border-radius:6px; padding:4px 8px; }
+.gal-content input:focus { border-color:#bca5df99; outline:none; background:#ffffff14; }
+.gal-content article { padding:7px 0; border-bottom:1px solid #ffffff12; }
+.gal-content article small { font-weight:600; letter-spacing:.04em; }
+.gal-content article .who-aliya { color:#c9b2ef; }
+.gal-content article .who-user { color:#8f8699; }
+.session-actions { display:flex; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid #ffffff14; }
+.gal-content article small { color:#baa3d3; }
+.session-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; width:100%; text-align:left; border-bottom:1px solid #ffffff16!important; border-radius:6px; padding:6px 6px!important; margin:0 -6px; }
+.session-row:hover { background:#ffffff0d; }
+.session-row small { flex-basis:100%; color:#8f8699; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.unread-dot { width:5px; height:5px; border-radius:50%; background:#bca5df; }
+.gal-footer { display:flex; align-items:center; gap:10px; padding:3px 12px 6px; color:#9d8fb3; font-size:10px; }
+.page-hint { flex:1; letter-spacing:.05em; }
+.page-hint.blink { animation:hint-blink 1.3s ease-in-out infinite; }
+@keyframes hint-blink { 0%,100% { opacity:.4; } 50% { opacity:1; } }
+.dismiss-reply { font-size:10px; padding:1px 7px; }
+.chat-composer { position:relative; width:100%; flex:none; padding:4px 8px 2px; border:1px solid rgba(156,138,170,.34); border-radius:0 0 9px 9px; background:rgba(34,29,44,.78); pointer-events:auto; box-shadow:0 6px 18px rgba(0,0,0,.28); transition:border-color .15s ease,box-shadow .15s ease; }
+.chat-composer:focus-within { border-color:#bca5df99; box-shadow:0 0 0 3px #bca5df22,0 6px 18px rgba(0,0,0,.28); }
+/* 只有输入框时是一枚贴脚的紧凑药丸；回复/连接面板出现时与上方面板无缝连成卡片。 */
+.chat-shell.composer-only .chat-composer { border-radius:9px; animation:gal-in .18s ease-out; }
+.chat-composer textarea { display:block; width:100%; height:26px; max-height:64px; resize:none; color:#faf7ff; background:none; border:0; padding:2px 3px; line-height:21px; font-size:clamp(11.5px,4cqw,13px); }
+.chat-composer textarea::placeholder { color:#a89eb8; }
+.composer-toolbar { display:flex; gap:1px; align-items:center; font-size:10px; color:#9b8fb0; }
+.composer-toolbar button { padding:1px 5px!important; }
+.chat-status { margin-left:auto; font-size:9.5px; }
+.send { background:#bca5df!important; color:#241f2e!important; border-radius:999px; padding:1px 10px!important; font-weight:600; }
+.send:hover { background:#cbb6ea!important; }
+.close-window { font-size:12px; padding:0 6px!important; }
+.message-text { white-space:normal; }
+.gal-panel:not([hidden]) { animation:gal-in .18s ease-out; }
+@keyframes gal-in { from { opacity:0; transform:translateY(10px); } }
+.typing-dots { display:flex; gap:5px; align-items:center; justify-content:center; padding:16px 0; }
+.typing-dots i { width:6px; height:6px; border-radius:50%; background:#bca5df; animation:typing-bounce 1s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay:.15s; }
+.typing-dots i:nth-child(3) { animation-delay:.3s; }
+@keyframes typing-bounce { 0%,60%,100% { transform:translateY(0); opacity:.45; } 30% { transform:translateY(-5px); opacity:1; } }
+.message-text pre { white-space:pre; overflow:auto; background:#14111bb3; border:1px solid #ffffff1c; padding:7px 9px; border-radius:6px; font-size:.92em; }
+.message-text code { font-family:Consolas,monospace; }
+.message-text a { color:#cdb4f4; }
+.message-text blockquote { margin:8px 0; padding-left:10px; border-left:2px solid #9d80bd; }
+.message-text table { border-collapse:collapse; }
+.message-text td,.message-text th { border:1px solid #ffffff30; padding:4px 8px; }
+.message-text th { background:#ffffff14; }
+.message-text pre::-webkit-scrollbar { width:4px; height:4px; }
+.message-text pre::-webkit-scrollbar-thumb { background:#6a5a7e80; border-radius:3px; }
+.message-table-wrap { overflow:auto; }
+.mfm-x2 { font-size:1.5em; } .mfm-x3 { font-size:2em; } .mfm-x4 { font-size:2.5em; }
+.mfm-center { display:block; text-align:center; } .mfm-flip { display:inline-block; transform:scaleX(-1); }
+.mfm-blur { filter:blur(4px); } .mfm-blur:hover { filter:none; }
+@keyframes mfm-spin { to { transform:rotate(360deg); } }
+@keyframes mfm-bounce { 50% { transform:translateY(-5px); } }
+@keyframes mfm-shake { 25% { transform:translateX(-3px); } 75% { transform:translateX(3px); } }
+.mfm-spin { display:inline-block; animation:mfm-spin 1.5s linear infinite; }
+.mfm-jump,.mfm-bounce,.mfm-jelly,.mfm-tada { display:inline-block; animation:mfm-bounce .8s ease-in-out infinite; }
+.mfm-shake { display:inline-block; animation:mfm-shake .4s linear infinite; }
+body.chat-mobile .chat-shell { inset:0 8px 8px; }
+body.chat-mobile .gal-panel { max-height:calc(100% - 52px); }
+@media(prefers-reduced-motion:reduce) { #chat-ui * { animation:none!important; scroll-behavior:auto!important; } }

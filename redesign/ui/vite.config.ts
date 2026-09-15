@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         settings: path.resolve(__dirname, 'settings.html'),
+        chat: path.resolve(__dirname, 'chat.html'),
       },
     },
   },

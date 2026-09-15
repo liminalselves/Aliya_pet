@@ -2,9 +2,9 @@
  * 抚摸控制器（移植自 Flutter HeadPettingService + PettingReactionController +
  * InteractionStateService，三者合并为一个每帧驱动的控制器）：
  *
- * 状态机：Inactive → Armed → HoveringHead → Pressed → Petting → Finishing → Armed
- *   - 仅右键（isSecondary）在头部抚摸区按下进入；Esc / 再次结束 → Inactive
- *   - 识别到有效抚摸手势后才闭眼；单击头部走普通点击互动
+ * 状态机：Inactive → Pressed → Petting → Finishing → Inactive
+ *   - 右键（触屏为单指）在头部抚摸区按下进入；松开恢复，Esc 立即取消
+ *   - 识别到有效抚摸手势后才闭眼；左键单击/触摸轻点头部走普通点击互动
  *
  * 反应（全部经 InteractionTarget 通道写入）：
  *   - 头部跟随：非线性响应 sign·|v/vref|^0.65，一阶滞后（运动 tau 0.10s / 回正 0.16s）
@@ -25,8 +25,6 @@ import { InteractionTarget } from './target';
 
 export type PettingState =
   | 'inactive'
-  | 'armed'
-  | 'hoveringHead'
   | 'pressed'
   | 'petting'
   | 'finishing';
@@ -115,6 +113,8 @@ export class PettingController {
   private _lastSoftOrActiveMs = 0;
   private _softActiveCount = 0;
   private _fastTriggered = false;
+  private _fastElapsedMs = 0;
+  private _recognized = false;
   private _longTriggered = false;
   private _endDialogueTriggered = false;
   private _finishingStartMs = 0;
@@ -214,27 +214,17 @@ export class PettingController {
 
   /** 指针移动。返回 true 表示互动已接管（上层不再移动窗口）。 */
   onPointerMove(ctx: PointerContext): boolean {
-    const inZone = this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY);
-
-    if (!this.isPettingModeActive) return false;
-
-    if (
-      this.state === 'armed' ||
-      this.state === 'hoveringHead' ||
-      this.state === 'finishing'
-    ) {
-      if (this.state === 'armed' && inZone) {
-        this._setState('hoveringHead');
-      } else if (this.state === 'hoveringHead' && !inZone) {
-        this._setState('armed');
-      }
-    }
+    if (!this.isPettingSessionActive) return false;
 
     if (this.state === 'pressed' || this.state === 'petting') {
       const result = this.recognizer.update(ctx);
       this._lastInputMs = performance.now();
-      this.setVelocity(result.smoothedVelX, true);
+      if (this.state === 'petting' || result.isValid) {
+        this.setVelocity(result.smoothedVelX, true);
+      }
       if (result.isValid && this.state === 'pressed') {
+        this._recognized = true;
+        this._sessionStartMs = performance.now();
         this._beginEyeClose(); // 识别到抚摸手势（按住并滑动）后闭眼
         this._setState('petting');
         this._onPettingStarted();
@@ -249,46 +239,30 @@ export class PettingController {
    * 抚摸仅允许右键触发（Windows 约定）；左键留给拖动桌宠/普通点击。
    */
   onPointerDown(ctx: PointerContext): boolean {
-    if (!ctx.isSecondary) return false;
+    if (!ctx.isSecondary || !this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY)) return false;
+    if (this.state !== 'inactive' && this.state !== 'finishing') return false;
 
-    const inZone = this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY);
-    if (!this.isPettingModeActive) {
-      // 兜底：按下时若尚未进入但位于头部区域，先自动进入
-      if (inZone) {
-        this._enterPettingMode();
-      } else {
-        return false;
-      }
-    }
-
-    if (
-      this.state === 'armed' ||
-      this.state === 'hoveringHead' ||
-      this.state === 'finishing'
-    ) {
-      if (inZone) {
-        this._sessionEnding = false; // 先取消旧恢复再创建新会话
-        this._sessionStartMs = performance.now();
-        this._sessionElapsedMs = 0;
-        this._softActiveCount = 0;
-        this._lastSoftOrActiveMs = 0;
-        this._fastTriggered = false;
-        this._longTriggered = false;
-        this._endDialogueTriggered = false;
-        this._lastInputMs = performance.now();
-        this.recognizer.startGesture();
-        // 不立即闭眼：单击头部应走普通点击互动
-        this.dailyState.beginPetting();
-        this._setState('pressed');
-        return true;
-      }
-      return false; // 按住身体区域：交还上层
-    }
-    return false;
+    this.resetAll();
+    this._sessionEnding = false;
+    this._sessionStartMs = performance.now();
+    this._sessionElapsedMs = 0;
+    this._softActiveCount = 0;
+    this._lastSoftOrActiveMs = 0;
+    this._fastTriggered = false;
+    this._fastElapsedMs = 0;
+    this._recognized = false;
+    this._longTriggered = false;
+    this._endDialogueTriggered = false;
+    this._lastInputMs = performance.now();
+    this.recognizer.startGesture(ctx);
+    this.dailyState.beginPetting();
+    this._setState('pressed');
+    return true;
   }
 
   /** 指针松开。返回 true 表示互动已接管。 */
-  onPointerUp(_ctx: PointerContext): boolean {
+  onPointerUp(ctx: PointerContext): boolean {
+    if (!ctx.isSecondary) return false;
     if (this.state === 'pressed' || this.state === 'petting') {
       this.endPettingSession('mouseReleased');
       return true;
@@ -301,12 +275,6 @@ export class PettingController {
   }
 
   // ---------- 模式切换 ----------
-
-  private _enterPettingMode(): void {
-    if (this.state !== 'inactive') return;
-    this.dailyState.ensureDayFresh();
-    this._setState('armed');
-  }
 
   exitPettingMode(reason: PettingEndReason): void {
     if (this.state === 'inactive') return;
@@ -330,10 +298,11 @@ export class PettingController {
     this._beginEyeOpen();
 
     const durationMs = performance.now() - this._sessionStartMs;
-    this.dailyState.endPetting(durationMs);
+    if (this._recognized) this.dailyState.endPetting(durationMs);
 
     // 结束台词：仅用户主动结束且时长 > 1s 时小概率触发
     if (
+      this._recognized &&
       durationMs > 1000 &&
       !this._endDialogueTriggered &&
       reason === 'mouseReleased' &&
@@ -411,6 +380,7 @@ export class PettingController {
   /** 立即复位全部互动参数（退出抚摸/异常恢复）。 */
   resetAll(): void {
     this._curAngleX = this._curAngleY = this._curAngleZ = this._curBodyX = 0;
+    this._targetAngleX = this._targetAngleY = this._targetAngleZ = 0;
     this._eyeState = 'idle';
     this._eyeOpenness = 1.0;
     this._eyeOverrideActive = false;
@@ -448,7 +418,10 @@ export class PettingController {
     const target = this._getTarget();
     if (!target) return;
     this._ensureConfigured(target);
-    if (!this._available) return;
+    if (!this._available) {
+      this.exitPettingMode('gestureCanceled');
+      return;
+    }
 
     const dt = Math.min(Math.max(dtMs / 1000, 0.001), 0.1);
 
@@ -566,23 +539,27 @@ export class PettingController {
     if (!this.isPettingModeActive) return;
 
     if (this.state === 'finishing') {
-      // 恢复参数（约 600ms）后回到 Armed
-      if (performance.now() - this._finishingStartMs >= 600) {
+      // 完整恢复后释放参数所有权，下一次按下重新开始。
+      if (performance.now() - this._finishingStartMs >= 600 && !this._eyeOverrideActive) {
+        this.resetAll();
         this._sessionEnding = false;
-        this._setState('armed');
+        this._setState('inactive');
       }
       return;
     }
 
     if (this.state !== 'petting') return;
 
-    this._sessionElapsedMs += dtMs;
+    // 停手不累计有效抚摸时间，也不把最后一次高速样本当作持续高速。
+    const moving = performance.now() - this._lastInputMs < 120;
+    if (moving) this._sessionElapsedMs += dtMs;
+    this._fastElapsedMs = moving && Math.abs(this.recognizer.smoothedVelXPxPerSec) > 250
+      ? this._fastElapsedMs + dtMs : 0;
 
     // 持续过快 0.8s 以上：每次会话最多一条 petting_fast
     if (
       !this._fastTriggered &&
-      this._sessionElapsedMs > 800 &&
-      Math.abs(this.recognizer.smoothedVelXPxPerSec) > 250
+      this._fastElapsedMs >= 800
     ) {
       this._fastTriggered = true;
       this._playTag('petting_fast');
@@ -625,6 +602,7 @@ export class PettingController {
   }
 
   private _playTag(tag: string, boost = 0): void {
+    if (this._host.isDialogueActive()) return;
     const resolved = this._dialogue.resolveSceneTag(
       'head_petting',
       tag,

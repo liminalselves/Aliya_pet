@@ -12,9 +12,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# 透明区域鼠标穿透：后台线程轮询全局光标位置（GetCursorPos）
+# 透明区域鼠标穿透（GetCursorPos）+ 默认浏览器打开（ShellExecuteW，不走 cmd 元字符解析）
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
 
 [profile.release]
 panic = "abort"

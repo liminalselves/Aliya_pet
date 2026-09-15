@@ -20,6 +20,21 @@
         "resizable": false,
         "shadow": false,
         "focus": false
+      },
+      {
+        "label": "chat",
+        "title": "Aliya 聊天",
+        "url": "chat.html",
+        "width": 480,
+        "height": 400,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "visible": false
       }
     ]
   },

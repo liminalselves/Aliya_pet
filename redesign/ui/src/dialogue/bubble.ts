@@ -67,6 +67,7 @@ export class DialogueBubble {
 
   cancel(): void {
     this._sessionToken++;
+    this._active = false;
     this._hide();
   }
 

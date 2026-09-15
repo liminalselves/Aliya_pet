@@ -31,6 +31,8 @@ export class ClickSequenceService {
 
   registerClick(): ClickResult {
     const now = performance.now();
+    if (this.isInCooldown) return ClickResult.cooldown;
+    if (this._cooldownUntilMs > 0) this.reset();
     this._clicks.push(now);
     while (this._clicks.length > 0 && now - this._clicks[0] > 6000) {
       this._clicks.shift();
@@ -39,10 +41,10 @@ export class ClickSequenceService {
     if (this.isInCooldown) return ClickResult.cooldown;
 
     if (this._countWithin(now, 6) >= 8) {
-      this._cooldownUntilMs = now + (Math.floor(Math.random() * 4) + 2) * 1000;
+      this._cooldownUntilMs = now + 3000;
       return ClickResult.cooldown;
     }
-    if (this._countWithin(now, 5) >= 4) return ClickResult.comment;
+    if (this._countWithin(now, 4) >= 5) return ClickResult.comment;
     if (this._countWithin(now, 3) >= 3) return ClickResult.doubt;
     return ClickResult.none;
   }
@@ -76,6 +78,11 @@ export class DragReactionService {
 
   beginDrag(): void {
     this._dragging = true;
+    this._maxSpeedPxPerSec = 0;
+  }
+
+  cancel(): void {
+    this._dragging = false;
     this._maxSpeedPxPerSec = 0;
   }
 
@@ -337,7 +344,8 @@ export class ProceduralReactionService {
     this._phases = phases.length > 0 ? [...phases] : [NEUTRAL];
     this._phaseIndex = 0;
     this._phaseStartMs = performance.now();
-    this._prev = NEUTRAL;
+    this._prev = { durationMs: 0, eyeOpen: this._eyeOpen, headX: this._headX,
+      headY: this._headY, headZ: this._headZ, earL: this._earL, earR: this._earR, cheek: this._cheek };
     this._eyeOverrideActive = true;
   }
 

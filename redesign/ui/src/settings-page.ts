@@ -473,7 +473,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refs.snapEdges = switchRow(
     box,
     '屏幕贴边',
-    '拖动后自动吸附屏幕边缘',
+    '靠近边缘时柔和吸附；关闭后窗口可自由停在桌面外',
     () => settings.snapEdges,
     (v) => update({ snapEdges: v })
   );
@@ -563,6 +563,72 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
       (v) => shell?.setPref('overlayOnExit', v ? '1' : '0')
     );
   }
+}
+
+// ---- 聊天（Misskey 连接状态；鉴权与会话选择仍在聊天窗口内完成）----
+{
+  const box = section('聊天');
+  const statusRow = document.createElement('div');
+  statusRow.className = 'row';
+  const statusLab = document.createElement('div');
+  statusLab.className = 'label';
+  statusLab.textContent = 'Misskey 连接';
+  const statusSub = document.createElement('span');
+  statusSub.className = 'sub';
+  statusLab.appendChild(statusSub);
+  statusRow.appendChild(statusLab);
+  box.appendChild(statusRow);
+
+  const sessionRow = document.createElement('div');
+  sessionRow.className = 'row';
+  const sessionLab = document.createElement('div');
+  sessionLab.className = 'label';
+  sessionLab.textContent = '当前会话';
+  const sessionSub = document.createElement('span');
+  sessionSub.className = 'sub';
+  sessionLab.appendChild(sessionSub);
+  sessionRow.appendChild(sessionLab);
+  box.appendChild(sessionRow);
+
+  const refreshChatInfo = () => {
+    let token = '';
+    let user: { id?: string; username?: string; name?: string } | null = null;
+    try {
+      token = localStorage.getItem('aliya_msk_token') ?? '';
+      user = JSON.parse(localStorage.getItem('aliya_msk_user') ?? 'null');
+    } catch {
+      // 存储不可用时按未连接显示
+    }
+    const name = user?.name || user?.username || '';
+    statusSub.textContent = token && name ? `已连接：${name}` : '未连接（在聊天窗口中授权）';
+    let sessionName = '';
+    if (user?.id) {
+      try {
+        const saved = JSON.parse(
+          localStorage.getItem(`aliya_session:${user.id}`) ?? 'null'
+        ) as { name?: string } | null;
+        sessionName = saved?.name ?? '';
+      } catch {
+        // 无记录
+      }
+    }
+    sessionSub.textContent = sessionName || (token ? '未选择' : '—');
+  };
+  refreshChatInfo();
+  // 聊天窗口里的登录/选会话改动经 localStorage 落盘，回本窗口时刷新
+  window.addEventListener('focus', refreshChatInfo);
+
+  const openChat = document.createElement('button');
+  openChat.className = 'act wide';
+  openChat.textContent = platform === 'android' ? '打开聊天' : '打开聊天窗口';
+  openChat.addEventListener('click', () => {
+    if (platform === 'android') {
+      shellAction('open-main');
+      return;
+    }
+    void invokeCmd('show_chat');
+  });
+  box.appendChild(openChat);
 }
 
 // ---- 关于 ----

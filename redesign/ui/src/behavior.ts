@@ -9,6 +9,7 @@
 export interface PetBehaviorHost {
   /** 播放语义动作名（nod/sway/...）；动作不存在返回 false。 */
   playAction(name: string): boolean;
+  readonly isActionPlaying?: boolean;
   /** 设置注视目标（0..1，y 向上为正）。 */
   setLookTarget(x01: number, y01: number): void;
   clearLookTarget(): void;
@@ -58,6 +59,8 @@ export class BehaviorService {
 
   /** 随机台词触发回调（上层播放一条随机台词）。 */
   onRandomSpeech: (() => void) | null = null;
+  /** 共用调度入口：互动、说话、暂停和操作后的安静间隔。 */
+  canIdle: () => boolean = () => true;
 
   /** 动作元数据（actions.json；注入后自动动作按 权重×情绪亲和 抽取）。 */
   private _actionMeta: ActionMeta[] | null = null;
@@ -153,7 +156,7 @@ export class BehaviorService {
         Math.random() * (AUTO_ACTION_MAX_SECONDS - AUTO_ACTION_MIN_SECONDS + 1)
       ) + AUTO_ACTION_MIN_SECONDS;
     this._autoActionTimer = setTimeout(() => {
-      if (this.petRunning && this.autoActions && !this.isDragging) {
+      if (this.petRunning && this.autoActions && !this.isDragging && this.canIdle() && !this._getHost()?.isActionPlaying) {
         this.playAction(this.randomActionName());
       }
       this._scheduleNextAutoAction();
@@ -166,7 +169,7 @@ export class BehaviorService {
     if (!this.petRunning || !this.randomSpeechEnabled) return;
     this._randomSpeechTimer = setTimeout(
       () => {
-        if (this.petRunning && this.randomSpeechEnabled && !this.isDragging) {
+        if (this.petRunning && this.randomSpeechEnabled && !this.isDragging && this.canIdle()) {
           this.onRandomSpeech?.();
         }
         this._scheduleNextRandomSpeech();

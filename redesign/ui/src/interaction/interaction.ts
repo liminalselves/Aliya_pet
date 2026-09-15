@@ -28,15 +28,24 @@ export class InteractionService {
   readonly dragReaction = new DragReactionService();
   readonly procedural: ProceduralReactionService;
 
-  /** 点击台词请求（上层提供：播放一条 user_click 台词）。 */
-  playClickDialogue: (() => void) | null = null;
+  /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
+  playClickDialogue: ((tag: string) => void) | null = null;
 
   /** 当前是否有台词在播放（上层提供）。 */
   isDialogueActive: (() => boolean) | null = null;
 
-  // 追踪指针位置以计算拖动速度
-  private _lastPxX = 0;
-  private _lastPxY = 0;
+  get isBusy(): boolean {
+    return this.petting.isPettingSessionActive || this.procedural.isPlaying || this.dragReaction.isDragging;
+  }
+
+  /** 系统取消与失焦统一释放所有手势，取消不产生台词。 */
+  cancel(): void {
+    this.petting.exitPettingMode('gestureCanceled');
+    this.procedural.cancelAll();
+    this.dragReaction.cancel();
+    this.clickSequence.reset();
+  }
+
 
   constructor(deps: {
     hitAreas: HitAreas;
@@ -72,16 +81,6 @@ export class InteractionService {
   onPointerMove(ctx: PointerContext): boolean {
     this.proximity.update(ctx);
 
-    // 把拖动速度喂给 dragReaction，使快速拖动反应链生效
-    if (this.dragReaction.isDragging && ctx.dtSeconds > 0) {
-      const dx = ctx.pxX - this._lastPxX;
-      const dy = ctx.pxY - this._lastPxY;
-      const speed = Math.sqrt(dx * dx + dy * dy) / ctx.dtSeconds;
-      this.dragReaction.onDragMove(speed);
-    }
-    this._lastPxX = ctx.pxX;
-    this._lastPxY = ctx.pxY;
-
     if (this.petting.onPointerMove(ctx)) return true;
     return false;
   }
@@ -89,12 +88,14 @@ export class InteractionService {
   /** 指针按下。返回 true=互动已接管（上层不开始拖动）。 */
   onPointerDown(ctx: PointerContext): boolean {
     this.proximity.update(ctx);
-    this._lastPxX = ctx.pxX;
-    this._lastPxY = ctx.pxY;
 
-    if (this.petting.onPointerDown(ctx)) return true;
-    if (!this.isPettingModeActive) {
-      this.dragReaction.beginDrag();
+    if (!ctx.isSecondary && this.isPettingModeActive) {
+      this.petting.exitPettingMode('modeChanged');
+    }
+    if (this.petting.onPointerDown(ctx)) {
+      this.procedural.cancelAll();
+      this.dragReaction.cancel();
+      return true;
     }
     return false;
   }
@@ -117,20 +118,29 @@ export class InteractionService {
         this.procedural.apply(ProceduralReactions.eyesWiden(1.0));
         // 每次快速拖动触发一次台词
         if (this.isDialogueActive?.() !== true) {
-          this.playClickDialogue?.();
+          this.playClickDialogue?.('drag_fast');
         }
       }
       return false;
     }
 
+    this.dragReaction.cancel();
     const result = this.clickSequence.registerClick();
     if (result === ClickResult.cooldown) {
       return true; // 点击冷却中，抑制点击台词
     }
 
+    if (result === ClickResult.doubt || result === ClickResult.comment) {
+      this.procedural.apply(ProceduralReactions.doubt(0.9));
+      this.playClickDialogue?.(result === ClickResult.doubt ? 'click_doubt' : 'click_comment');
+      return true;
+    }
+
     const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
     switch (area) {
       case 'head':
+      case 'head_pet_zone':
+      case 'hair':
         this.procedural.apply(ProceduralReactions.eyesAndTilt(0.8));
         break;
       case 'face':
@@ -143,21 +153,20 @@ export class InteractionService {
         break;
     }
 
-    if (result === ClickResult.doubt) {
-      this.procedural.apply(ProceduralReactions.doubt(0.9));
-      return true; // 疑惑反应替代常规点击台词
-    }
-    return false;
+    this.playClickDialogue?.(area === 'head_pet_zone' ? 'head' : area ?? 'body');
+    return true;
   }
 
   onEsc(): void {
-    this.petting.onEsc();
+    this.cancel();
   }
 
   /** 切换角色 / 重载模型时调用：退出抚摸并重置互动参数。 */
   onModelReloaded(): void {
     this.petting.exitPettingMode('modelReload');
     this.petting.resetConfiguration();
+    this.dragReaction.cancel();
+    this.clickSequence.reset();
     this.procedural.cancelAll();
   }
 
@@ -167,11 +176,17 @@ export class InteractionService {
     this.procedural.cancelAll();
     this.clickSequence.reset();
     this.proximity.reset();
+    this.dragReaction.cancel();
   }
 
   /** 每帧驱动（由渲染循环调用）。 */
   tick(dtMs: number): void {
-    this.petting.tick(dtMs);
-    this.procedural.tick();
+    // 一个时刻只有一个服务写互动覆盖通道。
+    if (this.petting.isPettingSessionActive) {
+      if (this.procedural.isPlaying) this.procedural.cancelAll();
+      this.petting.tick(dtMs);
+    } else {
+      this.procedural.tick();
+    }
   }
 }

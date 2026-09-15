@@ -75,9 +75,9 @@ export class PettingGestureRecognizer {
   private _lastCumulative = 0;
   private _lastPxX = 0;
   private _lastPxY = 0;
+  private _directionAnchorX = 0;
+  private _strokeOriginX = 0;
   private _currentDirection = 0;
-  private _lastNonZeroDirection = 0;
-  private _strokeStartCumulative = 0;
   private _lastReversalTime = 0;
   private _reversalCount = 0;
   private _maxStrokeDistancePx = 0;
@@ -107,7 +107,7 @@ export class PettingGestureRecognizer {
     return Math.min(Math.max(v, 1.0 / 60.0), 1.0 / 30.0);
   }
 
-  startGesture(): void {
+  startGesture(origin?: PointerContext): void {
     this._gestureActive = true;
     this._sampleHead = 0;
     this._sampleCount = 0;
@@ -118,13 +118,19 @@ export class PettingGestureRecognizer {
     this._lastPxX = 0;
     this._lastPxY = 0;
     this._currentDirection = 0;
-    this._lastNonZeroDirection = 0;
-    this._strokeStartCumulative = 0;
     this._lastReversalTime = 0;
     this._reversalCount = 0;
     this._maxStrokeDistancePx = 0;
     this._smoothedVelX = 0;
     this._gestureElapsed = 0;
+    if (origin) {
+      this._directionAnchorX = this._strokeOriginX = origin.pxX;
+      this._lastPxX = origin.pxX;
+      this._lastPxY = origin.pxY;
+      Object.assign(this._samples[0], { timeSeconds: 0, pxX: origin.pxX, pxY: origin.pxY });
+      this._sampleHead = 1;
+      this._sampleCount = 1;
+    }
   }
 
   endGesture(): void {
@@ -155,7 +161,7 @@ export class PettingGestureRecognizer {
     return this._gestureElapsed;
   }
 
-  /** 压入一个新采样并返回识别结果。不足采样间隔时只更新基线、不入缓冲。 */
+  /** 压入一个新采样并返回识别结果。不足采样间隔时累计时间与位移、不入缓冲。 */
   update(ctx: PointerContext): PettingGestureResult {
     if (!this._gestureActive) return INVALID_RESULT;
 
@@ -168,8 +174,7 @@ export class PettingGestureRecognizer {
         this._sampleIntervalSeconds - 0.001
     ) {
       this._pendingDt += dt;
-      this._lastPxX = ctx.pxX;
-      this._lastPxY = ctx.pxY;
+      // 保留上次入样坐标，累积整个采样周期的位移。
       // 未到采样间隔：保持上一次平滑速度（避免下游清零导致转向失效）
       return {
         isValid: false,
@@ -184,6 +189,11 @@ export class PettingGestureRecognizer {
     this._pendingDt = 0;
     this._lastSampleElapsed = this._gestureElapsed;
 
+    if (this._sampleCount === 0) {
+      this._directionAnchorX = this._strokeOriginX = ctx.pxX;
+      this._lastPxX = ctx.pxX;
+      this._lastPxY = ctx.pxY;
+    }
     const dx = ctx.pxX - this._lastPxX;
     const dy = ctx.pxY - this._lastPxY;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -206,47 +216,33 @@ export class PettingGestureRecognizer {
     this._lastPxY = ctx.pxY;
     this._lastCumulative += distance;
 
-    // 方向判定：忽略 < jitterPx 的抖动
-    if (Math.abs(dx) >= this._jitterPx) {
-      this._currentDirection = dx > 0 ? 1 : -1;
-    } else if (distance < this._jitterPx) {
-      this._currentDirection = 0;
-    }
-
-    // 方向反转检测：划动距离 = 距上次方向变化的累计距离
+    // 用累计水平距离而非单个采样的 dx 判方向，低速/高回报率鼠标同样有效。
     let reversed = false;
-    if (
-      this._currentDirection !== 0 &&
-      this._lastNonZeroDirection !== 0 &&
-      this._currentDirection !== this._lastNonZeroDirection
-    ) {
-      const strokeLen = this._lastCumulative - this._strokeStartCumulative;
-      const timeSince = this._gestureElapsed - this._lastReversalTime;
-      if (
-        strokeLen >= this._minReversalDistancePx &&
-        timeSince >= this._reversalDebounceSeconds
-      ) {
-        reversed = true;
-        this._reversalCount++;
-        if (
-          strokeLen >= this._minStrokeDistancePx &&
-          strokeLen <= this._maxStrokeDistanceLimitPx
-        ) {
-          this._maxStrokeDistancePx = Math.max(
-            this._maxStrokeDistancePx,
-            strokeLen
-          );
+    if (this._currentDirection === 0) {
+      const travel = ctx.pxX - this._directionAnchorX;
+      if (Math.abs(travel) >= this._jitterPx) {
+        this._currentDirection = Math.sign(travel);
+        this._lastReversalTime = this._gestureElapsed;
+        this._directionAnchorX = ctx.pxX;
+      }
+    } else {
+      const travel = (ctx.pxX - this._directionAnchorX) * this._currentDirection;
+      if (travel > 0) {
+        this._directionAnchorX = ctx.pxX;
+      } else if (-travel >= this._minReversalDistancePx &&
+                 this._gestureElapsed - this._lastReversalTime >= this._reversalDebounceSeconds) {
+        const stroke = Math.abs(this._directionAnchorX - this._strokeOriginX);
+        if (stroke >= this._minStrokeDistancePx && stroke <= this._maxStrokeDistanceLimitPx) {
+          this._maxStrokeDistancePx = stroke;
+          this._reversalCount++;
+          reversed = true;
         }
-        this._strokeStartCumulative = this._lastCumulative;
+        this._strokeOriginX = this._directionAnchorX;
+        this._directionAnchorX = ctx.pxX;
+        this._currentDirection *= -1;
+        this._smoothedVelX = velX;
         this._lastReversalTime = this._gestureElapsed;
       }
-    } else if (this._currentDirection !== 0 && this._lastNonZeroDirection === 0) {
-      // 首次产生方向：标记当前划动起点
-      this._strokeStartCumulative = this._lastCumulative;
-      this._lastReversalTime = this._gestureElapsed;
-    }
-    if (this._currentDirection !== 0) {
-      this._lastNonZeroDirection = this._currentDirection;
     }
 
     const sample = this._samples[this._sampleHead];

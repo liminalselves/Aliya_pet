@@ -1,0 +1,145 @@
+{
+  "characterId": "aliya",
+  "scene": "interaction",
+  "selectionMode": "shuffle_bag",
+  "singlePageMaxChars": 18,
+  "maxPages": 3,
+  "entries": [
+    {
+      "id": "interaction_head_1",
+      "text": "嗯？我在呢。",
+      "tags": [
+        "head"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_head_2",
+      "text": "轻一点，头发要乱啦。",
+      "tags": [
+        "head"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_face_1",
+      "text": "怎么突然戳我的脸呀。",
+      "tags": [
+        "face"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_face_2",
+      "text": "好啦，我有在看你。",
+      "tags": [
+        "face"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_left_1",
+      "text": "耳朵有一点痒。",
+      "tags": [
+        "ear_left"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_left_2",
+      "text": "被你碰到了。",
+      "tags": [
+        "ear_left"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_right_1",
+      "text": "耳朵有一点痒。",
+      "tags": [
+        "ear_right"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_right_2",
+      "text": "被你碰到了。",
+      "tags": [
+        "ear_right"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_hair_1",
+      "text": "头发被你弄乱啦。",
+      "tags": [
+        "hair"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_body_1",
+      "text": "我在这里，怎么啦？",
+      "tags": [
+        "body"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_body_2",
+      "text": "想和我待一会儿吗？",
+      "tags": [
+        "body"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_hand_1",
+      "text": "嗯，牵到你啦。",
+      "tags": [
+        "hand"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_tablet_1",
+      "text": "想一起看看我的记录吗？",
+      "tags": [
+        "tablet"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_click_doubt_1",
+      "text": "嗯？是有什么事想告诉我吗？",
+      "tags": [
+        "click_doubt"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_click_comment_1",
+      "text": "好啦好啦，我已经注意到你了。",
+      "tags": [
+        "click_comment"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_fast_1",
+      "text": "慢一点呀，我还没站稳呢。",
+      "tags": [
+        "drag_fast"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_fast_2",
+      "text": "呼……这次搬家有点突然。",
+      "tags": [
+        "drag_fast"
+      ],
+      "enabled": true
+    }
+  ]
+}

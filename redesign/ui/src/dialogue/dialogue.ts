@@ -214,6 +214,7 @@ export function paginate(
 
 const SCENE_URLS: Record<string, string> = {
   user_click: '/dialogue/user_click.json',
+  interaction: '/dialogue/interaction.json',
   head_petting: '/dialogue/head_petting.json',
   morning: '/dialogue/time/morning.json',
   forenoon: '/dialogue/time/forenoon.json',
@@ -379,10 +380,10 @@ export class DialogueStore {
     return available[available.length - 1];
   }
 
-  /** 从全部场景的有效台词中随机抽取一条（随机说话用）。 */
+  /** 闲聊仅使用通用台词与当前时段，不抽取触摸/拖动等事件台词。 */
   selectRandom(): DialogueEntry | null {
     const all: DialogueEntry[] = [];
-    for (const scene of this._files.keys()) {
+    for (const scene of ['user_click', timeScene(new Date())]) {
       all.push(...this._candidates(scene));
     }
     if (all.length === 0) return null;

@@ -533,6 +533,10 @@ export class PetModel
     return handle;
   }
 
+  get isActionPlaying(): boolean {
+    return this._ready && !this._motionManager.isFinished();
+  }
+
   /** PetBehaviorHost：播放语义动作（可互相打断，队列自带交叉淡出）。 */
   public playAction(name: string): boolean {
     if (!this._ready) return false;
