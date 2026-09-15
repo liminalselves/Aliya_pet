@@ -5,7 +5,7 @@
   "description": "Aliya Pet 重写版：Tauri 壳 + Web 渲染（原型验证）",
   "scripts": {
     "tauri": "tauri",
-    "dev": "tauri dev",
+    "dev": "node scripts/dev.mjs",
     "build": "tauri build"
   },
   "devDependencies": {

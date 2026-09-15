@@ -4,7 +4,8 @@
  * 401/403/CREDENTIAL_REQUIRED 视为连接失效），并给错误附加服务端 errorCode，
  * 供生图状态机识别 AGENT_IMAGE_DISABLED 等情形。
  */
-import { MSK_BASE, type FetchLike } from '../msk/client';
+import type { FetchLike } from '../msk/client';
+import { MSK_BASE } from '../msk/config';
 import type { MskApiCaller } from './types';
 
 export interface MskApiCallerOptions {

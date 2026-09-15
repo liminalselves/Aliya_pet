@@ -70,6 +70,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content input:focus { border-color:#bca5df99; outline:none; background:#ffffff14; }
 .gal-content article { padding:7px 0; border-bottom:1px solid #ffffff12; }
 .gal-content article small { font-weight:600; letter-spacing:.04em; }
+.gal-content article.history-target { border-left:2px solid #bca5df; padding-left:8px; background:#bca5df14; }
 .gal-content article .who-aliya { color:#c9b2ef; }
 .gal-content article .who-user { color:#8f8699; }
 .session-actions { display:flex; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid #ffffff14; }

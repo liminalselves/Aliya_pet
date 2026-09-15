@@ -69,6 +69,46 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
 Android/web 无独立窗口：ChatView 内嵌 pet 页（Android 主界面默认展开；
 悬浮窗不创建聊天 UI）。chat 页面与 pet 页共用同一套 ChatView/渲染代码。
 
+## 实例地址与开发配置
+
+实例地址统一在 `redesign/ui/src/chat/msk/config.ts` 中定义，API、MiAuth、
+消息渲染请求与托管控制台共用 `MSK_BASE`。Windows 开发启动命令：
+
+```bash
+cd redesign
+npm run dev                                  # https://misskey.liminalselves.top
+npm run dev -- http://127.0.0.1:3000         # 使用指定实例
+```
+
+`redesign/scripts/dev.mjs` 校验参数后通过 `VITE_MSK_ORIGIN` 传给 Tauri 启动的
+Vite 服务。参数必须是仅含协议、主机和可选端口的 `http://` 或 `https://`
+地址，不能带路径、查询串或凭证；多传参数会直接报错。启动日志会输出实际实例。
+命令不读取 `.env.development.local` 来决定实例，因此省略参数始终使用默认远程地址。
+生产构建同样默认使用远程地址。
+
+登录 token、用户、待完成授权与选中会话按实例隔离；默认实例沿用原来的
+存储键，其他实例追加 `@{origin}`。切换实例后需在对应实例重新授权。
+Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据库需有对应数据。
+
+## 托管会话配置
+
+入口：设置窗口 → 聊天 → **配置当前会话**。未登录或未选择会话时禁用。
+使用现有设置窗口内的全高抽屉，不改变桌宠聊天窗口的尺寸和跟随规则。
+提供模型、生图、主动消息、记忆、世界书、规则、对话风格、会话八个面板。
+
+协议权威来源：`C:/Users/35581/Desktop/misskey/docs/agent-control-embed.md`。
+宿主实现位于 `msk/control.ts`、`control-drawer.ts` 与 `control-bridge.ts`：
+
+- iframe 加载 `/agents/embed/{sessionId}/{panel}`；收到 ready 后通过
+  `postMessage` 注入 token 和紫灰色主题，校验消息的 origin 与 source。
+  token 不进入 URL；切换面板、关闭抽屉或页面卸载时释放 iframe 与监听器。
+- 抽屉固定高度，内部页面自己滚动。认证错误或加载超时显示中文提示和重试入口。
+- 登录或选中会话变化会关闭旧面板；同账号令牌变化通过 update-token 更新。
+- 修改成功后刷新会话摘要并通知聊天重新读取上下文；删除当前会话后清理选择。
+- 消息与上下文分界导航交给桌宠自己的记录面板，读取目标附近的可见时间线；
+  不使用返回原始内部控制内容的消息编辑接口。目标不存在时显示提示。
+- 外部链接通过平台已有 `openUrl` 打开。聊天本身不嵌入 Misskey 消息列表。
+
 ## 验权（MiAuth）
 
 首次使用必须授权；token 存 localStorage（`aliya_msk_token`），
@@ -149,7 +189,7 @@ Aliya_web 相同。
 
 ## 验证
 
-`redesign/ui` 下 `npm test`（回归 + 渲染共 49 项）与 `npm run build`；
+`redesign/ui` 下 `npm test`（回归、渲染与托管协议）与 `npm run build`；
 `redesign/src-tauri` 下 `cargo test`（窗口几何/MiAuth 共 21 项）。
 Windows 已实机验收：chat 窗口预创建、贴 pet 右侧底对齐、授权全链路
 （错误 session/favicon 404 且监听存活、正确 session 200、未授权时
@@ -159,3 +199,8 @@ chat 穿透掩码（透明区 ignore=true、面板上 ignore=false）、开关�
 重启记忆（双向）。待验收：授权通过后的会话选择与回复渲染、托盘
 切换 pet 显隐时 chat 联动（自动化够不到托盘，按代码实现）、Android
 deep link 回跳。
+
+2026-09-15 实例配置与托管控制台接入：用户要求停止测试前，55 项单元回归
+及前端构建通过。浏览器仅确认设置入口与未连接禁用状态；抽屉点击和截图
+未完成，真实授权后的面板保存、消息导航及原生跨窗口联动尚未验收。
+后续测试由用户进行；临时无效凭证已清理，本次启动的开发服务已停止。

@@ -36,12 +36,16 @@
 ```bash
 cd redesign
 npm install                # 首次
-# 开发运行（带 CDP 调试端口）：
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run tauri dev
+# 开发运行；不传参数时连接默认远程 Misskey：
+npm run dev
+# 临时连接指定实例：
+npm run dev -- http://127.0.0.1:3000
+# 如需 CDP 调试端口：
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
 ```
 
-打包安装版：`cd redesign/ui && npm run build && cd .. && npm run tauri build`
-（详见 `docs/BUILD.md`，含 SDK 依赖准备。）
+打包安装版：`cd redesign && npm run build`。Tauri 会先自动构建共享前端，
+默认连接 `https://misskey.liminalselves.top`（详见 `docs/BUILD.md`，含 SDK 依赖准备）。
 
 ### Android
 

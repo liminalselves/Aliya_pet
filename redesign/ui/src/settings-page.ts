@@ -26,6 +26,8 @@ import {
 } from './platform';
 import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
+import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
+import { mountAgentControls } from './chat/msk/control-drawer';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
@@ -594,8 +596,8 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     let token = '';
     let user: { id?: string; username?: string; name?: string } | null = null;
     try {
-      token = localStorage.getItem('aliya_msk_token') ?? '';
-      user = JSON.parse(localStorage.getItem('aliya_msk_user') ?? 'null');
+      token = localStorage.getItem(MSK_TOKEN_KEY) ?? '';
+      user = JSON.parse(localStorage.getItem(MSK_USER_KEY) ?? 'null');
     } catch {
       // 存储不可用时按未连接显示
     }
@@ -605,7 +607,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     if (user?.id) {
       try {
         const saved = JSON.parse(
-          localStorage.getItem(`aliya_session:${user.id}`) ?? 'null'
+          localStorage.getItem(mskSessionKey(user.id)) ?? 'null'
         ) as { name?: string } | null;
         sessionName = saved?.name ?? '';
       } catch {
@@ -617,18 +619,21 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refreshChatInfo();
   // 聊天窗口里的登录/选会话改动经 localStorage 落盘，回本窗口时刷新
   window.addEventListener('focus', refreshChatInfo);
+  window.addEventListener('storage', refreshChatInfo);
 
   const openChat = document.createElement('button');
   openChat.className = 'act wide';
   openChat.textContent = platform === 'android' ? '打开聊天' : '打开聊天窗口';
-  openChat.addEventListener('click', () => {
-    if (platform === 'android') {
-      shellAction('open-main');
-      return;
-    }
-    void invokeCmd('show_chat');
-  });
+  const showChat = async () => {
+    if (platform === 'android') shellAction('open-main');
+    else if (platform === 'tauri') {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('show_chat');
+    } else window.location.assign('/chat.html');
+  };
+  openChat.addEventListener('click', () => { void showChat(); });
   box.appendChild(openChat);
+  mountAgentControls(box, showChat, refreshChatInfo);
 }
 
 // ---- 关于 ----

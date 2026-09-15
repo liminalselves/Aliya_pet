@@ -1,9 +1,6 @@
-import { MSK_BASE, MskClient, type FetchLike, type MskUser } from './client';
+import { MskClient, type FetchLike, type MskUser } from './client';
+import { MSK_BASE, MSK_TOKEN_KEY as TOKEN_KEY, MSK_USER_KEY as USER_KEY, MSK_PENDING_KEY as PENDING_KEY } from './config';
 import { platform, openUrl, androidShell } from '../../platform';
-
-const TOKEN_KEY = 'aliya_msk_token';
-const USER_KEY = 'aliya_msk_user';
-const PENDING_KEY = 'aliya_miauth_pending';
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;

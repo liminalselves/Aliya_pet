@@ -4,7 +4,7 @@
  * 接口约定见 Aliya_web/MSK_API_USAGE.md；Token 放在 JSON 的 i 字段。
  */
 
-export const MSK_BASE = 'https://misskey.liminalselves.top';
+import { DEFAULT_MSK_ORIGIN, MSK_BASE } from './config';
 
 /** 桌宠固定对接的 Aliya 角色与文风（与 Aliya_web 一致）。 */
 export const ALIYA_CHARACTER_ID = 'akqruskge8w6003j';
@@ -119,11 +119,12 @@ export class MskClient {
     return { id: data.id, username: String(data.username ?? ''), name: data.name as string | undefined };
   }
 
-  /** POST /api/agents/sessions/list-mine，只保留 Aliya 角色的会话。 */
+  /** POST /api/agents/sessions/list-mine。非官方实例不会持有官方 Aliya 角色，因此显示全部会话。 */
   async listAliyaSessions(signal?: AbortSignal): Promise<MskSession[]> {
     const list = await this.post<MskSession[]>('/agents/sessions/list-mine', {}, signal);
+    const onlyOfficialAliya = MSK_BASE === DEFAULT_MSK_ORIGIN;
     return (Array.isArray(list) ? list : [])
-      .filter(s => s && s.characterId === ALIYA_CHARACTER_ID)
+      .filter(s => s && (!onlyOfficialAliya || s.characterId === ALIYA_CHARACTER_ID))
       .map(s => ({
         id: s.id,
         name: s.name,
@@ -217,6 +218,15 @@ export class MskClient {
       if (reply) return { text: reply.content, messageId: reply.id };
     }
     fail(delivered ? '回复没有按时到达，请稍后在「记录」里刷新确认。' : '发送可能未送达，请在「记录」里刷新确认后重试。');
+  }
+
+  async messagesAround(sessionId: string, messageId: string, signal?: AbortSignal): Promise<MskTimelineMessage[]> {
+    const after = await this.post<MskTimelineMessage[]>('/agents/messages/timeline', { sessionId, sinceId: messageId, limit: 20 }, signal);
+    after.sort((a, b) => a.id.localeCompare(b.id));
+    const before = await this.post<MskTimelineMessage[]>('/agents/messages/timeline', {
+      sessionId, limit: 21, ...(after.length ? { untilId: after[0].id } : {}),
+    }, signal);
+    return [...before, ...after].sort((a, b) => a.id.localeCompare(b.id));
   }
 
   /** POST /api/agents/messages/timeline：按时间正序返回（过滤 system/内部消息）。 */

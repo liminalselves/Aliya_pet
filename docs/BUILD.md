@@ -26,12 +26,15 @@ Cubism 组件来自官方便利包/样本（有许可限制，不入 git）。�
 cd redesign
 npm install
 
-# 开发运行（可加 CDP 调试端口，便于用 tools/ 检查页面）
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run tauri dev
+# 开发运行：省略参数连接默认远程实例
+npm run dev
+# 临时连接指定 Misskey 实例
+npm run dev -- http://127.0.0.1:3000
+# 可加 CDP 调试端口，便于用 tools/ 检查页面
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
 
-# 发布构建（前端先 build，再由 tauri 打包成 NSIS 安装程序）
-cd ui && npm run build && cd ..
-npm run tauri build
+# 发布构建（Tauri 自动先构建前端，再打包成 NSIS 安装程序）
+npm run build
 ```
 
 产物：`redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_*.exe`

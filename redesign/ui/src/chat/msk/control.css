@@ -1,0 +1,20 @@
+.agent-control-drawer { box-sizing:border-box; position:fixed; inset:0; width:100%; max-width:960px; height:100%; max-height:100%; margin:auto; padding:0; border:0; background:#241f26; color:#e8e2e6; font:13px/1.5 "Microsoft YaHei",system-ui,sans-serif; }
+.agent-control-drawer[open] { display:flex; flex-direction:column; }
+.agent-control-drawer::backdrop { background:#151019a6; }
+.agent-control-drawer header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 18px 12px; }
+.agent-control-drawer header small { color:#bca5df; font-size:10px; letter-spacing:.2em; }
+.agent-control-drawer h2 { margin:2px 0; font-size:19px; font-weight:600; color:inherit; letter-spacing:0; }
+.agent-control-drawer .control-session { margin:3px 0 0; color:#a89aa8; font-size:12px; overflow-wrap:anywhere; }
+.agent-control-drawer button { color:inherit; font:inherit; cursor:pointer; }
+.agent-control-drawer button:focus-visible { outline:2px solid #bca5df; outline-offset:2px; }
+.agent-control-drawer .control-close { align-self:flex-start; width:32px; height:32px; flex:none; border:1px solid #4a4048; border-radius:50%; background:transparent; font-size:22px; line-height:1; }
+.agent-control-drawer nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; margin:0 12px 8px; padding:4px; background:#1c1820; border:1px solid #3a323e; border-radius:12px; }
+.agent-control-drawer nav button { padding:7px 2px; border:0; border-radius:7px; background:none; color:#a89aa8; font-size:12px; white-space:nowrap; }
+.agent-control-drawer nav button:hover { background:#302836; color:#e8e2e6; }
+.agent-control-drawer nav button[aria-pressed=true] { color:#efe5ff; background:#4d3d61; box-shadow:inset 0 0 0 1px #bca5df33; }
+.agent-control-drawer .control-status { flex:none; padding:0 16px 8px; color:#c9b7dc; font-size:12px; }
+.agent-control-drawer .control-status:empty { display:none; }
+.agent-control-drawer .control-retry { align-self:flex-start; margin:0 16px 8px; border:1px solid #7d668f; border-radius:7px; padding:5px 12px; background:#38303c; }
+.agent-control-drawer .control-body { flex:1; min-height:0; border-top:1px solid #3a323e; }
+.agent-control-frame { display:block; width:100%; height:100%; border:0; }
+@media(min-width:700px) { .agent-control-drawer nav { grid-template-columns:repeat(8,minmax(0,1fr)); } }

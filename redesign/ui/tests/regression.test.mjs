@@ -1,3 +1,4 @@
+import { loadMskConfig } from './msk-config-helper.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync,readdirSync} from 'node:fs';
@@ -19,7 +20,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
 });
 function load(name,imports={},globals={}){
  const code=ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2021}}).outputText;
- const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??{},console,setTimeout,clearTimeout,performance,...globals});return exports;
+ const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,...globals});return exports;
 }
 const {GazeController}=load('gaze');
 

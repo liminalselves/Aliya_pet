@@ -1,3 +1,4 @@
+import { loadMskConfig } from './msk-config-helper.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ function load(name, imports = {}, globals = {}) {
     exports,
     require: id => {
       if (imports[id]) return imports[id];
+      if (['./config', '../msk/config'].includes(id)) return loadMskConfig();
       throw new Error(`unexpected require: ${id}`);
     },
     console, setTimeout, clearTimeout, performance,

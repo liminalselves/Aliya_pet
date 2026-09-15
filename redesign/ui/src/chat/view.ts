@@ -2,6 +2,8 @@ import { ChatController, type ChatStorage } from './controller';
 import type { ChatMessage } from './types';
 import { Typewriter } from './typewriter';
 import { MskAuth } from './msk/auth';
+import { DEFAULT_MSK_ORIGIN, MSK_BASE, mskSessionKey } from './msk/config';
+import { CONTROL_REQUEST_KEY, readControlRequest } from './msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MskClient, type MskSession } from './msk/client';
 import { MskChatProvider } from './msk/provider';
 import { MskMessageRenderer, type MskRendered } from './rendering/renderer';
@@ -39,6 +41,7 @@ export class ChatView {
   private historyVisible = false;
   private lastBusy = false;
   private composing = false;
+  private controlRequestActive = false;
   /** 回复分页播放状态：segments 为渲染产物中的 .msk-segment（MSK 展示分段）。 */
   private replyActive = false;
   private replyToken: unknown = null;
@@ -96,6 +99,8 @@ export class ChatView {
     this.root.onkeydown = e => { if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); this.hideReply(); } };
     controller.persist = false;
     controller.onChange = () => this.changed();
+    window.addEventListener('storage', e => { if (e.key === CONTROL_REQUEST_KEY) void this.applyControlRequest(); });
+    window.addEventListener('focus', () => { void this.applyControlRequest(); });
     void this.bootstrap();
   }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
@@ -218,7 +223,7 @@ export class ChatView {
       this.content.append(actions);
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
-  private sessionKey(): string { return `aliya_session:${this.auth.savedUser()?.id ?? 'current'}`; }
+  private sessionKey(): string { return mskSessionKey(this.auth.savedUser()?.id ?? 'current'); }
   private async enterSession(session: MskSession): Promise<void> {
     const signal = this.reset(); this.content.textContent = '正在打开会话……';
     const client = new MskClient(this.auth.token);
@@ -226,7 +231,7 @@ export class ChatView {
     try {
       const [detail, character, timeline] = await Promise.all([
         api<Record<string, unknown>>('agents/sessions/show', { sessionId: session.id }, signal),
-        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: ALIYA_CHARACTER_ID }, signal),
+        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: session.characterId || ALIYA_CHARACTER_ID }, signal).catch(() => ({ regexRules: [] })),
         client.timeline(session.id, 60, signal),
       ]);
       if (signal.aborted) return;
@@ -242,6 +247,7 @@ export class ChatView {
       // 存 id+名称：名称供设置主菜单「当前会话」展示。
       try { this.storage?.setItem(this.sessionKey(), JSON.stringify({ id: session.id, name: session.name || session.characterName || 'Aliya' })); } catch { /* Optional storage. */ }
       this.notify();
+      void this.applyControlRequest();
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private disconnect(): void {
@@ -271,6 +277,7 @@ export class ChatView {
       }
     }
     this.lastBusy = c.busy; this.notify();
+    if (!c.busy) void this.applyControlRequest();
   }
   private bindMessage(message: ChatMessage, container: HTMLElement, segmented = false, onUpdate?: () => void) {
     if (!this.renderer || !this.activeSession) return null;
@@ -376,7 +383,7 @@ export class ChatView {
   }
   private showHistory(): void {
     if (this.screen !== 'ready') return;
-    this.clearRendering(); this.historyVisible = true; this.content.replaceChildren(); this.showPanel('记录');
+    this.clearPlayback(); this.clearRendering(); this.historyVisible = true; this.content.replaceChildren(); this.showPanel('记录');
     const refresh = document.createElement('button'); refresh.textContent = '刷新记录'; refresh.className = 'ghost';
     refresh.onclick = () => { void this.refreshHistory(); }; this.content.append(refresh);
     if (!this.controller.messages.length) {
@@ -396,6 +403,41 @@ export class ChatView {
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
     } catch (e) { this.status.textContent = this.error(e); }
+  }
+  private async applyControlRequest(): Promise<void> {
+    if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;
+    const request = readControlRequest(this.storage);
+    if (!request || request.sessionId !== this.activeSession?.id) return;
+    this.controlRequestActive = true;
+    const seq = this.sequence;
+    try {
+      if (readControlRequest(this.storage)?.at === request.at) this.storage?.removeItem(CONTROL_REQUEST_KEY);
+      if (request.action === 'deleted') {
+        this.activeSession = null; this.controller.replaceHistory([]); await this.loadSessions(); return;
+      }
+      if (request.action === 'refresh') {
+        await this.enterSession(this.activeSession); return;
+      }
+      const messages = await new MskClient(this.auth.token).messagesAround(request.sessionId, request.messageId!, this.operation?.signal);
+      if (seq !== this.sequence) return;
+      this.setOpen(true); this.showHistory(); this.clearRendering(); this.content.replaceChildren();
+      const refresh = document.createElement('button'); refresh.textContent = '回到最新记录'; refresh.className = 'ghost';
+      refresh.onclick = () => { void this.refreshHistory(); }; this.content.append(refresh);
+      let target: HTMLElement | null = null;
+      for (const message of messages) {
+        if (message.role === 'system' && message.id !== request.messageId) continue;
+        const article = document.createElement('article');
+        const label = document.createElement('small');
+        label.textContent = message.role === 'system' ? '上下文分界' : message.role === 'user' ? '你' : 'Aliya';
+        const text = document.createElement('div'); text.className = 'message-text'; article.append(label, text); this.content.append(article);
+        if (message.role === 'system') text.textContent = '从这里开始新的上下文';
+        else this.bindMessage({ id: message.id, messageId: message.id, role: message.role, text: message.content, file: message.file, status: 'complete' }, text);
+        if (message.id === request.messageId) { target = article; article.classList.add('history-target'); article.tabIndex = -1; }
+      }
+      if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
+      else this.status.textContent = '目标消息已删除或不在可见记录中。';
+    } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
+    finally { this.controlRequestActive = false; }
   }
   private error(e: unknown): string { return e instanceof Error ? e.message : '连接失败，请重试。'; }
 }
