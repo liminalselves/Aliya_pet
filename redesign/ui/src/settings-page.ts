@@ -28,6 +28,7 @@ import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
+import './settings.css';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
@@ -157,6 +158,7 @@ function section(title: string): HTMLElement {
   h.textContent = title;
   app.appendChild(h);
   const box = document.createElement('div');
+  box.className = 'card';
   app.appendChild(box);
   return box;
 }
@@ -219,6 +221,13 @@ function scalePercent(s: number): number {
   return Math.round(scaleToPercent(s, scaleRangeMin, scaleRangeMax));
 }
 
+/** 滑块行程填充：显示百分比 10~100 映射到轨道 0%~100%。 */
+function paintSliderFill(slider: HTMLInputElement): void {
+  const pct = ((Number(slider.value) - Number(slider.min)) /
+    (Number(slider.max) - Number(slider.min))) * 100;
+  slider.style.setProperty('--fill', `${pct}%`);
+}
+
 function refreshControls(): void {
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
@@ -227,8 +236,10 @@ function refreshControls(): void {
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
-  if (refs.scaleSlider)
+  if (refs.scaleSlider) {
     refs.scaleSlider.value = String(scalePercent(settings.scale));
+    paintSliderFill(refs.scaleSlider);
+  }
   if (refs.scaleVal)
     refs.scaleVal.textContent = `${scalePercent(settings.scale)}%`;
   if (refs.batterySaver)
@@ -433,8 +444,10 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     );
     slider.value = String(scalePercent(s));
     val.textContent = `${scalePercent(s)}%`;
+    paintSliderFill(slider);
     update({ scale: s });
   };
+  paintSliderFill(slider);
   minus.addEventListener('click', () => commitScale(settings.scale / 1.08));
   plus.addEventListener('click', () => commitScale(settings.scale * 1.08));
   slider.addEventListener('input', () =>

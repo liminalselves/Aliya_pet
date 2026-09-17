@@ -32,15 +32,20 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   压住脚线，回复/连接面板向上覆盖腿部，形态对齐萝莉斯而非模型下挂网页。
 - chat 宽按可见模型宽 × 1.18（钳 260–560 CSS px）；外窗高度由前端
   `set_chat_layout(mode,contentHeight)` 按内容态动态调整：composer 62–88、
-  reply 150–默认比例、setup 至少 300 CSS px，连接页不会再被小窗裁切。
+  reply 150–默认比例、setup 至少 300 CSS px。连接/会话/记录/上下文定位
+  都按 setup 全高——记录曾误归 reply 被小窗压成一条缝；记录屏打开即滚到
+  底部最新消息。
 - chat 不提供独立拖动；pet 移动/缩放时 chat 严格跟随。水平方向 pet 中心
   在屏内时 chat 钳回工作区（chat 比 pet 宽，纯居中会在贴边时把发送按钮
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
   chat 打开后隐藏 pet 脚下的入口按钮（pet 侧 `.chat-launcher[hidden]`
   需 `display:none!important` 压过自身的 `display:flex`），关闭后恢复。
-- 视觉：面板/输入框半透明（rgba .74–.90，透出桌面与模型），字号随窗口
-  宽度自适应（`.chat-shell` container-type + cqw clamp 11.5–13px）；
-  名牌条 23px 高，工具栏只留 记录/会话/发送/×（退出账号在会话屏内）。
+- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（夜紫色阶、
+  主紫、圆角、阴影、动效、焦点环），pet/聊天/设置/托管抽屉只引用变量、
+  不自造色值。面板/输入框半透明（透出桌面与模型，backdrop 10px 模糊），
+  字号随窗口宽度自适应（`.chat-shell` container-type + cqw clamp
+  11.5–13px）；名牌条 25px 高，工具栏只留 记录/会话/发送/×（退出账号
+  在会话屏内）。
   按钮分级：主操作 `.btn-primary` 紫药丸（与发送一致），次要 `.ghost`
   淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，border/radius
   需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌不抢软键盘），
@@ -162,14 +167,19 @@ Aliya_web 相同。
   composer/reply/setup 状态收放。记录/会话/连接屏不分页不逐字。
 - MSK 不返回表演信息：本地关键词轻量推断表情（开心/害羞/担心），
   经 `send_chat_cue` 跨窗口转给 pet 表演；没有就不表演。
-- 历史 = 服务器时间线（`messages/timeline`，60 条，过滤 system，
+- 历史 = 服务器时间线（`messages/timeline`，拉 100 条，过滤 system，
   按时间正序），默认隐藏，经工具栏「记录」查看；MSK 模式不写
-  localStorage。
+  localStorage。记录屏只展示最近 50 轮（轮 = 一条用户消息及其后的
+  Aliya 回复），本地裁掉或服务器还有更早页时顶部显示
+  「更早的对话已省略，aliya_pet 仅支持显示 50 轮对话」。
 - 渲染由 `rendering/MskMessageRenderer` 负责，与 Aliya_web 对齐：
   角色 regexRules（targets 含角色且 effects 含 hide 的规则按序串行
   替换，非法规则跳过）、heart_rate 剥离并钳制 0-300、表情包
   （gif/apng 原图其余缩略图）、自定义 emoji、画图占位状态机
   （liveArrived 自动生成/历史只查状态）、MFM+Markdown、附件图片。
+  存储文本里的字面 `<br>` 等价换行（权威端 marked 当 HTML 放行；
+  `render.ts` 在解析前还原成行，代码围栏内保持字面），其余 HTML
+  仍全部转义。
 - 助手消息按 `messageId` 渲染原始消息；时间线消息携带 `file` 附件。
 
 ## 行为规则（与普通互动相处）

@@ -398,3 +398,17 @@ test('同步门面保持原有安全与格式化行为，链接带 msk-link 标�
   assert.ok(render.renderMarkdown('```js\na<b\n```').includes('language-js'));
   assert.equal(typeof render.renderInto, 'function');
 });
+
+test('字面 <br> 还原为换行（与 MSK marked 放行一致），代码围栏内保持字面', () => {
+  // 段落内的 <br> 各形态（大小写/自闭合）都成行
+  const html = render.renderMarkdown('第一行<br>第二行<BR/>第三行<br />第四行');
+  assert.ok(html.includes('第一行<br>第二行<br>第三行<br>第四行'));
+  // <br> 还原出的空行成为段落边界（与真实换行存储的消息一致）
+  const paras = render.renderMarkdown('甲<br><br>乙');
+  assert.ok(paras.includes('<p>甲</p>') && paras.includes('<p>乙</p>'));
+  // 代码围栏内是代码内容，保持字面
+  const fenced = render.renderMarkdown('```\na<br>b\n```');
+  assert.ok(fenced.includes('a&lt;br&gt;b'));
+  // 其他 HTML 依旧转义，不放行
+  assert.ok(!render.renderMarkdown('<div>x</div>').includes('<div>'));
+});

@@ -1,4 +1,5 @@
 import { PetApp } from './pet-app';
+import './pet.css';
 
 /**
  * 入口：Cubism Core（Emscripten）异步初始化完成后启动应用。

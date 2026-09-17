@@ -27,6 +27,22 @@ function relativeTime(iso?: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+/** 记录屏：拉取上限与展示上限（轮 = 一条用户消息及其后的 Aliya 回复）。 */
+const HISTORY_FETCH_LIMIT = 100;
+const HISTORY_ROUND_LIMIT = 50;
+
+/** 取末尾最近 N 轮的起始下标；不足 N 轮返回 0。 */
+function lastRoundsStart(messages: ChatMessage[], rounds: number): number {
+  let seen = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      seen++;
+      if (seen === rounds) return i;
+    }
+  }
+  return 0;
+}
+
 export class ChatView {
   readonly root = document.createElement('div');
   isOpen = false;
@@ -39,6 +55,8 @@ export class ChatView {
   private activeSession: MskSession | null = null;
   private lastAnswer = '';
   private historyVisible = false;
+  /** 时间线拉满整页：服务器上很可能还有更早的记录（用于截断提示）。 */
+  private historyMayHaveMore = false;
   private lastBusy = false;
   private composing = false;
   private controlRequestActive = false;
@@ -60,7 +78,7 @@ export class ChatView {
     private readonly onOpen: (open: boolean) => void, private readonly storage?: ChatStorage) {
     this.root.id = 'chat-ui';
     this.root.innerHTML = `
-      <button class="chat-launcher" aria-label="和 Aliya 聊天">聊天</button>
+      <button class="chat-launcher" aria-label="和 Aliya 聊天"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9.4L4 21.6V18H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>聊天</span></button>
       <div class="chat-shell">
         <section class="gal-panel" aria-label="Aliya 对话" hidden>
           <header class="gal-nameplate"><strong>Aliya</strong><span class="panel-title"></span><button class="close-panel" aria-label="关闭对话框">×</button></header>
@@ -146,7 +164,9 @@ export class ChatView {
     shell.classList.toggle('composer-only', composerVisible && !panelVisible);
     document.body.dataset.chatLayout = !this.isOpen ? 'closed'
       : composerVisible && !panelVisible ? 'composer'
-        : this.screen === 'ready' ? 'reply' : 'setup';
+        // 记录/上下文定位与连接/会话屏同属整页内容，按 setup 全高，
+        // 否则长列表被 reply 态的小窗压成一条缝。
+        : this.screen === 'ready' && !this.historyVisible ? 'reply' : 'setup';
     this.reportLayout();
   }
   /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
@@ -231,11 +251,12 @@ export class ChatView {
     try {
       const [detail, character, timeline] = await Promise.all([
         api<Record<string, unknown>>('agents/sessions/show', { sessionId: session.id }, signal),
-        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: session.characterId || ALIYA_CHARACTER_ID }, signal).catch(() => ({ regexRules: [] })),
-        client.timeline(session.id, 60, signal),
+        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: session.characterId || ALIYA_CHARACTER_ID }, signal).catch(() => ({ regexRules: [] as unknown[] })),
+        client.timeline(session.id, HISTORY_FETCH_LIMIT, signal),
       ]);
       if (signal.aborted) return;
       this.activeSession = session;
+      this.historyMayHaveMore = timeline.length >= HISTORY_FETCH_LIMIT;
       this.renderer = new MskMessageRenderer({ api, openUrl: url => { void openUrl(url); }, onImageClick: url => { void openUrl(url); },
         regexRules: normalizeRegexRules(character.regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
         loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false });
@@ -384,22 +405,33 @@ export class ChatView {
   private showHistory(): void {
     if (this.screen !== 'ready') return;
     this.clearPlayback(); this.clearRendering(); this.historyVisible = true; this.content.replaceChildren(); this.showPanel('记录');
+    const tools = document.createElement('div'); tools.className = 'panel-tools';
     const refresh = document.createElement('button'); refresh.textContent = '刷新记录'; refresh.className = 'ghost';
-    refresh.onclick = () => { void this.refreshHistory(); }; this.content.append(refresh);
+    refresh.onclick = () => { void this.refreshHistory(); }; tools.append(refresh); this.content.append(tools);
     if (!this.controller.messages.length) {
       const empty = document.createElement('p'); empty.className = 'muted-note'; empty.textContent = '还没有聊天记录，说点什么吧。'; this.content.append(empty);
     }
-    for (const message of this.controller.messages) {
+    // 只展示最近 50 轮；被截断（本地裁掉或服务器还有更早页）时给出省略提示。
+    const start = lastRoundsStart(this.controller.messages, HISTORY_ROUND_LIMIT);
+    if (start > 0 || this.historyMayHaveMore) {
+      const note = document.createElement('p'); note.className = 'muted-note history-truncated';
+      note.textContent = `更早的对话已省略，aliya_pet 仅支持显示 ${HISTORY_ROUND_LIMIT} 轮对话`;
+      this.content.append(note);
+    }
+    for (const message of this.controller.messages.slice(start)) {
       const article = document.createElement('article'); const label = document.createElement('small'); label.className = message.role === 'user' ? 'who-user' : 'who-aliya'; label.textContent = message.role === 'user' ? '你' : 'Aliya';
       const text = document.createElement('div'); text.className = 'message-text'; article.append(label, text); this.content.append(article); this.bindMessage(message, text);
     }
+    // 记录按时间正序追加，打开即停在最底部的最新消息。
+    requestAnimationFrame(() => { this.content.scrollTop = this.content.scrollHeight; });
   }
   private async refreshHistory(): Promise<void> {
     if (!this.activeSession || this.controller.busy) return;
     const seq = this.sequence;
     try {
-      const list = await new MskClient(this.auth.token).timeline(this.activeSession.id, 60, this.operation?.signal);
+      const list = await new MskClient(this.auth.token).timeline(this.activeSession.id, HISTORY_FETCH_LIMIT, this.operation?.signal);
       if (seq !== this.sequence) return;
+      this.historyMayHaveMore = list.length >= HISTORY_FETCH_LIMIT;
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
     } catch (e) { this.status.textContent = this.error(e); }
@@ -421,8 +453,9 @@ export class ChatView {
       const messages = await new MskClient(this.auth.token).messagesAround(request.sessionId, request.messageId!, this.operation?.signal);
       if (seq !== this.sequence) return;
       this.setOpen(true); this.showHistory(); this.clearRendering(); this.content.replaceChildren();
+      const tools = document.createElement('div'); tools.className = 'panel-tools';
       const refresh = document.createElement('button'); refresh.textContent = '回到最新记录'; refresh.className = 'ghost';
-      refresh.onclick = () => { void this.refreshHistory(); }; this.content.append(refresh);
+      refresh.onclick = () => { void this.refreshHistory(); }; tools.append(refresh); this.content.append(tools);
       let target: HTMLElement | null = null;
       for (const message of messages) {
         if (message.role === 'system' && message.id !== request.messageId) continue;

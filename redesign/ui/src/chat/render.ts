@@ -194,8 +194,31 @@ function renderList(lines: string[]): string {
     `<li>${itemLines.map(renderInline).join('<br>')}</li>`).join('')}</${tag}>`;
 }
 
+/**
+ * MSK 存储/模型输出里的字面 `<br>` 等价换行——权威端（marked + sanitize）
+ * 会把 `<br>` 当 HTML 放行渲染成换行，本管线全转义，需在解析前还原成行。
+ * 代码围栏内的 `<br>` 是代码内容，保持字面（与 marked 的围栏转义一致）。
+ */
+function normalizeBrTags(text: string): string {
+  const lines = text.split('\n');
+  let fence: string | null = null;
+  const out: string[] = [];
+  for (const line of lines) {
+    const fenceStart = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceStart) {
+      const marker = fenceStart[1];
+      if (fence === null) fence = marker;
+      else if (marker.charAt(0) === fence.charAt(0) && marker.length >= fence.length) fence = null;
+      out.push(line);
+      continue;
+    }
+    out.push(fence ? line : line.replace(/<br\s*\/?>/gi, '\n'));
+  }
+  return out.join('\n');
+}
+
 export function renderMarkdown(source: unknown): string {
-  const text = String(source ?? '').replace(/\r\n?/g, '\n');
+  const text = normalizeBrTags(String(source ?? '').replace(/\r\n?/g, '\n'));
   const lines = text.split('\n');
   const html: string[] = [];
   let i = 0;

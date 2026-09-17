@@ -1,0 +1,55 @@
+/**
+ * Aliya 设计规范（唯一权威来源）：
+ * 夜紫深色阶 + 薰衣草主色；所有 Web 表面（pet/聊天/设置/托管抽屉）从这里取 token。
+ * 新表面只引用变量，不再自造色值、圆角、阴影与动效参数。
+ */
+:root {
+  /* 字体 */
+  --al-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+
+  /* 深色阶（夜紫，自底向亮） */
+  --al-bg-0: #131017; /* 窗口底 / 最深处 */
+  --al-bg-1: #1a1521; /* 页面底 */
+  --al-bg-2: #231d2c; /* 卡片 */
+  --al-bg-3: #2c2436; /* 控件 */
+  --al-bg-4: #372d44; /* 控件悬停 */
+
+  /* 描边（薰衣草色系透明线，层级递增） */
+  --al-line: rgba(203, 183, 228, 0.10);
+  --al-line-strong: rgba(203, 183, 228, 0.22);
+
+  /* 文字 */
+  --al-text-1: #efeaf5;
+  --al-text-2: #b3a8c4;
+  --al-text-3: #847997;
+
+  /* 主题紫 */
+  --al-accent: #bca5df;
+  --al-accent-strong: #d3c1ef;
+  --al-accent-soft: rgba(188, 165, 223, 0.14);
+  --al-accent-deep: #8a68b8;
+  --al-on-accent: #251d33;
+
+  /* 状态 */
+  --al-danger: #e78a92;
+
+  /* 圆角 */
+  --al-r-s: 8px;
+  --al-r-m: 12px;
+  --al-r-l: 16px;
+  --al-r-pill: 999px;
+
+  /* 阴影 */
+  --al-shadow-1: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --al-shadow-2: 0 10px 28px rgba(0, 0, 0, 0.38);
+  --al-shadow-accent: 0 4px 16px rgba(150, 116, 200, 0.35);
+
+  /* 动效：统一缓动，快档用于悬停/按下，中档用于面板进出 */
+  --al-ease: cubic-bezier(0.22, 0.8, 0.32, 1);
+  --al-ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  --al-t-fast: 0.14s;
+  --al-t-med: 0.22s;
+
+  /* 焦点环（仅 :focus-visible 使用） */
+  --al-focus-ring: 0 0 0 2px var(--al-bg-1), 0 0 0 4px var(--al-accent);
+}

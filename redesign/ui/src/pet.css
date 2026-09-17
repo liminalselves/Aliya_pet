@@ -1,0 +1,96 @@
+/**
+ * pet 窗口 DOM 层样式：台词气泡与贴边确认。
+ * html/body/stage 的基础透明布局仍在 index.html 内联（JS 加载前就要生效）。
+ */
+@import './styles/tokens.css';
+
+/* 贴边确认：只在吸附完成后短暂亮对应边，不拦截点击。 */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 2px;
+  pointer-events: none;
+  z-index: 40;
+  border: 2px solid transparent;
+  border-radius: var(--al-r-m);
+  opacity: 0;
+}
+body.snap-confirm::after { animation: snap-confirm .65s var(--al-ease); }
+body[data-snap-edge~="left"]::after { border-left-color: rgba(211, 193, 239, .9); }
+body[data-snap-edge~="right"]::after { border-right-color: rgba(211, 193, 239, .9); }
+body[data-snap-edge~="top"]::after { border-top-color: rgba(211, 193, 239, .9); }
+body[data-snap-edge~="bottom"]::after { border-bottom-color: rgba(211, 193, 239, .9); }
+@keyframes snap-confirm { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
+
+/* 台词气泡：角色头顶居中，不拦截指针。
+   居中用 left:0;right:0+margin auto——left:50% 会把可用宽度压成窗口右半，
+   max-content 下气泡被迫窄列换行。text-size-adjust 关掉 WebView 字体放大。 */
+#dialogue-bubble {
+  position: absolute;
+  top: 6%;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(82%, 300px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  padding: 10px 16px;
+  border-radius: var(--al-r-l);
+  border: 1px solid rgba(150, 116, 200, 0.28);
+  background: rgba(255, 254, 255, 0.96);
+  color: #3a3335;
+  font-family: var(--al-font);
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: center;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 20px rgba(60, 40, 80, 0.22), 0 1px 3px rgba(60, 40, 80, 0.12);
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  z-index: 10;
+  /* display:none→block 会重放该动画，即每次翻页/新台词弹入 */
+  animation: bubble-pop 0.22s var(--al-ease-spring);
+}
+
+/* 指向角色的小尾巴 */
+#dialogue-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: inherit;
+  border-right: 1px solid rgba(150, 116, 200, 0.28);
+  border-bottom: 1px solid rgba(150, 116, 200, 0.28);
+  transform: rotate(45deg);
+}
+
+/* scale 走独立属性，不碰 transform（overlay-wrap 的 translateZ 合成层提示不被覆盖） */
+@keyframes bubble-pop {
+  from { opacity: 0; scale: 0.92; translate: 0 4px; }
+}
+
+/* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），
+   气泡落在带内——窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
+   translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
+body.overlay-wrap #dialogue-bubble {
+  top: 6px;
+  max-width: min(260px, 92%);
+  transform: translateZ(0);
+  max-height: 76px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #dialogue-bubble { animation: none; }
+  body.snap-confirm::after { animation: none; opacity: 0; }
+}
