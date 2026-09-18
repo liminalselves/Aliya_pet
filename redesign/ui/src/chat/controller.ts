@@ -117,7 +117,6 @@ export class ChatController {
         if (event.messageId) answer.messageId = event.messageId;
         answer.text += (answer.text ? '\n\n' : '') + event.text;
         this.changed();
-        if (event.cue) this.onCue(event.cue);
       }
       if (request.signal.aborted || this._request !== request) return;
       if (!done || !answer.text.trim()) throw new Error('回复未完成');

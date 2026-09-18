@@ -44,8 +44,10 @@ cd redesign/ui && npm run build        # 或重新构建让 dist 生效
 | 走路 | `walk.motion3.json`  | `walk`   | BodyAngleZ ±5 步态摇摆 + 身体起伏 |
 
 组名与 `ui/src/behavior.ts` 的 `ACTION_LIBRARY` 一一对应；新增/改名动作请
-同步改该数组、`model3.json` 的 `Motions` 节（含 FadeInTime/FadeOutTime）和
-生成器的动作表。
+同步改该数组、`model3.json` 的 `Motions` 节（含 FadeInTime/FadeOutTime）、
+生成器的动作表和 `ui/src/chat/performance-manifest.ts` 的 `PERFORMANCE_ACTIONS`
+（AI 表演指令的第四张对照表，见 `PERFORMANCE.md`；表情同理同步
+`PERFORMANCE_EXPRESSIONS`）。
 
 ## 自编动作的工程约束（重要）
 

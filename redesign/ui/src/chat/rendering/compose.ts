@@ -1,11 +1,14 @@
 /**
- * 纯字符串组合：规则过滤 → 心率指令剥离 → 展示分段 → token 扫描 → HTML。
+ * 纯字符串组合：规则过滤 → 心率/表演指令剥离 → 展示分段 → token 扫描 → HTML。
  * 正文走 ../render 的先转义 MFM+Markdown 管线；结构化标签全部经 esc.ts 转义与
- * http(s) 地址白名单校验。生图卡片正文用 \u0000 占位符留给渲染器按状态填充。
+ * http(s) 地址白名单校验。生图卡片正文用 \u0000 占位符留给渲染器按状态填充；
+ * 表演指令段（整段恰为一个 [[agent_cue]]）在分段播放下渲染为隐藏 cue 页，
+ * 由 view 翻页时派发表演，其余路径一律剥离不展示。
  */
 import { renderMarkdown } from '../render';
 import { escapeAttr, escapeHtml, safeHttpUrl } from './esc';
 import { attachmentImageUrl, stickerImageUrl } from './emoji';
+import { parseCueSegment, stripCueTokens } from '../performance-manifest';
 import { applyDisplayRules } from './rules';
 import { splitAgentMessageIntoSegments } from './segments';
 import { scanAgentTokens, type DrawSize } from './tokens';
@@ -94,8 +97,20 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
   const draws: DrawPartInfo[] = [];
   let drawOffset = 0;
   const segmentHtml: string[] = [];
+  /** 段产物与是否为表演指令页：首条指令若不在最前，播放前提前到页首（见下方归一说明）。 */
+  const produced: { html: string; isCue: boolean }[] = [];
   for (const segment of segments) {
-    const parts = scanAgentTokens(segment, {
+    // 整段恰为一个表演指令 → 隐藏 cue 页（仅分段播放；view 翻到该页时派发表演）
+    const cue = role === 'assistant' && options.segmented === true ? parseCueSegment(segment) : null;
+    if (cue) {
+      const attrs = `${cue.expression ? ` data-express="${escapeAttr(cue.expression)}"` : ''}${cue.action ? ` data-play="${escapeAttr(cue.action)}"` : ''}`;
+      produced.push({ html: `<div class="msk-segment msk-cue"${attrs}></div>`, isCue: true });
+      continue;
+    }
+    // 行内残留指令剥离（AI 偶尔不守「独占一行」；记录屏整条也走这里清掉全部指令）
+    const clean = stripCueTokens(segment);
+    if (clean === '') continue;
+    const parts = scanAgentTokens(clean, {
       role,
       stickersEnabled: options.stickersEnabled && role === 'assistant',
       resolveEmoji: options.resolveEmoji,
@@ -106,13 +121,13 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
     let hasDraw = false;
     for (const part of parts) {
       if (part.type === 'text') {
-        html += renderMarkdown(segment.slice(part.start, part.end));
+        html += renderMarkdown(clean.slice(part.start, part.end));
       } else if (part.type === 'sticker') {
         html += stickerHtml(part.key, options.resolveSticker?.(part.key));
       } else if (part.type === 'emoji') {
         const emoji = options.resolveEmoji?.(part.name);
         if (emoji?.url) html += emojiHtml(part.name, emoji);
-        else html += renderMarkdown(segment.slice(part.start, part.end));
+        else html += renderMarkdown(clean.slice(part.start, part.end));
       } else {
         hasDraw = true;
         draws.push({ index: part.index, size: part.size, tag: part.tag });
@@ -120,8 +135,18 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
       }
     }
     drawOffset = draws.length;
-    if (html !== '') segmentHtml.push(`<div class="msk-segment${hasDraw && parts.length === 1 ? ' msk-segment-draw' : ''}">${html}</div>`);
+    if (html !== '') produced.push({ html: `<div class="msk-segment${hasDraw && parts.length === 1 ? ' msk-segment-draw' : ''}">${html}</div>`, isCue: false });
   }
+  // 开场归一：模型常让第一条指令落在开场白之后（开口时角色素颜）。只把首条指令
+  // 提前到页首——表情是持续语义，提前只是让它多覆盖开场白，其原配对段落依然被
+  // 覆盖到下一条指令为止，不产生错位；也不做链式交换（模型两种输出格式摇摆，
+  // 链式交换会把已正确的「指令→段落」整体错开一段）。
+  const firstCue = produced.findIndex(p => p.isCue);
+  if (firstCue > 0) {
+    const [cue] = produced.splice(firstCue, 1);
+    produced.unshift(cue);
+  }
+  segmentHtml.push(...produced.map(p => p.html));
 
   const attachmentUrl = role === 'user' ? attachmentImageUrl(options.file) : null;
   const attachment = attachmentUrl

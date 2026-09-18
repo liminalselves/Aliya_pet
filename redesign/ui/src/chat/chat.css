@@ -52,6 +52,8 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 /* 回复分页：MSK 分段一段一页，图片/贴纸收敛到对话框尺度 */
 .gal-content .msk-segment + .msk-segment { margin-top:0; }
+/* 表演指令页：仅承载 data-express/data-play 供翻页派发，任何时刻不渲染 */
+.gal-content .msk-segment.msk-cue { display:none!important; }
 .gal-content .msk-draw-image { max-height:140px; border-radius:var(--al-r-s); }
 .gal-content .msk-sticker { height:72px; }
 .gal-content .msk-attachment-img { max-height:160px; border-color:var(--al-line-strong); background:var(--al-bg-3); }

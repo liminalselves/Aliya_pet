@@ -67,7 +67,7 @@ export class PetApp {
   private _coordination = new InteractionCoordinator(() => ({
     interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
     speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
-      (this._chatPerformance?.active ?? false) || (this._chatView?.typing ?? false),
+      (this._chatView?.typing ?? false),
     paused: this._paused || !this._running,
   }));
 
@@ -399,6 +399,7 @@ export class PetApp {
     this._chatPerformance = new ChatPerformance({
       expressions: () => this._ai?.expressions() ?? [],
       actions: () => this._ai?.state().actions ?? [],
+      expression: () => this._ai?.state().expression ?? null,
       express: name => { this._ai?.express(name); },
       clearExpression: () => this._ai?.clearExpression(),
       play: name => { this._ai?.play(name); },
@@ -426,6 +427,8 @@ export class PetApp {
       void import('@tauri-apps/api/event').then(async events => {
         await events.listen<typeof this._remoteChat>('chat-state', e => {
           this._remoteChat = e.payload; if (e.payload.open) this._bubble?.cancel();
+          // 聊天窗口关闭即结束本轮表演，表情回情绪默认（持久表情不跨会话保留）
+          if (!e.payload.open) this._chatPerformance?.cancel();
           if (this._chatLauncher) {
             this._chatLauncher.classList.toggle('open', e.payload.open);
             this._chatLauncher.setAttribute('aria-pressed', String(e.payload.open));

@@ -32,6 +32,7 @@ const segments = load('chat/rendering/segments');
 const tokens = load('chat/rendering/tokens');
 const draw = load('chat/rendering/draw');
 const emoji = load('chat/rendering/emoji');
+const manifest = load('chat/performance-manifest');
 const composeMod = load('chat/rendering/compose', {
   '../render': render,
   './esc': esc,
@@ -39,6 +40,7 @@ const composeMod = load('chat/rendering/compose', {
   './rules': rulesMod,
   './segments': segments,
   './tokens': tokens,
+  '../performance-manifest': manifest,
 });
 const rendererMod = load('chat/rendering/renderer', {
   './compose': composeMod,
@@ -230,6 +232,54 @@ test('组合：规则→心率剥离→分段→卡片骨架，结构化标签�
   assert.ok(withEmoji.html.includes('msk-emoji-img'));
   const noEmoji = composeMessage(':zzz:', { role: 'assistant', stickersEnabled: false });
   assert.ok(noEmoji.html.includes(':zzz:') && !noEmoji.html.includes('msk-emoji-img'));
+});
+
+test('表演指令：整段指令成隐藏 cue 页，行内残留与记录屏路径剥离', () => {
+  // 分段播放：独占行指令自成一页，承载 data-express/data-play 供 view 翻页派发
+  const cued = composeMessage('你好\n[[agent_cue express=happy play=wave]]\n打扰了', { role: 'assistant', stickersEnabled: false, segmented: true });
+  assert.ok(cued.html.includes('<div class="msk-segment msk-cue" data-express="happy" data-play="wave"></div>'));
+  assert.ok(cued.html.includes('你好') && cued.html.includes('打扰了'));
+  // 仅表情 / 仅动作
+  const only = composeMessage('[[agent_cue play=nod]]', { role: 'assistant', stickersEnabled: false, segmented: true });
+  assert.ok(only.html.includes('<div class="msk-segment msk-cue" data-play="nod"></div>'));
+  // 非分段（记录屏）：不生成 cue 页，整条指令剥离
+  const flat = composeMessage('你好\n[[agent_cue express=happy]]\n打扰了', { role: 'assistant', stickersEnabled: false });
+  assert.ok(!flat.html.includes('agent_cue'));
+  assert.ok(flat.html.includes('你好') && flat.html.includes('打扰了'));
+  // 行内残留（AI 不守独占一行）：就地剥离
+  const inline = composeMessage('开心 [[agent_cue express=happy]] 呀', { role: 'assistant', stickersEnabled: false, segmented: true });
+  assert.ok(!inline.html.includes('agent_cue'));
+  assert.ok(inline.html.includes('开心') && inline.html.includes('呀'));
+  // 畸形指令不成 cue 页，剥成空段
+  assert.equal(composeMessage('[[agent_cue express=not valid]]', { role: 'assistant', stickersEnabled: false, segmented: true }).html, '');
+  // 清单解析：严格语法、名字小写化、畸形返回 null
+  const { parseCueSegment, stripCueTokens } = manifest;
+  assert.deepEqual(plain(parseCueSegment('[[agent_cue express=HAPPY play=Wave]]')), { expression: 'happy', action: 'wave' });
+  assert.equal(parseCueSegment('你好'), null);
+  assert.equal(parseCueSegment('[[agent_cue]]'), null);
+  assert.equal(stripCueTokens('a\n[[agent_cue play=wave]]\nb'), 'a\nb');
+});
+
+test('表演指令开场归一：首条 cue 提前到页首，其余 cue 与段落配对不动', () => {
+  // 模型常输出「开场白 → cue1 → 段1 → cue2 → 段2」：仅 cue1 提到最前（表情持续，
+  // 多覆盖开场白而不错位），cue2 与段2 的配对保持原位
+  const src = '想看动作呀？那我一个一个给你演。\n\n[[agent_cue express=happy play=wave]]\n这个是打招呼的。\n\n[[agent_cue express=neutral play=nod]]\n这个是点头。';
+  const out = composeMessage(src, { role: 'assistant', stickersEnabled: false, segmented: true });
+  const order = [...out.html.matchAll(/msk-cue"([^>]*)>|<p>([^<]*)<\/p>/g)]
+    .map(m => m[1] != null ? `cue${m[1].trim()}` : m[2]);
+  assert.deepEqual(order, [
+    'cuedata-express="happy" data-play="wave"',
+    '想看动作呀？那我一个一个给你演。',
+    '这个是打招呼的。',
+    'cuedata-express="neutral" data-play="nod"',
+    '这个是点头。',
+  ]);
+  // cue 已在最前则原样；无 cue 不动；cue 前无文本也不动
+  const aligned = composeMessage('[[agent_cue express=happy]]\n你好\n\n[[agent_cue express=shy]]\n再见', { role: 'assistant', stickersEnabled: false, segmented: true });
+  assert.ok(aligned.html.indexOf('data-express="happy"') < aligned.html.indexOf('你好'));
+  assert.ok(aligned.html.indexOf('data-express="shy"') > aligned.html.indexOf('你好'));
+  const noCue = composeMessage('没有指令的回复', { role: 'assistant', stickersEnabled: false, segmented: true });
+  assert.ok(!noCue.html.includes('msk-cue'));
 });
 
 test('渲染器生命周期：历史查询→待手动，在线自动生成，禁用模型直接待手动', async () => {

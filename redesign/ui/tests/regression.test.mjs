@@ -339,27 +339,27 @@ function streamHarness() {
 }
 const flushChat=()=>new Promise(r=>setImmediate(r));
 
-test('聊天停止保留片段，旧流的迟到文字和动作不能污染新回复',async()=>{
+test('聊天停止保留片段，旧流的迟到文字不能污染新回复',async()=>{
  const h=streamHarness();const first=h.chat.send('第一条');
- h.requests[0].push({type:'segment',id:'1',text:'旧片段',cue:{expression:'happy'}});await flushChat();
+ h.requests[0].push({type:'segment',id:'1',text:'旧片段'});await flushChat();
  h.chat.stop();assert.equal(h.chat.latest.status,'stopped');assert.equal(h.chat.latest.text,'旧片段');
  const second=h.chat.send('第二条');
- h.requests[0].push({type:'segment',id:'2',text:'迟到内容',cue:{action:'wave'}});await first;
- assert.equal(h.chat.busy,true);assert.equal(h.cues.length,1);
+ h.requests[0].push({type:'segment',id:'2',text:'迟到内容'});await first;
+ assert.equal(h.chat.busy,true);
  h.requests[1].push({type:'segment',id:'1',text:'新的回答'});await flushChat();
  h.requests[1].push({type:'done'});await second;
  assert.equal(h.chat.latest.text,'新的回答');assert.equal(h.chat.latest.status,'complete');
  assert.equal(h.chat.busy,false);
 });
 
-test('重试替换失败的助手回复，不重复用户消息，重复片段只表演一次',async()=>{
+test('重试替换失败的助手回复，不重复用户消息，重复片段只取一次',async()=>{
  const h=streamHarness();const first=h.chat.send('问题');h.requests[0].push({type:'done'});await first;
  assert.equal(h.chat.canRetry,true);assert.equal(h.chat.latest.status,'error');
  const retry=h.chat.retry();assert.equal(h.chat.messages.length,2);
- h.requests[1].push({type:'segment',id:'1',text:'回答',cue:{action:'nod'}});await flushChat();
- h.requests[1].push({type:'segment',id:'1',text:'回答',cue:{action:'nod'}});await flushChat();
+ h.requests[1].push({type:'segment',id:'1',text:'回答'});await flushChat();
+ h.requests[1].push({type:'segment',id:'1',text:'回答'});await flushChat();
  h.requests[1].push({type:'done'});await retry;
- assert.equal(h.chat.latest.text,'回答');assert.equal(h.cues.length,1);assert.equal(h.chat.canRetry,false);
+ assert.equal(h.chat.latest.text,'回答');assert.equal(h.chat.canRetry,false);
 });
 
 test('聊天刷新恢复记录但不恢复正在生成状态；空白输入不启动请求',async()=>{
@@ -371,15 +371,37 @@ test('聊天刷新恢复记录但不恢复正在生成状态；空白输入不�
  h.chat.stop();h.requests[0].push({type:'done'});await task;
 });
 
-test('聊天表演服从触摸，触摸结束恢复表情但不补播过时动作，取消后不复活',()=>{
+test('聊天表演：表情持久到下一个指令或取消，动作一次限频，触摸让位后恢复且不补播',()=>{
  const {ChatPerformance}=load('chat/performance');let now=0,busy=false;const calls=[];
- const p=new ChatPerformance({expressions:()=>['happy'],actions:()=>['wave'],express:n=>calls.push(['express',n]),clearExpression:()=>calls.push(['clear']),play:n=>calls.push(['play',n]),busy:()=>busy},()=>now);
+ const p=new ChatPerformance({expressions:()=>['happy','shy'],actions:()=>['wave'],express:n=>calls.push(['express',n]),clearExpression:()=>calls.push(['clear']),play:n=>calls.push(['play',n]),busy:()=>busy},()=>now);
  p.cue({expression:'happy',action:'wave'});assert.equal(calls.filter(x=>x[0]==='play').length,1);
  busy=true;p.tick();assert.equal(calls.at(-1)[0],'clear');
  p.cue({expression:'happy',action:'wave'});busy=false;p.tick();
  assert.equal(calls.at(-1)[0],'express');assert.equal(calls.filter(x=>x[0]==='play').length,1);
+ // 持久语义：远超旧 3.5s 临时窗口后表情仍保持
+ now=60000;p.tick();assert.equal(p.active,true);assert.equal(calls.filter(x=>x[0]==='express').length,2);
+ // 下一个表情指令覆盖
+ p.cue({expression:'shy'});assert.equal(calls.at(-1)[0],'express');assert.equal(calls.at(-1)[1],'shy');
  p.cancel();const n=calls.length;now=1000;p.tick();assert.equal(calls.length,n);assert.equal(p.active,false);
  p.cue({expression:'arbitrary',action:'arbitrary'});assert.equal(calls.length,n);
+});
+
+test('聊天表演：情绪引擎覆盖表情后逐帧拿回（host.expression 实际值比对）',()=>{
+ const {ChatPerformance}=load('chat/performance');let current=null;
+ const p=new ChatPerformance({expressions:()=>['happy'],actions:()=>[],expression:()=>current,express:n=>{current=n},clearExpression:()=>{current=null},play:()=>{},busy:()=>false});
+ p.cue({expression:'happy'});assert.equal(current,'happy');
+ current='sad'; // 模拟情绪引擎/设置面板预览覆盖聊天表情
+ p.tick();assert.equal(current,'happy');
+ p.cancel();assert.equal(current,null);
+});
+
+test('聊天表演：重复切换保持中的表情不重放 express',()=>{
+ const {ChatPerformance}=load('chat/performance');let count=0;
+ const p=new ChatPerformance({expressions:()=>['happy','shy'],actions:()=>[],express:n=>{count++},clearExpression:()=>{},play:()=>{},busy:()=>false});
+ p.cue({expression:'happy'});p.cue({expression:'happy'});p.cue({expression:'happy'});
+ assert.equal(count,1);
+ p.cue({expression:'shy'});assert.equal(count,2);
+ p.cue({expression:'shy'});assert.equal(count,2);
 });
 
 test('聊天画布按容纳后的角色区域命中，坐标不包含左侧对话面板',()=>{
@@ -419,6 +441,8 @@ test('MSK 展示分段：空行分页、结构整块保留、贴纸独占一页�
  assert.deepEqual(splitAgentMessageIntoSegments('前文\n\n[[agent_draw\nsize=1:1]]'),['前文','[[agent_draw\nsize=1:1]]']);
  // 单行内有效表情包独占一段；角色贴纸按语法即有效
  assert.deepEqual(splitAgentMessageIntoSegments('看这个 [[agent_sticker key=happy]] 可爱吧'),['看这个','[[agent_sticker key=happy]]','可爱吧']);
+ // 表演指令行天然独立成段（独占一行协议；compose 据此识别 cue 页）
+ assert.deepEqual(splitAgentMessageIntoSegments('你好\n[[agent_cue express=happy]]\n打扰了\n[[agent_cue express=shy]]'),['你好','[[agent_cue express=happy]]','打扰了','[[agent_cue express=shy]]']);
  // 全站表情须命中表情表：12:30:45 的 :30: 是伪 token，保持原文不切分
  const realEmoji=name=>name==='smile';
  assert.deepEqual(splitAgentMessageIntoSegments('时间 12:30:45 不变',realEmoji),['时间 12:30:45 不变']);
@@ -497,17 +521,19 @@ test('MSK 客户端：时间线过滤 system 消息并按 createdAt 升序',asyn
  assert.deepEqual((await client.timeline('s1')).map(m=>m.id),['m1','m2']);
 });
 
-test('MSK Provider：整段回复带消息 id 与情绪表情，失败重试复用 clientRequestId，空输入与中止不发请求',async()=>{
- const {localCue,MskChatProvider}=load('chat/msk/provider',{},{crypto});
- assert.equal(localCue('哈哈太好了')?.expression,'happy');
- assert.equal(localCue('今天天气不错'),undefined);
+test('MSK Provider：整段回复带消息 id（无请求期 cue），请求携带表演清单，失败重试复用 clientRequestId',async()=>{
+ const manifest=load('chat/performance-manifest');
+ const {MskChatProvider}=load('chat/msk/provider',{'../performance-manifest':manifest},{crypto});
+ let perfArg;
  const ac=new AbortController();
- const provider=new MskChatProvider({send:async()=>({text:'真让人担心你呀。',messageId:'m1'})},'s1');
+ const provider=new MskChatProvider({send:async(sessionId,text,signal,requestId,poll,performance)=>{perfArg=performance;return {text:'真让人担心你呀。',messageId:'m1'}}},'s1');
  const events=[];
  for await(const e of provider.reply({messages:[{role:'user',text:'你好'}],signal:ac.signal}))events.push(e);
  assert.deepEqual(events.map(e=>e.type),['segment','done']);
  assert.equal(events[0].text,'真让人担心你呀。');assert.equal(events[0].messageId,'m1');
- assert.equal(events[0].cue?.expression,'worried');
+ assert.equal(events[0].cue,undefined);
+ // 请求携带 name+hint 表演清单 = 桌宠环境标记
+ assert.ok(perfArg&&perfArg.expressions.some(i=>i.name==='happy'&&i.hint==='开心')&&perfArg.actions.some(i=>i.name==='wave'&&i.hint));
  // 相同文本的失败重试复用同一 clientRequestId，避免上游产生重复消息
  const seen=[];
  const flaky=new MskChatProvider({send:async(sessionId,text,signal,requestId)=>{seen.push(requestId);if(seen.length===1)throw new Error('网络错误');return {text:'嗯。',messageId:'m2'}}},'s1');

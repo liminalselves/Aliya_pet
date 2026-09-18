@@ -5,7 +5,7 @@ export interface PerformanceCue {
 }
 
 export type ChatEvent =
-  | { type: 'segment'; id: string; text: string; cue?: PerformanceCue; messageId?: string }
+  | { type: 'segment'; id: string; text: string; messageId?: string }
   | { type: 'done' };
 
 export interface ChatMessage {

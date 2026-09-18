@@ -92,9 +92,11 @@ petAI.gaze(0.3, 0.5);
 ## 扩展指引
 
 - **加表情**：改 `redesign/tools/gen-expressions.py` 配方 → 重新生成 →
-  在 `16.model3.json` 的 Expressions 里登记 → `emotion.ts` 的 MOODS 可选挂接。
+  在 `16.model3.json` 的 Expressions 里登记 → `emotion.ts` 的 MOODS 可选挂接 →
+  `chat/performance-manifest.ts` 的 `PERFORMANCE_EXPRESSIONS` 补条目。
 - **加动作**：改 `redesign/tools/gen-motions.py` → 重新生成 → model3.json
-  Motions 登记 → `behavior.ts` ACTION_LIBRARY + `actions.json` 加亲和。
+  Motions 登记 → `behavior.ts` ACTION_LIBRARY + `actions.json` 加亲和 →
+  `performance-manifest.ts` 的 `PERFORMANCE_ACTIONS` 补条目。
 - **加情绪**：`emotion.ts` 的 MOODS 加定义（表情 + 持续时间 + 动作亲和）。
 - **Tauri 壳**：`window.__TAURI__` 下可 evaluate 脚本调用 petAI；如需
   原生 command 代理，在 src-tauri 包一层即可（API 已收敛到语义名）。

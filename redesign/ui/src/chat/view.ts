@@ -1,5 +1,5 @@
 import { ChatController, type ChatStorage } from './controller';
-import type { ChatMessage } from './types';
+import type { ChatMessage, PerformanceCue } from './types';
 import { Typewriter } from './typewriter';
 import { MskAuth } from './msk/auth';
 import { DEFAULT_MSK_ORIGIN, MSK_BASE, mskSessionKey } from './msk/config';
@@ -30,6 +30,9 @@ function relativeTime(iso?: string): string {
 /** 记录屏：拉取上限与展示上限（轮 = 一条用户消息及其后的 Aliya 回复）。 */
 const HISTORY_FETCH_LIMIT = 100;
 const HISTORY_ROUND_LIMIT = 50;
+
+/** 表演指令页（.msk-cue）派发后的停顿：不建打字机，静默自动翻页。 */
+const CUE_PAGE_MS = 400;
 
 /** 取末尾最近 N 轮的起始下标；不足 N 轮返回 0。 */
 function lastRoundsStart(messages: ChatMessage[], rounds: number): number {
@@ -68,6 +71,7 @@ export class ChatView {
   private segments: HTMLElement[] = [];
   private pageIndex = 0;
   private typewriter: Typewriter | null = null;
+  private cueTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly panel: HTMLElement;
   private readonly content: HTMLElement;
   private readonly composer: HTMLFormElement;
@@ -359,6 +363,25 @@ export class ChatView {
     this.segments.forEach((s, i) => { s.hidden = i !== index; });
     const page = this.segments[index];
     this.typewriter?.cancel(); this.typewriter = null;
+    this.clearCueTimer();
+    if (page && page.classList.contains('msk-cue')) {
+      // 指令页：不建打字机；首次翻到时派发表演（幂等标记防 resync 重入重放），短暂停顿后自动翻页
+      if (animate && !page.dataset.dispatched) {
+        page.dataset.dispatched = '1';
+        const cue: PerformanceCue = {};
+        if (page.dataset.express) cue.expression = page.dataset.express;
+        if (page.dataset.play) cue.action = page.dataset.play;
+        this.controller.onCue(cue);
+      }
+      this.cueTimer = setTimeout(() => {
+        this.cueTimer = null;
+        if (!this.replyActive || this.pageIndex !== index) return;
+        if (index + 1 < this.segments.length) this.showPage(index + 1, true);
+        else this.hideReply();
+      }, CUE_PAGE_MS);
+      this.updateHint();
+      return;
+    }
     if (page && animate) {
       page.classList.add('gal-page-in');
       this.typewriter = new Typewriter(page);
@@ -367,6 +390,9 @@ export class ChatView {
     }
     this.content.scrollTop = 0;
     this.updateHint();
+  }
+  private clearCueTimer(): void {
+    if (this.cueTimer) { clearTimeout(this.cueTimer); this.cueTimer = null; }
   }
   private onContentClick(e: MouseEvent): void {
     if (!this.replyActive || this.screen !== 'ready' || this.historyVisible || !this.segments.length) return;
@@ -384,8 +410,9 @@ export class ChatView {
     this.panel.classList.toggle('replying', this.screen === 'ready' && this.replyActive);
     footer.hidden = !(this.screen === 'ready' && this.replyActive);
     if (footer.hidden) return;
-    const total = this.segments.length;
-    const page = this.pageIndex + 1;
+    // 页脚计数只计文本页：指令页不展示，数进去会让「2/5」跳到看不见的页
+    const total = this.segments.filter(s => !s.classList.contains('msk-cue')).length;
+    const page = this.segments.slice(0, this.pageIndex + 1).filter(s => !s.classList.contains('msk-cue')).length;
     hint.classList.toggle('blink', !this.typewriter?.typing && total > 0);
     if (!total) hint.textContent = '';
     else if (this.typewriter?.typing) hint.textContent = total > 1 ? `${page}/${total}` : '';
@@ -396,6 +423,7 @@ export class ChatView {
     this.replyActive = false; this.replyToken = null; this.playing = false;
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;
+    this.clearCueTimer();
   }
   private hideReply(): void {
     if (this.screen !== 'ready') return;

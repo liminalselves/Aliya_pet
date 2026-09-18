@@ -11,7 +11,7 @@ MSK 接口细节参考 `Aliya_web/MSK_API_USAGE.md`。
 ```
 ChatView（连接/会话/对话三屏；GAL 面板 + 常驻输入框；回复分段逐页播放）
 ChatController（请求/取消/重试，只认当前请求的事件）
-ChatPerformance（表情/动作表演：表情 3.5s，动作限频；触碰优先）
+ChatPerformance（表情/动作表演：AI 指令驱动，表情持久、动作一次限频；触碰优先）
 Typewriter（回复逐字冒出，原子元素整块淡入）
 ChatProvider ── MskChatProvider（真实对话）
 MskClient / MskAuth（MSK HTTP 与 MiAuth 验权）
@@ -165,8 +165,12 @@ Aliya_web 相同。
   面板样式为贴附式：顶部紫色名牌条，窗口锚定 Live2D 可见矩形并覆盖
   角色下半部；输入框和回复共用 `chat-shell` 连成一张卡片，外窗高度随
   composer/reply/setup 状态收放。记录/会话/连接屏不分页不逐字。
-- MSK 不返回表演信息：本地关键词轻量推断表情（开心/害羞/担心），
-  经 `send_chat_cue` 跨窗口转给 pet 表演；没有就不表演。
+- 表演走「表演指令协议」（`PERFORMANCE.md`）：send 请求携带表情/动作清单
+  （`performance-manifest.ts`，即桌宠环境标记），AI 回复内嵌独占一行的
+  `[[agent_cue express=… play=…]]`；渲染时指令行自成隐藏 cue 页（`msk-cue`），
+  翻页播到该页才经 `controller.onCue` 派发——原生窗口走 `send_chat_cue` 跨窗口
+  转给 pet，内嵌直调。表情持久到下一个指令、动作只播一次（`ChatPerformance`）。
+  记录屏与行内残留一律剥离指令，不回放表演。
 - 历史 = 服务器时间线（`messages/timeline`，拉 100 条，过滤 system，
   按时间正序），默认隐藏，经工具栏「记录」查看；MSK 模式不写
   localStorage。记录屏只展示最近 50 轮（轮 = 一条用户消息及其后的
@@ -185,9 +189,10 @@ Aliya_web 相同。
 ## 行为规则（与普通互动相处）
 
 - 请求期间所有异步事件必须属于当前请求：停止/重发后旧流的迟到
-  文本与动作一律丢弃。
+  文本一律丢弃；表演指令页翻到才派发，收起/重开后未派发的不再触发。
 - 重试替换失败的助手消息，不重复用户消息；停止保留已有片段。
-- 表情提示持续 3.5s；抚摸/互动占用面部时让位，结束恢复对话表情。
+- 表情指令持久到下一个表情指令或聊天关闭；抚摸/互动占用面部时让位，
+  结束（或被情绪引擎覆盖后）逐帧恢复对话表情。
 - 聊天窗口开启期间（`chat-state.open`）：随机台词与闲聊静默，
   普通点击只做身体反馈。
 

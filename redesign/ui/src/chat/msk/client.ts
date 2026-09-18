@@ -159,15 +159,16 @@ export class MskClient {
 
   /** POST /api/agents/messages/send：同步等待回复（上游最长 120s）。
    *  回执缺失时（空 200/204、网关 5xx、网络超时）按 Aliya_web 的成熟做法处理：
-   *  消息多半已送达应用层，回复经时间线落库——轮询取回，而不是直接判失败。 */
-  async send(sessionId: string, text: string, signal?: AbortSignal, requestId: string = crypto.randomUUID(), pollIntervalMs = 2500): Promise<{ text: string; messageId: string }> {
+   *  消息多半已送达应用层，回复经时间线落库——轮询取回，而不是直接判失败。
+   *  performance 携带桌宠表情/动作清单：服务端据此识别桌宠环境并注入表演协议。 */
+  async send(sessionId: string, text: string, signal?: AbortSignal, requestId: string = crypto.randomUUID(), pollIntervalMs = 2500, performance?: import('../performance-manifest').PerformanceRequestPayload): Promise<{ text: string; messageId: string }> {
     const startedAt = Date.now();
     let status = 0;
     let data: Record<string, unknown> | null = null;
     // LLM 上游偶发失败时服务端会删除本轮用户消息并释放锁；复用 requestId 最多重试两次，既不重复入库也不让用户手点。
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await this.postRaw('/agents/messages/send', { sessionId, text, clientRequestId: requestId }, signal, 120_000);
+        const res = await this.postRaw('/agents/messages/send', { sessionId, text, clientRequestId: requestId, performance }, signal, 120_000);
         status = res.status;
         data = res.data as Record<string, unknown> | null;
       } catch (e) {
