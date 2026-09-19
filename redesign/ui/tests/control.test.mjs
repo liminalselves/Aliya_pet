@@ -56,11 +56,19 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   assert.equal(posts[0].message.token, 'secret');
   assert.equal(posts[0].message.appearance.colorScheme, 'dark');
   control.setToken('rotated'); assert.equal(posts[1].message.type, 'misskey:agent-control:update-token');
+  assert.equal(control.setPanel('worldbook'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:authenticated' } });
   assert.equal(timers.size, 0);
+  assert.equal(control.setPanel('worldbook'), true);
+  assert.equal(posts[2].origin, config.MSK_BASE);
+  assert.equal(posts[2].message.type, 'misskey:agent-control:set-panel');
+  assert.equal(posts[2].message.panel, 'worldbook');
+  assert.ok(!JSON.stringify(posts[2].message).includes('secret'));
+  assert.equal(iframe.title, 'Aliya · 世界书');
   control.destroy(); assert.equal(listeners.size, 0); assert.equal(iframe.removed, true);
+  assert.equal(control.setPanel('rules'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:ready' } });
-  assert.equal(posts.length, 2);
+  assert.equal(posts.length, 3);
 });
 
 test('message navigation loads visible surrounding records including an old divider', async () => {

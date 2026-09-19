@@ -81,14 +81,22 @@ export function mountAgentControls(container: HTMLElement, openChat: () => Promi
       drawer.close(); refreshSummary(); sync();
     }
   };
-  const load = () => {
-    frame?.destroy(); status.textContent = '正在连接配置页…'; retry.hidden = true;
+  const activate = () => {
     nav.querySelectorAll<HTMLButtonElement>('button').forEach(tab => tab.setAttribute('aria-pressed', String(tab.dataset.panel === panel)));
+  };
+  const load = () => {
+    frame?.destroy(); frame = null; status.textContent = '正在连接配置页…'; retry.hidden = true;
+    activate();
     frame = new AgentControlFrame(body, sessionId, panel, () => saved().token, onEvent);
   };
   for (const [id, label] of Object.entries(CONTROL_PANELS)) {
     const tab = document.createElement('button'); tab.type = 'button'; tab.textContent = label; tab.dataset.panel = id;
-    tab.onclick = () => { panel = id as ControlPanel; load(); }; nav.append(tab);
+    tab.onclick = () => {
+      if (panel === id) return;
+      panel = id as ControlPanel;
+      if (frame?.setPanel(panel)) activate(); else load();
+    };
+    nav.append(tab);
   }
   retry.onclick = load;
   drawer.querySelector<HTMLButtonElement>('.control-close')!.onclick = () => drawer.close();

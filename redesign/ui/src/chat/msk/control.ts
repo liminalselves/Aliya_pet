@@ -18,6 +18,7 @@ export class AgentControlFrame {
   readonly iframe = document.createElement('iframe');
   private timer: ReturnType<typeof setTimeout>;
   private destroyed = false;
+  private authenticated = false;
   constructor(container: HTMLElement, sessionId: string, panel: ControlPanel,
     private readonly token: () => string, private readonly onEvent: (event: ControlEvent) => void) {
     this.iframe.title = `Aliya · ${CONTROL_PANELS[panel]}`;
@@ -37,11 +38,18 @@ export class AgentControlFrame {
       if (!token) { this.onEvent({ type: 'misskey:agent-control:error', code: 'AUTHENTICATION_FAILED' }); return; }
       this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:configure', token, appearance: CONTROL_APPEARANCE }, MSK_BASE);
     }
-    if (message.type === 'misskey:agent-control:authenticated' || message.type === 'misskey:agent-control:error') clearTimeout(this.timer);
+    if (message.type === 'misskey:agent-control:authenticated') { this.authenticated = true; clearTimeout(this.timer); }
+    if (message.type === 'misskey:agent-control:error') { this.authenticated = false; clearTimeout(this.timer); }
     this.onEvent(message);
   };
   setToken(token: string): void {
     if (!this.destroyed) this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:update-token', token }, MSK_BASE);
+  }
+  setPanel(panel: ControlPanel): boolean {
+    if (this.destroyed || !this.authenticated) return false;
+    this.iframe.title = `Aliya · ${CONTROL_PANELS[panel]}`;
+    this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:set-panel', panel }, MSK_BASE);
+    return true;
   }
   destroy(): void {
     this.destroyed = true;

@@ -106,7 +106,9 @@ Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据�
 
 - iframe 加载 `/agents/embed/{sessionId}/{panel}`；收到 ready 后通过
   `postMessage` 注入 token 和紫灰色主题，校验消息的 origin 与 source。
-  token 不进入 URL；切换面板、关闭抽屉或页面卸载时释放 iframe 与监听器。
+  token 不进入 URL；已认证时切换面板用 `set-panel` 让 iframe 内部跳转
+  路由，不重载；未完成认证或点击重试时才销毁重建，关闭抽屉或页面
+  卸载时释放 iframe 与监听器。
 - 抽屉固定高度，内部页面自己滚动。认证错误或加载超时显示中文提示和重试入口。
 - 登录或选中会话变化会关闭旧面板；同账号令牌变化通过 update-token 更新。
 - 修改成功后刷新会话摘要并通知聊天重新读取上下文；删除当前会话后清理选择。
