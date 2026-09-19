@@ -155,4 +155,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 body.chat-mobile .chat-shell { inset:0 8px 8px; }
 body.chat-mobile .gal-panel { max-height:calc(100% - 52px); }
+/* Android 悬浮窗：聊天 UI 锚到窗口底部贴脚线（窗口矩形已按内容态向下扩展），
+   面板+输入框整组从底部向上生长，覆盖角色下半身——与 PC 聊天窗口同形态。 */
+body.overlay-wrap.chat-open .chat-shell { justify-content:flex-end; }
 @media(prefers-reduced-motion:reduce) { #chat-ui * { animation:none!important; scroll-behavior:auto!important; } }

@@ -23,6 +23,7 @@ import {
   setAutoStart,
   openUrl,
   shellAction,
+  notifyPetAction,
 } from './platform';
 import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
@@ -130,6 +131,8 @@ function update(patch: Partial<PetSettings>): void {
 
 function trayAction(action: string, extra?: Record<string, unknown>): void {
   emitToPet('tray-action', { action, ...extra });
+  // Android：设置页与桌宠页是两个 WebView，经壳桥转发到桌宠页执行
+  notifyPetAction({ action, ...extra });
 }
 
 // ---------- UI 构建 ----------
@@ -246,8 +249,8 @@ function refreshControls(): void {
     refs.batterySaver.checked = settings.batterySaver === true;
 }
 
-// ---- 互动 ----（动作试放依赖跨窗口事件，Android 单 WebView 下不可用）
-if (platform !== 'android') {
+// ---- 互动 ----（动作试放经跨窗口事件；Android 经壳桥转发到桌宠页）
+{
   const box = section('互动');
   const grid = document.createElement('div');
   grid.className = 'grid';
@@ -266,7 +269,7 @@ if (platform !== 'android') {
   box.appendChild(speech);
 }
 
-// ---- 表情与情绪 ----（依赖跨窗口事件，桌面端专属）
+// ---- 表情与情绪 ----（表情 = 临时预览；情绪 = 持续心境；Android 经壳桥转发）
 // 表情 = 临时预览（8s 后自动回当前情绪的默认表情）；
 // 情绪 = 持续心境（默认表情 + 动作选择加权 + 到期自然回落「平静」）。
 const moodButtons = new Map<string, HTMLButtonElement>();
@@ -278,7 +281,7 @@ function refreshMoodHighlight(): void {
   }
 }
 
-if (platform !== 'android') {
+{
   const box = section('表情与情绪');
 
   // 表情（临时预览）
@@ -655,7 +658,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const div = document.createElement('div');
   div.className = 'about';
   div.innerHTML =
-    '<b>Aliya Pet</b> v0.1.0（Tauri 重写版）<br>' +
+    '<b>Aliya Pet</b> v0.2.0（Tauri 重写版）<br>' +
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
@@ -679,6 +682,28 @@ onMoodChanged((mood: string) => {
   currentMood = mood;
   refreshMoodHighlight();
 });
+
+// Android：桌宠页把情绪写入共享 localStorage（跨 WebView 无事件总线），
+// 回到本页/收到 storage 事件时刷新高亮
+if (platform === 'android') {
+  const readMood = () => {
+    let mood = '';
+    try {
+      mood = localStorage.getItem('aliya_pet_mood') ?? '';
+    } catch {
+      // 存储不可用则保持当前高亮
+    }
+    if (mood) {
+      currentMood = mood;
+      refreshMoodHighlight();
+    }
+  };
+  window.addEventListener('focus', readMood);
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'aliya_pet_mood') readMood();
+  });
+  readMood();
+}
 
 // 托盘"关于"入口：滚动到底部的关于区
 if (location.hash === '#about') {

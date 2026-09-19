@@ -60,8 +60,10 @@
 | 窗口/屏幕度量       | `@tauri-apps/api/window`               | `AndroidShell.getMetrics()`      | 不可用     |
 | 窗口移动/改尺寸/定位 | `window.setPosition/setSize`（物理px） | `AndroidShell.moveWindowBy/...`  | 不可用     |
 | 置顶               | `setAlwaysOnTop`                       | 悬浮窗天然置顶                    | 不可用     |
+| 窗口焦点（软键盘）  | 系统窗口自然聚焦                        | `AndroidShell.setWindowFocusable` | 不可用    |
 | 自启               | Rust `set_auto_start`（注册表）        | `AndroidShell.setAutoStart`      | 不可用     |
 | openUrl           | Rust `open_url`                        | `AndroidShell.openUrl`           | `window.open` |
+| 设置页→宠页通道     | `settings-changed` 事件                | `notifySettings` / `notifyPetAction` 壳桥转发 | 无 |
 
 Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 `window.AndroidShell`；约束：窗口坐标/尺寸统一 CSS 像素，壳侧乘 density
@@ -80,8 +82,10 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - 存储：localStorage（`aliya_pet_settings_v1`），同一 Android App 的多个
   WebView 共享 → `posX/posY`（CSS px）、scale、镜像、贴边、省电等。
 - Windows 跨窗口同步：设置窗口 → pet 走 `settings-changed`，托盘 → pet 走
-  `tray-action`，pet 广播回设置窗口。Android 为单 WebView 导航，改动在返回
-  宠物页重新加载时生效。
+  `tray-action`，pet 广播回设置窗口（`pet-mood` 情绪同理）。Android 设置页
+  与桌宠页是两个 WebView：设置经壳桥 `notifySettings` 实时转发，动作试放/
+  表情/情绪经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；情绪
+  高亮由 pet 写共享 localStorage、设置页回前台刷新。
 
 ## 双端差异（壳层职责）
 
@@ -90,5 +94,6 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 窗口形态        | 透明无边框置顶小窗（512×768 基准）            | App 内全屏 / TYPE_APPLICATION_OVERLAY |
 | 菜单            | 系统托盘                                     | 右上角 ⋮ 菜单 + 通知按钮               |
 | 悬浮窗触发      | 常驻小窗                                     | 退后台自动转悬浮窗（可关）             |
+| 聊天            | 独立原生窗口跟随 pet（chat_window.rs）        | 内嵌 ChatView：主界面默认展开；悬浮窗入口按钮 + 窗口矩形按内容态扩展（软键盘临时聚焦） |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
 | 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |

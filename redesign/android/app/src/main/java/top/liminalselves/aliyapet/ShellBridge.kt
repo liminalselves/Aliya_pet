@@ -54,6 +54,12 @@ class ShellBridge(private val host: Host) {
 
         /** 设置页全量设置 JSON：壳转发给桌宠 WebView 实时应用。 */
         fun notifySettings(json: String) {}
+
+        /** 设置页动作 JSON（tray-action 形状）：壳转发给桌宠 WebView 执行。 */
+        fun notifyPetAction(json: String) {}
+
+        /** 悬浮窗临时可聚焦（软键盘需要窗口焦点）；false 恢复并收起输入法。 */
+        fun setWindowFocusable(focusable: Boolean) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -128,5 +134,15 @@ class ShellBridge(private val host: Host) {
     @JavascriptInterface
     fun notifySettings(json: String) {
         main.post { host.notifySettings(json) }
+    }
+
+    @JavascriptInterface
+    fun notifyPetAction(json: String) {
+        main.post { host.notifyPetAction(json) }
+    }
+
+    @JavascriptInterface
+    fun setWindowFocusable(focusable: Boolean) {
+        main.post { host.setWindowFocusable(focusable) }
     }
 }

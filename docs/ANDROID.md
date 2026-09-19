@@ -41,9 +41,13 @@ setWindowSize(w,h)    按前端计算的比例/缩放设置
 setWindowPos(x,y)     绝对定位（恢复位置/贴边/重置）
 setAutoStart / isAutoStart / setPref / getPref / openUrl
 shellAction(action)   open-main / open-settings / hide-overlay / exit
+setWindowFocusable(b) 悬浮窗临时可聚焦（聊天软键盘需要窗口焦点）
+notifySettings(json)  设置页全量设置 → 桌宠页实时应用
+notifyPetAction(json) 设置页动作（动作试放/表情/情绪）→ 桌宠页 onShellAction
 ```
 
 JS Interface 运行在 JavaBridge 线程，窗口操作内部回主线程。
+`openUrl`/`shellAction` 在 Service 上下文自动带 NEW_TASK。
 
 ### 前端在 Android 上的行为
 
@@ -56,6 +60,19 @@ JS Interface 运行在 JavaBridge 线程，窗口操作内部回主线程。
 - 熄屏/亮屏由壳广播触发 `window.__pet.onShellEvent('screen-off/on')` →
   `setPaused(true/false)`，暂停渲染循环省电；设置页「省电模式」把帧率降为
   15fps。
+- **聊天双形态**（与 PC 对齐，详见 `CHAT.md`）：主界面 ChatView 默认展开；
+  悬浮窗默认收起、入口按钮常驻，聊天打开时窗口矩形按内容态向下扩展并
+  钳回屏内，软键盘经 `setWindowFocusable` 临时聚焦 + 头不出屏的避让上移。
+- **设置页**（App 内第二 WebView）经 `notifySettings` 实时下发设置、
+  `notifyPetAction` 转发动作试放/表情/情绪到桌宠页；桌宠页把情绪写入共享
+  localStorage `aliya_pet_mood`，设置页回前台时刷新高亮。
+
+### MiAuth 回跳中转
+
+deep link `aliyapet://miauth` 由 `AuthRelayActivity`（透明 noHistory）接住：
+写入 `ShellPrefs.miauth_callback` 后立即退出。悬浮窗运行中保持现状（前端
+500ms 轮询自取，授权原地完成，不会因为回前台拉起 MainActivity 而停掉
+悬浮窗）；悬浮窗未运行（App 内授权）则照旧拉起 MainActivity。
 
 ## 权限与真机注意
 

@@ -126,21 +126,6 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
         }
-        handleMiauthIntent(intent)
-    }
-
-    /** 浏览器授权回跳（aliyapet://miauth/?session=...）写入壳侧偏好，前端轮询取走后完成换 token。 */
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleMiauthIntent(intent)
-    }
-
-    private fun handleMiauthIntent(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme != "aliyapet" || data.host != "miauth") return
-        val query = data.encodedQuery ?: return
-        // SharedPreferences 持久保存：冷启动页面未加载完也不丢，前端就绪后轮询自取。
-        ShellPrefs.setPref(this, "miauth_callback", query)
     }
 
     override fun onStart() {
@@ -323,6 +308,14 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         )
     }
 
+    /** 设置页动作（动作试放/表情/情绪）转发给桌宠页：pet 暴露 window.__pet.onShellAction。 */
+    override fun notifyPetAction(json: String) {
+        web.evaluateJavascript(
+            "window.__pet && window.__pet.onShellAction && window.__pet.onShellAction($json)",
+            null
+        )
+    }
+
     override fun shellAction(action: String) {
         when (action) {
             "open-main" -> closeSettings()
@@ -343,7 +336,10 @@ object ShellBridgeHostDefaults {
         val scheme = uri.scheme ?: return
         if (scheme != "http" && scheme != "https") return
         try {
-            ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            val intent = Intent(Intent.ACTION_VIEW, uri)
+            // Service 上下文（悬浮窗）启动 Activity 必须 NEW_TASK，否则抛异常
+            if (ctx !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
         } catch (_: Exception) {
             // 无可用浏览器
         }

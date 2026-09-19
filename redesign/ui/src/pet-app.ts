@@ -26,6 +26,7 @@ import {
   isTouchDevice,
   androidShell,
   isAndroidOverlay,
+  setWindowFocusable,
 } from './platform';
 
 /** Tauri 窗口句柄（浏览器环境为 null，拖动退化为不可用）。 */
@@ -94,6 +95,11 @@ export class PetApp {
   private _rectInited = false;
   /** 固定矩形需要重算下发（缩放/模型加载/吸附动画驱动）。 */
   private _rectDirty = false;
+  /** 壳侧屏幕尺寸缓存（CSS px；聊天窗口矩形钳制用，避免逐帧同步桥调用）。 */
+  private _screenW = 0;
+  private _screenH = 0;
+  /** 键盘避让上移量（CSS px）；失焦时对称还原。 */
+  private _keyboardShift = 0;
   /** 吸附归位动画令牌：新拖动/新吸附自增打断旧动画。 */
   private _snapAnimToken = 0;
   private _snapHintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -149,6 +155,19 @@ export class PetApp {
   /** 悬浮窗顶部永久预留的气泡带高度（CSS px，≈3 行气泡 + 间隙）。 */
   private static readonly _WRAP_BUBBLE_BAND = 88;
 
+  /** 悬浮窗聊天各内容态在脚线下方预留的高度（CSS px；含 composer 最大展开）。 */
+  private static readonly _WRAP_CHAT_EXTRA: Record<string, number> = {
+    composer: 106,
+    reply: 250,
+    setup: 380,
+  };
+
+  /** 悬浮窗聊天入口按钮条高度（CSS px，聊天收起时窗口向下多留的条带）。 */
+  private static readonly _WRAP_LAUNCHER_STRIP = 46;
+
+  /** 软键盘占屏估算（CSS px），输入框压到屏下段时整体上移避让。 */
+  private static readonly _KEYBOARD_RESERVE = 320;
+
   /** 气泡适配缓存：文本/视口变化时重算等比缩放（见 _positionBubble）。 */
   private _bubbleFitKey = '';
   private _bubbleScaledH = 0;
@@ -177,6 +196,8 @@ export class PetApp {
 
     // 悬浮窗：窗口逐帧包裹角色剪影，透明区域不挡下层触摸（真穿透）。
     this._wrapWindow = isAndroidOverlay();
+    // 气泡带样式钩子（顶部预留带 + 行数钳制，见 pet.css body.overlay-wrap）
+    if (this._wrapWindow) document.body.classList.add('overlay-wrap');
 
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
@@ -213,20 +234,10 @@ export class PetApp {
     // 悬浮窗：模型就绪前先把窗口摆到正确位置/近似尺寸——
     // 服务一拉起窗口立即就位，内容加载完成后只是精修（秒开观感）
     if (this._wrapWindow) {
-      const shell = androidShell();
-      if (shell) {
-        try {
-          const m = JSON.parse(shell.getMetrics()) as {
-            screenW: number;
-            screenH: number;
-          };
-          if (this._originUnset() && m.screenW > 0) {
-            this._originCssX = m.screenW * 0.9;
-            this._originCssY = m.screenH * 0.45;
-          }
-        } catch {
-          // 保持原点
-        }
+      this._refreshShellMetrics();
+      if (this._originUnset() && this._screenW > 0) {
+        this._originCssX = this._screenW * 0.9;
+        this._originCssY = this._screenH * 0.45;
       }
       this._applyWindowSettingsAndroid(this._settings, true);
       this._syncWrapWindow();
@@ -339,26 +350,14 @@ export class PetApp {
 
     // 悬浮窗首次启动（未保存过位置）：默认停在屏幕右下习惯位
     if (this._wrapWindow) {
-      const shell = androidShell();
-      if (shell) {
-        try {
-          const m = JSON.parse(shell.getMetrics()) as {
-            density: number;
-            screenW: number;
-            screenH: number;
-          };
-          console.log(
-            `[pet] wrap metrics: inner=${window.innerWidth}x${window.innerHeight} ` +
-              `dpr=${window.devicePixelRatio} shellDensity=${m.density} ` +
-              `screen=${m.screenW}x${m.screenH}`
-          );
-          if (this._originUnset()) {
-            this._originCssX = m.screenW * 0.9;
-            this._originCssY = m.screenH * 0.45;
-          }
-        } catch {
-          // 保持原点
-        }
+      this._refreshShellMetrics();
+      console.log(
+        `[pet] wrap metrics: inner=${window.innerWidth}x${window.innerHeight} ` +
+          `dpr=${window.devicePixelRatio} screen=${this._screenW}x${this._screenH}`
+      );
+      if (this._originUnset()) {
+        this._originCssX = this._screenW * 0.9;
+        this._originCssY = this._screenH * 0.45;
       }
     }
 
@@ -390,9 +389,12 @@ export class PetApp {
     };
   }
 
-  /** Android 悬浮窗不创建聊天 UI，也不读取/发送会话。 */
+  /**
+   * 聊天系统装配：tauri 为独立原生窗口（按钮开关联动壳命令）；
+   * Android 与浏览器内嵌 ChatView——App 内默认展开，悬浮窗默认收起
+   * （入口按钮常驻，窗口矩形随聊天内容态扩展，见 _fixedWindowRect）。
+   */
   private _initializeChat(): void {
-    if (this._wrapWindow) return;
     let storage: ChatStorage | undefined;
     try { storage = window.localStorage; } catch { /* 存储被禁用时使用内存。 */ }
     this._chat = new ChatController({ label: '未连接', async *reply(): AsyncGenerator<never> { throw new Error('请先连接 Misskey。'); } });
@@ -464,7 +466,15 @@ export class PetApp {
     this._chat.onCancelPerformance = () => this._chatPerformance?.cancel();
     const mobile = platform === 'android' || (platform === 'web' && matchMedia('(max-width: 560px)').matches);
     document.body.classList.toggle('chat-mobile', mobile);
-    if (platform === 'android') this._chatView.setOpen(true);
+    if (this._wrapWindow) {
+      // 悬浮窗：入口按钮常驻（窗口矩形含按钮条），聊天打开时按内容态扩展窗口；
+      // 软键盘需要窗口焦点，经壳桥临时切换（Kotlin 侧 FLAG_NOT_FOCUSABLE）。
+      this._chatView.onLayoutChange = () => this._onChatLayoutChanged();
+      this._chatView.onInputActivate = () => this._overlayTextInput();
+      this._chatView.onInputFocusChange = focused => this._overlayInputFocused(focused);
+    } else if (platform === 'android') {
+      this._chatView.setOpen(true);
+    }
   }
 
   /** 当前窗口基准尺寸（模型加载后用实测包围盒，否则用默认比例）。 */
@@ -587,6 +597,24 @@ export class PetApp {
     }
   }
 
+  /** 刷新壳侧屏幕尺寸缓存（CSS px；聊天矩形钳制与避让计算共用）。 */
+  private _refreshShellMetrics(): void {
+    const shell = androidShell();
+    if (!shell) return;
+    try {
+      const m = JSON.parse(shell.getMetrics()) as {
+        screenW: number;
+        screenH: number;
+      };
+      if (m.screenW > 0 && m.screenH > 0) {
+        this._screenW = m.screenW;
+        this._screenH = m.screenH;
+      }
+    } catch {
+      // 保持缓存
+    }
+  }
+
   /**
    * Android：App 内为全屏容器无窗口操作；悬浮窗走内容贴合模式，
    * 这里只钳制缩放范围（CSS px），窗口矩形由渲染帧逐帧跟随角色剪影。
@@ -594,17 +622,14 @@ export class PetApp {
   private _applyWindowSettingsAndroid(s: PetSettings, restoreWindow: boolean): void {
     const shell = androidShell();
     if (!shell) return;
-    const metrics = JSON.parse(shell.getMetrics()) as {
-      screenW: number;
-      screenH: number;
-    };
+    this._refreshShellMetrics();
     const baseH = 675 * PetApp._windowMarginRatio;
     const baseW =
       baseH * (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
     let scale = s.scale;
-    if (metrics.screenW > 0 && metrics.screenH > 0) {
+    if (this._screenW > 0 && this._screenH > 0) {
       const minS = Math.max(56 / baseW, 72 / baseH);
-      const maxS = Math.max(0.5, Math.min(metrics.screenW / baseW, metrics.screenH / baseH));
+      const maxS = Math.max(0.5, Math.min(this._screenW / baseW, this._screenH / baseH));
       scale = Math.min(Math.max(scale, minS), maxS);
     }
     if (this._wrapWindow) {
@@ -655,39 +680,7 @@ export class PetApp {
         }>('tray-action', (e) => {
           const p = e.payload;
           if (!p || typeof p.action !== 'string') return;
-          switch (p.action) {
-              case 'cycle-size': {
-                void this._cycleSize();
-                break;
-              }
-              case 'always-on-top':
-                // Rust 已应用到窗口，这里只同步存储与其他开关
-                this.applySettings(
-                  { ...this._settings, alwaysOnTop: p.value ?? true },
-                  false
-                );
-                this._broadcastSettings();
-                break;
-              case 'reset-position':
-                this.resetPosition();
-                break;
-              case 'play-action':
-                if (p.name) this._ai?.play(p.name);
-                break;
-              case 'random-speech':
-                this._playRandom();
-                break;
-              // 表情/情绪（设置窗口「表情与情绪」面板）
-              case 'express':
-                if (p.name) this._ai?.express(p.name, p.duration);
-                break;
-              case 'clear-expression':
-                this._ai?.clearExpression();
-                break;
-              case 'set-mood':
-                if (p.name) this._ai?.setMood(p.name, p.duration);
-                break;
-          }
+          this.onShellAction(p);
         });
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
         ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
@@ -713,8 +706,58 @@ export class PetApp {
       .catch(() => {});
   }
 
+  /**
+   * 壳动作入口（tray-action 形状）：Windows 托盘/设置窗口经 Tauri 事件，
+   * Android 设置页经壳桥 notifyPetAction 转发（main.ts 暴露给
+   * window.__pet.onShellAction）。
+   */
+  public onShellAction(p: {
+    action: string;
+    value?: boolean;
+    name?: string;
+    duration?: number;
+  }): void {
+    switch (p.action) {
+        case 'cycle-size': {
+          void this._cycleSize();
+          break;
+        }
+        case 'always-on-top':
+          // Rust 已应用到窗口，这里只同步存储与其他开关
+          this.applySettings(
+            { ...this._settings, alwaysOnTop: p.value ?? true },
+            false
+          );
+          this._broadcastSettings();
+          break;
+        case 'reset-position':
+          this.resetPosition();
+          break;
+        case 'play-action':
+          if (p.name) this._ai?.play(p.name);
+          break;
+        case 'random-speech':
+          this._playRandom();
+          break;
+        // 表情/情绪（设置窗口「表情与情绪」面板）
+        case 'express':
+          if (p.name) this._ai?.express(p.name, p.duration);
+          break;
+        case 'clear-expression':
+          this._ai?.clearExpression();
+          break;
+        case 'set-mood':
+          if (p.name) this._ai?.setMood(p.name, p.duration);
+          break;
+    }
+  }
+
   /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
   private _broadcastMood(name: string): void {
+    // Android：设置页是另一 WebView，经共享 localStorage 传递（focus/回前台读取）
+    if (platform === 'android') {
+      try { window.localStorage.setItem('aliya_pet_mood', name); } catch { /* 存储不可用则跳过 */ }
+    }
     if (!this._tauriWindow) return;
     import('@tauri-apps/api/event')
       .then((ev) => {
@@ -728,6 +771,7 @@ export class PetApp {
     if (platform === 'android') {
       const shell = androidShell();
       if (!shell) return;
+      this._refreshShellMetrics();
       const m = JSON.parse(shell.getMetrics()) as {
         screenW: number;
         screenH: number;
@@ -851,10 +895,8 @@ export class PetApp {
     // （曾在此把 winX/winY(=0,0) 当窗口坐标写进 posX/posY，污染悬浮窗原点）
     if (!this._wrapWindow) return;
     if (this._settings.snapEdges) {
-      const m = JSON.parse(shell.getMetrics()) as {
-        screenW: number;
-        screenH: number;
-      };
+      this._refreshShellMetrics();
+      const m = { screenW: this._screenW, screenH: this._screenH };
       const b = this._model?.getStaticBounds() ?? null;
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
@@ -1328,6 +1370,8 @@ export class PetApp {
       this._resetDragState();
       this._bubble?.cancel();
       androidShell()?.setInteracting(false);
+      // 熄屏/切后台时输入框失焦可能收不到：主动归还窗口焦点与键盘
+      if (this._wrapWindow) setWindowFocusable(false);
     }
     if (!paused && this._running) {
       this._lastFrameTime = performance.now();
@@ -1558,6 +1602,9 @@ export class PetApp {
    *
    * 布局：顶部预留气泡带，下方内容区 = 675×1.18×scale（与非贴合模式同基准），
    * 静态剪影中心锚在内容区中心（四向等距余量，动作向任何方向甩都有空间）。
+   * 聊天（悬浮窗内嵌）：收起时窗口向下多留一个入口按钮条；打开时窗口宽度
+   * 按 PC 同公式（可见模型宽 ×1.18 钳 260–560/屏宽）取宽，脚线下方按内容态
+   * （composer/reply/setup）追加对应高度，聊天 UI 锚在窗口底部贴脚线。
    */
   private _fixedWindowRect(): { x: number; y: number; w: number; h: number } {
     const s = this._contentScaleCss;
@@ -1569,12 +1616,84 @@ export class PetApp {
     // 静态剪影中心的屏幕坐标（模型 Y 轴朝上 → 屏幕坐标减）
     const ccx = this._originCssX + (b ? ((b.minX + b.maxX) / 2) * s : 0);
     const ccy = this._originCssY - (b ? ((b.minY + b.maxY) / 2) * s : 0);
+    let w = baseW;
+    let h = baseH + band;
+    if (this._chatView) {
+      if (this._chatView.isOpen) {
+        const visW = b ? (b.maxX - b.minX) * s : baseW / 1.18;
+        const chatW = this._screenW > 0
+          ? Math.min(Math.max(visW * 1.18, 260), Math.min(this._screenW - 12, 560))
+          : Math.max(baseW, 260);
+        w = Math.max(baseW, chatW);
+        const layout = document.body.dataset.chatLayout ?? 'setup';
+        h += PetApp._WRAP_CHAT_EXTRA[layout] ?? PetApp._WRAP_CHAT_EXTRA.setup!;
+      } else {
+        h += PetApp._WRAP_LAUNCHER_STRIP;
+      }
+    }
     return {
-      x: ccx - baseW / 2,
+      x: ccx - w / 2,
       y: ccy - baseH / 2 - band,
-      w: baseW,
-      h: baseH + band,
+      w,
+      h,
     };
+  }
+
+  /**
+   * 悬浮窗聊天布局/开关变化：矩形按新内容态重算；聊天打开导致窗口
+   * 溢出屏幕时平移原点（连带角色与窗口）给聊天腾位，与 PC「chat 钳回
+   * 工作区、pet 中心出屏才越界」的避让语义对齐。
+   */
+  private _onChatLayoutChanged(): void {
+    if (!this._wrapWindow) return;
+    this._rectDirty = true;
+    this._hitMaskLastMs = -Infinity; // 聊天区域变化，立即重发命中掩码
+    if (!this._chatView?.isOpen || this._screenW <= 0 || this._screenH <= 0) return;
+    const r = this._fixedWindowRect();
+    let dx = 0;
+    let dy = 0;
+    if (r.x < 4) dx = 4 - r.x;
+    else if (r.x + r.w > this._screenW - 4) dx = this._screenW - 4 - (r.x + r.w);
+    if (r.y + r.h > this._screenH - 4) dy = this._screenH - 4 - (r.y + r.h);
+    else if (r.y < 4) dy = 4 - r.y;
+    if (dx !== 0 || dy !== 0) {
+      this._animateOriginTo(this._originCssX + dx, this._originCssY + dy, 180);
+    }
+  }
+
+  /** 悬浮窗内按下文本框：先请求窗口焦点（标志位生效有时序，随后补程序化聚焦）。 */
+  private _overlayTextInput(): void {
+    if (!this._wrapWindow) return;
+    setWindowFocusable(true);
+    window.setTimeout(() => {
+      if (this._chatView?.isOpen && !this._chatView.typing) this._chatView.focusInput();
+    }, 120);
+  }
+
+  /** 悬浮窗输入焦点变化：切换窗口可聚焦 + 软键盘避让（压到屏下段时整体上移）。 */
+  private _overlayInputFocused(focused: boolean): void {
+    if (!this._wrapWindow) return;
+    setWindowFocusable(focused);
+    if (focused) {
+      const composerBottom = this._appliedRectY + this._appliedRectH - 10;
+      const safe = this._screenH - PetApp._KEYBOARD_RESERVE;
+      if (this._screenH > 0 && composerBottom > safe) {
+        let shift = composerBottom - safe;
+        // 硬界：角色头顶不出屏（origin 不得低于头顶高度）；余量不足时
+        // 接受键盘部分遮挡，而不是把角色推出屏幕外。
+        const b = this._model?.getStaticBounds();
+        const headroom = b ? this._originCssY - b.maxY * this._contentScaleCss : this._originCssY;
+        shift = Math.min(shift, Math.max(0, headroom));
+        if (shift > 1) {
+          this._keyboardShift = shift;
+          this._animateOriginTo(this._originCssX, this._originCssY - shift, 160);
+        }
+      }
+    } else if (this._keyboardShift > 0) {
+      const back = this._keyboardShift;
+      this._keyboardShift = 0;
+      this._animateOriginTo(this._originCssX, this._originCssY + back, 160);
+    }
   }
 
   /**

@@ -29,7 +29,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- MiAuth 回调：aliyapet://miauth/?session=... -->
+        </activity>
+
+        <!-- MiAuth 回调中转：aliyapet://miauth/?session=... 写入偏好后即退，
+             不落在 MainActivity 上（回前台会停掉悬浮窗，打断悬浮窗里的授权等待）。 -->
+        <activity
+            android:name=".AuthRelayActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

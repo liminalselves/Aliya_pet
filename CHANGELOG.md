@@ -64,6 +64,23 @@
   气泡独立合成层 translateZ(0)）。
 - **设置页新增「悬浮窗权限」状态行**：MIUI 等 ROM 默认拒绝该权限且
   覆盖安装会重置，未授予时显示「未授予」并可一键跳转系统授权页。
+- **PC 功能对齐（2026-09-18）**：
+  - **悬浮窗聊天**：悬浮窗内嵌 ChatView（连接/会话/记录/GAL 回复/
+    表演指令全链路），入口药丸常驻（窗口矩形含 46px 按钮条）；聊天打开
+    时窗口按内容态（composer/reply/setup +106/250/380px）向下扩展、
+    宽度钳 260–560，溢出屏幕时平移原点钳回屏内；透明区域仍走掩码穿透。
+  - **悬浮窗软键盘**：窗口默认 NOT_FOCUSABLE，按下文本框经
+    `setWindowFocusable` 临时聚焦（失焦恢复并收输入法）；键盘压住输入区
+    时整体上移避让，硬界为角色头顶不出屏。
+  - **MiAuth 中转 Activity**：deep link 改由透明 `AuthRelayActivity` 接住
+    写偏好即退，不再拉起 MainActivity——悬浮窗中的授权等待不再被回前台
+    停服务打断；悬浮窗未运行时照旧回 App。`openUrl` 在 Service 上下文
+    自动带 NEW_TASK（此前悬浮窗内打开浏览器/授权会静默失败）。
+  - **设置页补齐「互动」「表情与情绪」面板**（此前 Android 隐藏）：
+    动作试放/随机台词/表情预览/情绪设置经壳桥 `notifyPetAction` 转发到
+    桌宠页 `onShellAction`；情绪高亮经共享 localStorage `aliya_pet_mood`
+    回传。托盘事件处理器抽取为公共 `onShellAction` 供双端复用。
+  - 修复 `body.overlay-wrap` 类从未挂载（气泡带钳制 CSS 死代码）。
 
 ### Windows 端
 

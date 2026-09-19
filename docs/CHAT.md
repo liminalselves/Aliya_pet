@@ -72,7 +72,8 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   与当前会话，并可打开聊天窗口。
 
 Android/web 无独立窗口：ChatView 内嵌 pet 页（Android 主界面默认展开；
-悬浮窗不创建聊天 UI）。chat 页面与 pet 页共用同一套 ChatView/渲染代码。
+悬浮窗同样可用聊天，入口按钮常驻，见下节）。chat 页面与 pet 页共用同一套
+ChatView/渲染代码。
 
 ## 实例地址与开发配置
 
@@ -125,7 +126,7 @@ Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据�
 | 平台 | 回调方式 |
 | --- | --- |
 | Windows（Tauri） | 壳 `miauth_begin(session)` 绑 127.0.0.1 随机端口一次性监听（`miauth.rs`），回调只认 `/miauth/callback?session=匹配`，仅向 chat 窗口发 `miauth-callback {ok,query,session}`；`miauth_end(session)` 按身份取消；5 分钟超时 |
-| Android | manifest 注册 `aliyapet://miauth` deep link；MainActivity 把查询串写入 ShellPrefs `miauth_callback`，前端轮询取走后清除；冷启动不丢（偏好持久） |
+| Android | manifest 注册 `aliyapet://miauth` deep link，由透明中转 `AuthRelayActivity` 接住：写入 ShellPrefs `miauth_callback` 即退（悬浮窗运行中不拉起主界面，避免停掉悬浮窗打断授权等待；未运行则照旧回 App）；前端轮询取走后清除；冷启动不丢（偏好持久） |
 | web 开发 | 整页跳转授权，session 记入 `aliya_miauth_pending`，回跳后 `resumeCallback` 恢复换 token；也可手动填 token |
 
 拿到 session 后 `POST /api/miauth/{session}/check` 换 token；
@@ -202,7 +203,18 @@ Aliya_web 相同。
 
 - 主界面（非悬浮窗）默认展开聊天；`adjustResize` + IME insets 让
   键盘不遮挡输入；需要 INTERNET 权限。
-- 悬浮窗（`_wrapWindow`）不创建聊天 UI，也不读取/发送会话。
+- 悬浮窗（`_wrapWindow`）与 PC 同样全程可用聊天（功能对齐 2026-09-18）：
+  - ChatView 内嵌悬浮窗 WebView，默认收起，脚下「聊天」药丸按钮常驻
+    （窗口矩形向下多留 46px 按钮条）；打开时窗口矩形按内容态扩展——
+    宽 = max(pet 宽, 可见模型宽 ×1.18 钳 260–560/屏宽)，脚线下方按
+    composer/reply/setup 追加 106/250/380px，聊天卡片锚窗口底部贴脚线
+    （`body.overlay-wrap.chat-open .chat-shell` flex-end）。窗口溢出屏幕时
+    平移原点（连带角色）钳回屏内；聊天打开期间随机台词/点击台词静默、
+    表演指令同页直驱 ChatPerformance，与内嵌模式同一套逻辑。
+  - **软键盘**：悬浮窗默认 `FLAG_NOT_FOCUSABLE`（不抢下层焦点），按下
+    任意文本框时前端经 `setWindowFocusable(true)` 临时摘掉标志并把焦点
+    交给 WebView，失焦恢复并收起输入法；键盘压住输入区时整体上移避让
+    （硬界：角色头顶不出屏，余量不足时接受部分遮挡）。
 
 ## 验证
 
@@ -221,3 +233,10 @@ deep link 回跳。
 及前端构建通过。浏览器仅确认设置入口与未连接禁用状态；抽屉点击和截图
 未完成，真实授权后的面板保存、消息导航及原生跨窗口联动尚未验收。
 后续测试由用户进行；临时无效凭证已清理，本次启动的开发服务已停止。
+
+2026-09-18 Android 功能对齐（悬浮窗聊天 + 设置页动作面板）：60 项单元
+回归、前端构建与 `assembleDebug` 通过；浏览器 mock AndroidShell 模拟
+悬浮窗 21 项检查全过（入口条带/聊天开合矩形扩展与屏内钳制/输入焦点
+桥接/键盘避让头不出屏/表演指令直驱/设置页动作经 notifyPetAction 转发），
+关闭态与聊天打开态截图自审通过。真机（软键盘实际弹出、MiAuth 中转
+Activity 回跳、跨 WebView storage 事件）归用户验收。

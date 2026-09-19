@@ -49,6 +49,11 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         /** 透明区穿透后恢复可触摸的延迟（ms）：覆盖一次点按/滑动手势时长。 */
         private const val PASS_THROUGH_MS = 350L
 
+        /** 服务存活标记（AuthRelayActivity 判断回跳是否要拉起主界面）。 */
+        @Volatile
+        var isRunning = false
+            private set
+
         fun start(ctx: Context) {
             ContextCompat.startForegroundService(ctx, Intent(ctx, PetOverlayService::class.java))
         }
@@ -122,6 +127,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         var h = (winHCss * density).roundToInt()
 
         web = PetWebViewFactory.create(this, ShellBridge(this))
+        isRunning = true
         attachNativeDrag()
         params = WindowManager.LayoutParams(
             w, h,
@@ -184,6 +190,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     override fun onDestroy() {
+        isRunning = false
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {
@@ -384,6 +391,32 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     override fun getMode(): String = "overlay"
+
+    /**
+     * 聊天输入需要软键盘：悬浮窗默认 FLAG_NOT_FOCUSABLE（不抢下层焦点），
+     * 按下文本框时临时摘掉标志并把焦点交给 WebView；失焦时恢复标志并收起输入法。
+     * 键盘遮挡由前端自行避让（整体上移窗口，见 _overlayInputFocused）。
+     */
+    override fun setWindowFocusable(focusable: Boolean) {
+        val flag = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val newFlags = if (focusable) params.flags and flag.inv() else params.flags or flag
+        if (newFlags != params.flags) {
+            params.flags = newFlags
+            try {
+                wm.updateViewLayout(web, params)
+            } catch (_: Exception) {
+            }
+        }
+        if (focusable) {
+            web.isFocusable = true
+            web.isFocusableInTouchMode = true
+            web.requestFocus()
+        } else {
+            web.isFocusableInTouchMode = false
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(web.windowToken, 0)
+        }
+    }
 
     override fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {
         if (nativeDragging) return // 原生拖动期间窗口由壳独占

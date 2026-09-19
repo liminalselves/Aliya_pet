@@ -50,6 +50,12 @@ export class ChatView {
   readonly root = document.createElement('div');
   isOpen = false;
   pointerActive = false;
+  /** 布局态/开关变化（悬浮窗据此重算窗口矩形）。 */
+  onLayoutChange: (() => void) | null = null;
+  /** 按下文本输入框（悬浮窗需先把窗口切为可聚焦，软键盘才出得来）。 */
+  onInputActivate: (() => void) | null = null;
+  /** 输入框获焦/失焦（悬浮窗据此切换窗口焦点并避让键盘）。 */
+  onInputFocusChange: ((focused: boolean) => void) | null = null;
   private screen: 'connect' | 'sessions' | 'ready' = 'connect';
   private sequence = 0;
   private operation: AbortController | null = null;
@@ -115,7 +121,14 @@ export class ChatView {
       this.input.style.height = 'auto'; this.input.style.height = `${Math.min(92, this.input.scrollHeight)}px`;
     };
     this.input.onfocus = () => this.notify(); this.input.onblur = () => this.notify();
-    this.root.onpointerdown = () => { this.pointerActive = true; };
+    // 软键盘跟随对全部输入控件生效（composer 输入框 + 连接屏手动 token 框）
+    this.root.addEventListener('focusin', e => { if ((e.target as Element).matches?.('textarea, input')) this.onInputFocusChange?.(true); });
+    this.root.addEventListener('focusout', e => { if ((e.target as Element).matches?.('textarea, input')) this.onInputFocusChange?.(false); });
+    this.root.onpointerdown = e => {
+      this.pointerActive = true;
+      // 连接屏的手动 token 输入框同样需要软键盘：任何文本框按下即申请窗口焦点
+      if ((e.target as Element | null)?.closest('textarea, input')) this.onInputActivate?.();
+    };
     window.addEventListener('pointerup', () => { this.pointerActive = false; });
     window.addEventListener('blur', () => { this.pointerActive = false; this.notify(); });
     this.root.onkeydown = e => { if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); this.hideReply(); } };
@@ -127,6 +140,8 @@ export class ChatView {
   }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
+  /** 外部申请聚焦输入框（悬浮窗窗口变为可聚焦后补一次程序化聚焦）。 */
+  focusInput(): void { this.input.focus(); }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
   setOpen(open: boolean): void {
     this.isOpen = open;
@@ -172,6 +187,7 @@ export class ChatView {
         // 否则长列表被 reply 态的小窗压成一条缝。
         : this.screen === 'ready' && !this.historyVisible ? 'reply' : 'setup';
     this.reportLayout();
+    this.onLayoutChange?.();
   }
   /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
   private reportLayout(): void {

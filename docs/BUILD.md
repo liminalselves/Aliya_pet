@@ -65,6 +65,21 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 真机注意：MIUI/EMUI 的「USB 安装」与「悬浮窗权限」需到系统设置单独授权；
   重装 APK 会重置 appops 权限。
 
+### 正式包（签名 release APK）
+
+`android/keystore.properties`（不入库）指向 `keystore/aliyapet-release.jks`，
+gradle 检测到该文件时 release 构建自动签名；缺失则出未签名包。
+
+```bash
+cd redesign/android
+gradlew.bat assembleRelease
+# 产物：app/build/outputs/apk/release/app-release.apk
+```
+
+**密钥必须备份**（`redesign/android/keystore/` + `keystore.properties`）：
+丢失后无法为后续更新出同签名包，用户只能卸载重装（丢设置与 Misskey 授权）。
+debug 与 release 签名不同，从 debug 覆盖装 release 前必须先卸载。
+
 ## 调试工具（redesign/tools/）
 
 基于 CDP（Tauri 用 `--remote-debugging-port=9333`；Android 用
