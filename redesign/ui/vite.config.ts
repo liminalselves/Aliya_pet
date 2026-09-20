@@ -26,7 +26,7 @@ export default defineConfig({
     alias: {
       '@framework': path.resolve(
         __dirname,
-        '../../third_party/CubismWebSamples/Framework/src'
+        '../../third_party/cubism-web-sdk/Framework/src'
       ),
     },
   },

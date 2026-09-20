@@ -11,14 +11,14 @@
 
 ### Live2D SDK 准备
 
-Cubism 组件来自官方便利包/样本（有许可限制，不入 git）。当前机器上位于
-`third_party/`（.gitignore 已忽略 whole 目录），构建实际用到：
+Cubism Web SDK（官方包，只保留 Framework + Core，约 1.3MB）位于
+`third_party/cubism-web-sdk/`：
 
-- `third_party/CubismWebSamples/Framework` —— 前端构建的 `@framework/*` 别名目标
-- `third_party/CubismWebSamples/Core` —— 资产同步时的 `live2dcubismcore.js`
-  （被拷贝进 `ui/assets/core/`，随构建进 dist）
+- `Framework/` —— 前端构建的 `@framework/*` 别名目标（tsconfig paths + vite alias）
+- `Core/live2dcubismcore.js` —— 闭源渲染内核，拷贝到 `ui/assets/core/` 随构建进 dist
 
-若换机器，从官网下载 Cubism Web 样本或 SDK 5-r.5，恢复上述目录即可。
+该目录暂不入库。换机器时从 Live2D 官网下载 Cubism SDK（Web），
+取其中的 `Framework/` 与 `Core/` 放到 `third_party/cubism-web-sdk/` 即可。
 
 ## Windows（Tauri）
 

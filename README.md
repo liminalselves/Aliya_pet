@@ -7,8 +7,9 @@
 - **Windows**：Tauri 壳 + 官方 Cubism Web SDK（WebGL 渲染）
 - **Android**：Kotlin 薄壳 + 系统 WebView（同一份 Web 前端，悬浮窗桌宠）
 
-官方渲染链路（SDK 官方支持、随 Live2D 长期维护）取代了旧版自研 C++ 渲染内核，
-之前最常见的性能与卡顿问题基本消除。旧版实现保留在 `flutter/` 与 `native/` 作参考。
+官方渲染链路（SDK 官方支持、随 Live2D 长期维护）取代了旧版自研 C++ 渲染内核
+（Flutter 版与 native/ 内核已移除，历史可在 git 中追溯），之前最常见的性能与
+卡顿问题基本消除。
 
 ```
         全部功能与渲染（一套 TypeScript，redesign/ui/）
@@ -77,10 +78,7 @@ redesign/                 # 重写版（当前主产品）
 ├── android/              # Android 壳（Kotlin）：Activity/悬浮窗服务/桥
 └── tools/                # 开发调试脚本（CDP 检查/截屏/CPU 测量）
 
-flutter/                  # 旧版 Flutter 实现（已弃用，保留参考）
-native/                   # 旧版自研 C++ 渲染内核（已弃用，保留参考）
-third_party/              # Live2D SDK（许可限制，不入库）
-scripts/                  # 旧版构建/验证脚本
+third_party/cubism-web-sdk/  # Live2D Cubism Web SDK（Framework + Core，官方包）
 ```
 
 ## 文档

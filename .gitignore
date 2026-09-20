@@ -26,20 +26,6 @@ redesign/tools/*
 # Kotlin 编译器缓存与错误日志
 .kotlin/
 
-# Flutter/Dart 构建产物（flutter/ 子项目）
-flutter/.dart_tool/
-flutter/build/
-flutter/.flutter-plugins
-flutter/.flutter-plugins-dependencies
-flutter/.packages
-flutter/pubspec.lock
-flutter/android/.gradle/
-flutter/android/local.properties
-flutter/android/key.properties
-flutter/windows/flutter/ephemeral/
-flutter/windows/flutter/generated_plugin_registrant.cc
-flutter/windows/flutter/generated_plugin_registrant.h
-
 # 敏感信息
 appsettings.*.json
 !appsettings.example.json
@@ -58,10 +44,14 @@ vc140.pdb
 *.7z
 *.rar
 
-# 第三方 SDK（许可限制，需用户自行下载）：
-# Live2D Cubism SDK 需从 https://www.live2d.com/en/sdk/download/native/ 下载
-# 将 SDK 包解压后把 Core/ 与 Framework/ 放置到 third_party/CubismSdkForNative-5-r.5/
-third_party/
+# Live2D Cubism Web SDK（官方包 Framework + Core，1.3MB）入库；
+# third_party 下其他第三方 SDK 仍不入库
+third_party/*
+!third_party/cubism-web-sdk
+
+# AI 工具数据（会话计划、远程附件缓存）
+.zcode/
+.codex-remote-attachments/
 
 # 重写版（redesign/）构建产物
 redesign/node_modules/

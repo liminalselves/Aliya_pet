@@ -25,8 +25,8 @@
 ## 渲染层（官方 Cubism Web SDK 5-r.5）
 
 - **Framework**（TypeScript）+ **Core** 6.0.1（wasm，内嵌于
-  `live2dcubismcore.js`），取自 `third_party/CubismWebSamples/`。
-- Vite 别名 `@framework/*` 指向 `third_party/CubismWebSamples/Framework/src`。
+  `live2dcubismcore.js`），取自 `third_party/cubism-web-sdk/`。
+- Vite 别名 `@framework/*` 指向 `third_party/cubism-web-sdk/Framework/src`。
 - WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调），
   `preserveDrawingBuffer: true` 消除窗口缩放闪烁。
 - 渲染暂停：后台/熄屏时停止渲染循环（`PetApp.setPaused`）。

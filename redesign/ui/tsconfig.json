@@ -13,7 +13,7 @@
     "useUnknownInCatchVariables": true,
     "baseUrl": "./",
     "paths": {
-      "@framework/*": ["../../third_party/CubismWebSamples/Framework/src/*"]
+      "@framework/*": ["../../third_party/cubism-web-sdk/Framework/src/*"]
     }
   },
   "include": [
