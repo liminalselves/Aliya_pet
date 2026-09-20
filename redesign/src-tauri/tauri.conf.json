@@ -44,6 +44,29 @@
         "shadow": false,
         "focus": false,
         "visible": false
+      },
+      {
+        "label": "settings",
+        "title": "Aliya 设置",
+        "url": "settings.html",
+        "width": 380,
+        "height": 620,
+        "minWidth": 360,
+        "minHeight": 480,
+        "resizable": true,
+        "alwaysOnTop": true,
+        "visible": false
+      },
+      {
+        "label": "records",
+        "title": "Aliya · 聊天记录",
+        "url": "records.html",
+        "width": 760,
+        "height": 680,
+        "minWidth": 480,
+        "minHeight": 420,
+        "resizable": true,
+        "visible": false
       }
     ]
   },

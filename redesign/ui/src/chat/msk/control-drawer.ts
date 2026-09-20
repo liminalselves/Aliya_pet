@@ -5,7 +5,13 @@ import { MskClient } from './client';
 import { openUrl } from '../../platform';
 import './control.css';
 
-export function mountAgentControls(container: HTMLElement, openChat: () => Promise<void>, refreshSummary: () => void): void {
+export interface AgentControlHandle {
+  open(): void;
+  close(): void;
+  sync(): void;
+}
+
+export function mountAgentControls(container: HTMLElement, openRecords: () => Promise<void>, refreshSummary: () => void): AgentControlHandle {
   const button = document.createElement('button');
   button.className = 'act wide'; button.textContent = '配置当前会话';
   container.append(button);
@@ -28,8 +34,15 @@ export function mountAgentControls(container: HTMLElement, openChat: () => Promi
       const token = localStorage.getItem(MSK_TOKEN_KEY) ?? '';
       const user = JSON.parse(localStorage.getItem(MSK_USER_KEY) ?? 'null');
       const session = user?.id ? JSON.parse(localStorage.getItem(mskSessionKey(user.id)) ?? 'null') : null;
-      return { token, userId: String(user?.id ?? ''), id: String(session?.id ?? ''), name: String(session?.name ?? 'Aliya') };
-    } catch { return { token: '', userId: '', id: '', name: 'Aliya' }; }
+      return {
+        token,
+        userId: String(user?.id ?? ''),
+        id: String(session?.id ?? ''),
+        name: String(session?.name ?? 'Aliya'),
+        characterId: String(session?.characterId ?? ''),
+        characterName: String(session?.characterName ?? 'Aliya'),
+      };
+    } catch { return { token: '', userId: '', id: '', name: 'Aliya', characterId: '', characterName: 'Aliya' }; }
   };
   const sync = () => {
     const current = saved();
@@ -43,7 +56,7 @@ export function mountAgentControls(container: HTMLElement, openChat: () => Promi
     const request: ControlRequest = { action, sessionId, at: Date.now() };
     if (message) { request.messageId = message.messageId; request.divider = message.type.endsWith('navigate-context-divider'); }
     localStorage.setItem(CONTROL_REQUEST_KEY, JSON.stringify(request));
-    if (action === 'navigate') await openChat();
+    if (action === 'navigate') await openRecords();
   };
   const refresh = async () => {
     const currentRevision = ++revision;
@@ -52,7 +65,13 @@ export function mountAgentControls(container: HTMLElement, openChat: () => Promi
       const detail = await new MskClient(current.token).post<{ name?: string }>('/agents/sessions/show', { sessionId });
       if (!drawer.open || revision !== currentRevision || saved().id !== current.id) return;
       const name = detail.name || 'Aliya';
-      localStorage.setItem(mskSessionKey(current.userId), JSON.stringify({ id: sessionId, name }));
+      const previous = saved();
+      localStorage.setItem(mskSessionKey(current.userId), JSON.stringify({
+        id: sessionId,
+        name,
+        characterId: previous.characterId,
+        characterName: previous.characterName,
+      }));
       drawer.querySelector('.control-session')!.textContent = name;
       refreshSummary();
       await publish('refresh');
@@ -101,14 +120,17 @@ export function mountAgentControls(container: HTMLElement, openChat: () => Promi
   retry.onclick = load;
   drawer.querySelector<HTMLButtonElement>('.control-close')!.onclick = () => drawer.close();
   drawer.addEventListener('close', () => { ++revision; frame?.destroy(); frame = null; button.focus(); });
-  button.onclick = () => {
-    const current = saved(); if (!current.token || !current.id) { sync(); return; }
+  const open = () => {
+    const current = saved(); if (!current.token || !current.id) { sync(); button.focus(); return; }
     sessionId = current.id; userId = current.userId; credential = current.token;
     drawer.querySelector('.control-session')!.textContent = current.name;
-    drawer.showModal(); load();
+    if (!drawer.open) drawer.showModal();
+    load();
   };
+  button.onclick = open;
   window.addEventListener('storage', sync);
   window.addEventListener('focus', sync);
   window.addEventListener('pagehide', () => frame?.destroy());
   sync();
+  return { open, close: () => { if (drawer.open) drawer.close(); }, sync };
 }

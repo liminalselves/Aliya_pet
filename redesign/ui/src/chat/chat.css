@@ -117,6 +117,10 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .chat-composer textarea::placeholder { color:var(--al-text-3); }
 .composer-toolbar { display:flex; gap:1px; align-items:center; font-size:10px; color:var(--al-text-3); }
 .composer-toolbar button { padding:1px 5px!important; }
+.composer-toolbar .session-config { color:var(--al-text-2); border:1px solid transparent; border-radius:var(--al-r-s); }
+.composer-toolbar .session-config:hover { color:var(--al-accent-strong); background:var(--al-accent-soft); border-color:var(--al-line); }
+.composer-toolbar .session-config:focus-visible { color:var(--al-accent-strong); border-color:var(--al-accent); }
+.composer-toolbar .session-config:disabled { opacity:.5; cursor:default; }
 .chat-status { margin-left:auto; font-size:9.5px; }
 .send { background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent))!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill); padding:1px 10px!important; font-weight:600; box-shadow:0 2px 8px rgba(150,116,200,.28); }
 .send:hover { background:var(--al-accent-strong)!important; }

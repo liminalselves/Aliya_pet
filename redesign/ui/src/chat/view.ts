@@ -97,7 +97,7 @@ export class ChatView {
         </section>
         <form class="chat-composer" hidden>
           <textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea>
-          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><span class="chat-status" role="status"></span><button type="button" class="stop" hidden>停止等待</button><button type="submit" class="send">发送</button><button type="button" class="close-window" aria-label="关闭聊天窗口">×</button></div>
+          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><span class="chat-status" role="status"></span><button type="button" class="stop" hidden>停止等待</button><button type="submit" class="send">发送</button><button type="button" class="close-window" aria-label="关闭聊天窗口">×</button></div>
         </form>
       </div>`;
     document.body.append(this.root);
@@ -108,8 +108,15 @@ export class ChatView {
     this.get('.close-panel').onclick = () => { if (this.screen === 'ready') this.hideReply(); else this.close(); };
     this.get('.dismiss-reply').onclick = () => this.hideReply();
     this.content.addEventListener('click', e => this.onContentClick(e));
-    this.get('.history').onclick = () => this.showHistory();
+    this.get('.history').onclick = () => {
+      if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_records')).catch(() => {});
+      else this.showHistory();
+    };
     this.get('.sessions').onclick = () => { void this.loadSessions(); };
+    this.get('.session-config').onclick = () => {
+      if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_settings', { target: 'session-control' })).catch(() => {});
+    };
+    this.get('.session-config').hidden = platform !== 'tauri';
     this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     this.input.addEventListener('compositionstart', () => { this.composing = true; });
@@ -183,8 +190,8 @@ export class ChatView {
     shell.classList.toggle('composer-only', composerVisible && !panelVisible);
     document.body.dataset.chatLayout = !this.isOpen ? 'closed'
       : composerVisible && !panelVisible ? 'composer'
-        // 记录/上下文定位与连接/会话屏同属整页内容，按 setup 全高，
-        // 否则长列表被 reply 态的小窗压成一条缝。
+        // Android/web 的内嵌记录/上下文定位与连接/会话屏同属整页内容，按 setup 全高；
+        // Windows 记录已迁入独立 records 窗口。
         : this.screen === 'ready' && !this.historyVisible ? 'reply' : 'setup';
     this.reportLayout();
     this.onLayoutChange?.();
@@ -286,7 +293,14 @@ export class ChatView {
       this.screen = 'ready'; this.historyVisible = false; this.panel.hidden = true; this.composer.hidden = !this.isOpen;
       this.input.disabled = false; this.status.textContent = ''; this.updateLayoutMode();
       // 存 id+名称：名称供设置主菜单「当前会话」展示。
-      try { this.storage?.setItem(this.sessionKey(), JSON.stringify({ id: session.id, name: session.name || session.characterName || 'Aliya' })); } catch { /* Optional storage. */ }
+      try {
+        this.storage?.setItem(this.sessionKey(), JSON.stringify({
+          id: session.id,
+          name: session.name || session.characterName || 'Aliya',
+          characterId: session.characterId,
+          characterName: session.characterName || 'Aliya',
+        }));
+      } catch { /* Optional storage. */ }
       this.notify();
       void this.applyControlRequest();
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
@@ -487,12 +501,18 @@ export class ChatView {
     this.controlRequestActive = true;
     const seq = this.sequence;
     try {
-      if (readControlRequest(this.storage)?.at === request.at) this.storage?.removeItem(CONTROL_REQUEST_KEY);
+      if (!(platform === 'tauri' && request.action === 'navigate') && readControlRequest(this.storage)?.at === request.at) {
+        this.storage?.removeItem(CONTROL_REQUEST_KEY);
+      }
       if (request.action === 'deleted') {
         this.activeSession = null; this.controller.replaceHistory([]); await this.loadSessions(); return;
       }
       if (request.action === 'refresh') {
         await this.enterSession(this.activeSession); return;
+      }
+      if (platform === 'tauri') {
+        await import('@tauri-apps/api/core').then(m => m.invoke('show_records'));
+        return;
       }
       const messages = await new MskClient(this.auth.token).messagesAround(request.sessionId, request.messageId!, this.operation?.signal);
       if (seq !== this.sequence) return;

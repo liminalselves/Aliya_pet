@@ -637,19 +637,36 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   window.addEventListener('focus', refreshChatInfo);
   window.addEventListener('storage', refreshChatInfo);
 
-  const openChat = document.createElement('button');
-  openChat.className = 'act wide';
-  openChat.textContent = platform === 'android' ? '打开聊天' : '打开聊天窗口';
-  const showChat = async () => {
-    if (platform === 'android') shellAction('open-main');
-    else if (platform === 'tauri') {
+  const openRecords = async () => {
+    if (platform === 'tauri') {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('show_chat');
-    } else window.location.assign('/chat.html');
+      await invoke('show_records');
+    } else if (platform === 'android') shellAction('open-main');
+    else window.location.assign('/chat.html');
   };
-  openChat.addEventListener('click', () => { void showChat(); });
-  box.appendChild(openChat);
-  mountAgentControls(box, showChat, refreshChatInfo);
+  if (platform === 'android') {
+    const openChat = document.createElement('button');
+    openChat.className = 'act wide';
+    openChat.textContent = '打开聊天';
+    openChat.addEventListener('click', () => shellAction('open-main'));
+    box.appendChild(openChat);
+  }
+  const agentControls = mountAgentControls(box, openRecords, refreshChatInfo);
+  const openTarget = (target: string) => {
+    if (target === 'session-control') {
+      requestAnimationFrame(() => agentControls.open());
+      return;
+    }
+    agentControls.close();
+    requestAnimationFrame(() => { app.scrollTop = target === 'about' ? app.scrollHeight : 0; });
+  };
+  if (platform === 'tauri') {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      await listen<{ target?: string }>('settings-open', event => openTarget(event.payload?.target ?? ''));
+    } catch { /* Browser preview has no Tauri event bus. */ }
+  }
+  if (location.hash === '#about') openTarget('about');
 }
 
 // ---- 关于 ----
@@ -703,11 +720,4 @@ if (platform === 'android') {
     if (e.key === 'aliya_pet_mood') readMood();
   });
   readMood();
-}
-
-// 托盘"关于"入口：滚动到底部的关于区
-if (location.hash === '#about') {
-  requestAnimationFrame(() => {
-    app.scrollTop = app.scrollHeight;
-  });
 }

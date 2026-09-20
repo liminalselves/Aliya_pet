@@ -13,8 +13,8 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    tray::TrayIconBuilder,
+    Emitter, Manager, WindowEvent,
 };
 
 /// 前端上报的像素占用掩码：透明区域鼠标穿透的命中表。
@@ -249,26 +249,37 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 打开（或聚焦）设置窗口。anchor=about 时定位到关于区。
-fn open_settings_window(app: &tauri::AppHandle, anchor: Option<&str>) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.show();
-        let _ = w.set_focus();
-        return;
-    }
-    let url = match anchor {
-        Some(a) => format!("settings.html#{}", a),
-        None => "settings.html".to_string(),
-    };
-    let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(url.into()))
-        .title("Aliya 设置")
-        .inner_size(380.0, 620.0)
-        .resizable(false)
-        .always_on_top(true)
-        .build();
+/// 显示预创建的设置窗口，并按需通知页面打开指定区域。
+fn show_settings_window(app: &tauri::AppHandle, target: Option<&str>) -> Result<(), String> {
+    let win = app
+        .get_webview_window("settings")
+        .ok_or("settings 窗口未预创建")?;
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    let target = target.unwrap_or("main");
+    let _ = app.emit_to("settings", "settings-open", json!({ "target": target }));
+    Ok(())
 }
 
-/// 切换桌宠窗口显隐（托盘左键单击与菜单「显示 / 隐藏桌宠」共用）。
+#[tauri::command]
+fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), String> {
+    show_settings_window(&app, target.as_deref())
+}
+
+#[tauri::command]
+fn show_records(app: tauri::AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("records")
+        .ok_or("records 窗口未预创建")?;
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    let _ = app.emit_to("records", "records-open", ());
+    Ok(())
+}
+
+/// 由托盘菜单「显示 / 隐藏桌宠」切换桌宠窗口显隐。
 /// chat 伴侣窗跟随 pet：pet 藏则 chat 藏，pet 现则带回之前开着的 chat。
 fn toggle_pet_visibility(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("pet") {
@@ -300,6 +311,8 @@ fn main() {
             get_auto_start,
             open_url,
             update_hit_mask,
+            show_settings,
+            show_records,
             chat_window::show_chat,
             chat_window::hide_chat,
             chat_window::sync_chat_anchor,
@@ -309,8 +322,15 @@ fn main() {
             miauth::miauth_begin,
             miauth::miauth_end
         ])
-        // pet 移动/缩放时让已打开的 chat 跟随；chat 销毁时广播状态给 pet 清理表演
+        // pet 移动/缩放时让已打开的 chat 跟随；settings/records 关闭时隐藏复用。
         .on_window_event(|window, event| {
+            if matches!(window.label(), "settings" | "records") {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
+            }
             chat_window::handle_window_event(window.app_handle(), window.label(), event);
         })
         .setup(move |app| {
@@ -345,20 +365,12 @@ fn main() {
                 .icon(icon)
                 .tooltip("Aliya Pet")
                 .menu(&menu)
-                // 菜单只在右键时弹出；左键切换桌宠显隐
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        toggle_pet_visibility(tray.app_handle());
-                    }
-                })
+                // 左右键都显示系统托盘菜单；桌宠显隐只由菜单项控制。
+                .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "menu" => open_settings_window(app, None),
+                    "menu" => {
+                        let _ = show_settings_window(app, None);
+                    },
                     "show" => toggle_pet_visibility(app),
                     "cycle_size" => {
                         let _ = app.emit_to(
@@ -387,7 +399,9 @@ fn main() {
                             json!({ "action": "reset-position" }),
                         );
                     }
-                    "about" => open_settings_window(app, Some("about")),
+                    "about" => {
+                        let _ = show_settings_window(app, Some("about"));
+                    },
                     "quit" => app.exit(0),
                     _ => {}
                 })

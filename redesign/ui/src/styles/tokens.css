@@ -13,6 +13,15 @@
   --al-bg-2: #231d2c; /* 卡片 */
   --al-bg-3: #2c2436; /* 控件 */
   --al-bg-4: #372d44; /* 控件悬停 */
+  --al-surface-header: rgba(44, 36, 54, 0.72);
+  --al-surface-page: rgba(26, 21, 33, 0.72);
+  --al-surface-card: rgba(35, 29, 44, 0.94);
+  --al-surface-card-strong: rgba(44, 36, 54, 0.96);
+  --al-surface-card-focus: rgba(55, 45, 68, 0.98);
+  --al-surface-code: rgba(16, 13, 22, 0.72);
+  /* 悬浮于媒体内容上的半透明标签/按钮底（配图药丸、圆形操作钮） */
+  --al-overlay-chip: rgba(19, 16, 23, 0.62);
+  --al-overlay-chip-hover: rgba(44, 36, 54, 0.85);
 
   /* 描边（薰衣草色系透明线，层级递增） */
   --al-line: rgba(203, 183, 228, 0.10);

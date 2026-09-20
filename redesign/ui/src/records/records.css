@@ -1,0 +1,103 @@
+@import '../styles/tokens.css';
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; }
+body { margin: 0; overflow: hidden; background: var(--al-bg-0); color: var(--al-text-1); font: 13px/1.65 var(--al-font); }
+button { font: inherit; }
+
+.records-shell { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: radial-gradient(circle at 85% -10%, var(--al-accent-soft), transparent 34%), linear-gradient(180deg, var(--al-bg-1), var(--al-bg-0)); }
+.records-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 26px 30px 18px; border-bottom: 1px solid var(--al-line); background: linear-gradient(180deg, var(--al-surface-header), var(--al-surface-page)); }
+.records-heading { min-width: 0; }
+.records-kicker { display: block; color: var(--al-accent); font-size: 10px; font-weight: 700; letter-spacing: .24em; }
+.records-heading h1 { margin: 3px 0 0; font-size: clamp(22px, 4vw, 30px); line-height: 1.2; font-weight: 650; letter-spacing: .03em; }
+.records-title { min-height: 1.5em; margin: 7px 0 0; color: var(--al-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.records-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex: none; }
+.records-meta { color: var(--al-text-3); font-size: 11px; letter-spacing: .04em; }
+.records-refresh { min-width: 72px; padding: 7px 16px; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-pill); background: var(--al-bg-3); color: var(--al-text-1); cursor: pointer; transition: background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.records-refresh:hover { background: var(--al-bg-4); border-color: var(--al-accent); }
+.records-refresh:active { transform: scale(.97); }
+.records-refresh:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.records-refresh:disabled { opacity: .5; cursor: default; }
+.records-status { min-height: 30px; padding: 7px 30px 0; color: var(--al-accent-strong); font-size: 12px; }
+.records-status:empty { min-height: 10px; padding-top: 0; }
+.records-list { min-height: 0; overflow: auto; padding: 10px clamp(20px, 5vw, 48px) 34px; scrollbar-width: thin; scrollbar-color: var(--al-bg-4) transparent; scroll-behavior: smooth; }
+.records-list::-webkit-scrollbar { width: 7px; }
+.records-list::-webkit-scrollbar-thumb { background: var(--al-bg-4); border-radius: var(--al-r-pill); }
+
+/* 消息气泡：按内容自适应，用户靠右、Aliya 靠左，不把整屏拉成固定卡片列 */
+.record-message { width: fit-content; max-width: min(78%, 620px); margin: 10px 0; padding: 10px 13px 11px; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: linear-gradient(150deg, var(--al-surface-card-strong), var(--al-surface-card)); box-shadow: var(--al-shadow-1); overflow-wrap: anywhere; transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
+.record-message header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.record-message header strong { color: var(--al-accent-strong); font-size: 11px; font-weight: 650; letter-spacing: .06em; }
+.record-message header time { color: var(--al-text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.record-user { margin-left: auto; border-color: var(--al-line-strong); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: linear-gradient(150deg, var(--al-surface-card-focus), var(--al-surface-card-strong)); }
+.record-user header strong { color: var(--al-text-2); }
+.record-system { width: min(70%, 560px); margin: 18px auto; padding-block: 8px; text-align: center; background: transparent; border-style: dashed; box-shadow: none; color: var(--al-text-3); }
+.record-system header { justify-content: center; margin-bottom: 0; }
+.record-system header time { display: none; }
+.record-target { border-color: var(--al-accent); background: linear-gradient(150deg, var(--al-surface-card-focus), var(--al-surface-card-strong)); box-shadow: 0 0 0 3px var(--al-accent-soft), var(--al-shadow-2); }
+.record-target:focus { outline: none; }
+.records-truncated { width: min(86%, 700px); margin: 4px auto 18px; padding: 9px 16px; border-top: 1px solid var(--al-line); border-bottom: 1px solid var(--al-line); color: var(--al-text-3); text-align: center; font-size: 11px; }
+.records-empty { min-height: 70%; display: grid; place-content: center; text-align: center; color: var(--al-text-3); }
+.records-empty h2 { margin: 0 0 6px; color: var(--al-text-2); font-size: 16px; font-weight: 600; }
+.records-empty p { margin: 0; }
+
+.message-text { white-space: normal; user-select: text; -webkit-user-select: text; }
+.message-text::selection, .message-text *::selection { background: rgba(150,116,200,.5); }
+.message-text p { margin: 0 0 8px; }
+.message-text p:last-child { margin-bottom: 0; }
+.message-text pre { white-space: pre; overflow: auto; background: var(--al-surface-code); border: 1px solid var(--al-line); padding: 9px 11px; border-radius: var(--al-r-s); font-size: .92em; }
+.message-text code { font-family: Consolas, monospace; }
+.message-text a { color: var(--al-accent-strong); }
+.message-text blockquote { margin: 8px 0; padding-left: 11px; border-left: 2px solid var(--al-accent-deep); }
+.message-text table { border-collapse: collapse; }
+.message-text td, .message-text th { border: 1px solid var(--al-line-strong); padding: 5px 8px; }
+.message-text th { background: var(--al-accent-soft); }
+.message-table-wrap { overflow: auto; }
+
+/* 贴纸/表情按聊天消息尺度收敛，不与正文争尺寸 */
+.message-text .msk-sticker, .message-text .msk-emoji-img { height: 72px; max-height: 72px; max-width: 160px; width: auto; }
+.message-text .msk-sticker-missing { font-size: .85em; color: var(--al-text-3); }
+.message-text .msk-attachment-img { display: block; max-width: 100%; max-height: 220px; border-radius: var(--al-r-m); border: 1px solid var(--al-line-strong); background: var(--al-bg-2); }
+
+/* 生图卡片：图片铺满卡片、按自然比例无留白；隐藏“配图”及生图 prompt，
+   仅把重生成按钮浮在图上。无图状态退回上下布局。
+   DOM 不动（保留渲染器的事件委托），全部经 CSS 重排。
+   img 的 max-width 用绝对值：fit-content 的 max-content 计算会忽略百分比上限，
+   原图固有宽度会把气泡撑出空白。 */
+.message-text .msk-draw-card { position: relative; width: fit-content; max-width: 100%; margin: 8px 0 2px; overflow: hidden; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-l); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); }
+.message-text .msk-draw-head { display: none; }
+.message-text .msk-draw-body { display: block; min-height: 0; gap: 0; }
+.message-text .msk-draw-image { display: block; width: auto; height: auto; max-width: 340px; max-height: 360px; border-radius: 0; }
+.message-text .msk-draw-foot { display: flex; gap: 6px; padding: 0 10px 10px; }
+.message-text .msk-draw-btn { appearance: none; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-pill); background: var(--al-bg-4); color: var(--al-accent-strong); font-size: 11px; padding: 4px 12px; cursor: pointer; transition: background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.message-text .msk-draw-btn:hover { border-color: var(--al-accent); }
+.message-text .msk-draw-btn[disabled] { opacity: .5; cursor: wait; }
+.message-text .msk-draw-card:has(img) .msk-draw-foot { position: absolute; top: 9px; right: 9px; z-index: 1; padding: 0; }
+.message-text .msk-draw-card:has(img) .msk-draw-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--al-overlay-chip); backdrop-filter: blur(8px); color: var(--al-text-1); font-size: 0; }
+.message-text .msk-draw-card:has(img) .msk-draw-btn::after { content: '↻'; font-size: 16px; line-height: 1; }
+.message-text .msk-draw-card:has(img) .msk-draw-btn:hover { background: var(--al-overlay-chip-hover); }
+.message-text .msk-draw-card:has(img) .msk-draw-btn:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.message-text .msk-draw-state { display: grid; place-items: center; gap: 8px; min-height: 90px; padding: 12px; color: var(--al-text-2); font-size: 11px; text-align: center; }
+.message-text .msk-draw-error { color: var(--al-danger); }
+.message-text .msk-draw-spinner { width: 18px; height: 18px; border: 2px solid var(--al-line-strong); border-top-color: var(--al-accent); border-radius: 50%; animation: msk-draw-spin 1s linear infinite; }
+
+.mfm-x2 { font-size: 1.5em; } .mfm-x3 { font-size: 2em; } .mfm-x4 { font-size: 2.5em; }
+.mfm-center { display: block; text-align: center; } .mfm-flip { display: inline-block; transform: scaleX(-1); }
+.mfm-blur { filter: blur(4px); } .mfm-blur:hover { filter: none; }
+@keyframes mfm-spin { to { transform: rotate(360deg); } }
+@keyframes mfm-bounce { 50% { transform: translateY(-5px); } }
+@keyframes mfm-shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+.mfm-spin { display: inline-block; animation: mfm-spin 1.5s linear infinite; }
+.mfm-jump, .mfm-bounce, .mfm-jelly, .mfm-tada { display: inline-block; animation: mfm-bounce .8s ease-in-out infinite; }
+.mfm-shake { display: inline-block; animation: mfm-shake .4s linear infinite; }
+
+@media (max-width: 620px) {
+  .records-header { align-items: flex-start; padding: 20px 20px 15px; }
+  .records-actions { flex-direction: column; align-items: flex-end; gap: 7px; }
+  .records-status { padding-inline: 20px; }
+  .records-list { padding-inline: 14px; }
+  .record-message { max-width: 92%; }
+  .message-text .msk-draw-image { max-width: 300px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; } }

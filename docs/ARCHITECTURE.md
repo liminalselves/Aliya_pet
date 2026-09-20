@@ -77,6 +77,15 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - 关键坑：canvas 必须 `touch-action: none`，否则触摸拖动被浏览器当作
   滚动手势吞掉（指针事件变 pointercancel）。
 
+## Windows 辅助窗口
+
+- `chat`、`settings`、`records` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
+  命令线程不动态 `build()` 第二个 WebView2，避免已确认的死锁。
+- `settings` 与 `records` 使用正常原生窗口，可移动、可调整大小；关闭请求被壳拦截
+  为隐藏，下次打开保留页面实例。`chat` 仍是透明、无边框、锁定跟随 pet 的伴侣窗。
+- `records` 单独承载服务器时间线与托管配置的消息定位，避免长列表改变聊天伴侣窗
+  的几何和点击穿透契约。
+
 ## 设置同步
 
 - 存储：localStorage（`aliya_pet_settings_v1`），同一 Android App 的多个
@@ -92,8 +101,8 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 能力            | Windows（Tauri）                            | Android（Kotlin）                    |
 | --------------- | ------------------------------------------- | ------------------------------------ |
 | 窗口形态        | 透明无边框置顶小窗（512×768 基准）            | App 内全屏 / TYPE_APPLICATION_OVERLAY |
-| 菜单            | 系统托盘                                     | 右上角 ⋮ 菜单 + 通知按钮               |
+| 菜单            | 系统托盘；左右键均展开菜单，显隐由菜单项控制     | 右上角 ⋮ 菜单 + 通知按钮               |
 | 悬浮窗触发      | 常驻小窗                                     | 退后台自动转悬浮窗（可关）             |
-| 聊天            | 独立原生窗口跟随 pet（chat_window.rs）        | 内嵌 ChatView：主界面默认展开；悬浮窗入口按钮 + 窗口矩形按内容态扩展（软键盘临时聚焦） |
+| 聊天            | `chat` 跟随 pet；`records` 为可移动缩放独立窗  | 内嵌 ChatView：主界面默认展开；悬浮窗入口按钮 + 窗口矩形按内容态扩展（软键盘临时聚焦） |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
 | 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |
