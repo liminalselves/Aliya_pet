@@ -1,11 +1,11 @@
 /**
- * MSK 托管配置抽屉：与设置页同源的夜紫风格（token 见 ../../styles/tokens.css）。
+ * MSK 托管配置抽屉：与设置页同源的 Jade Terminal 风格（token 见 ../../styles/tokens.css）。
  */
 @import '../../styles/tokens.css';
 
-.agent-control-drawer { box-sizing:border-box; position:fixed; inset:0; width:100%; max-width:960px; height:100%; max-height:100%; margin:auto; padding:0; border:0; background:linear-gradient(180deg,var(--al-bg-1),var(--al-bg-0)); color:var(--al-text-1); font:13px/1.5 var(--al-font); }
+.agent-control-drawer { box-sizing:border-box; position:fixed; inset:0; width:100%; max-width:960px; height:100%; max-height:100%; margin:auto; padding:0; border:0; background:var(--al-bg-0); color:var(--al-text-1); font:13px/1.5 var(--al-font); }
 .agent-control-drawer[open] { display:flex; flex-direction:column; }
-.agent-control-drawer::backdrop { background:rgba(13,10,17,.66); backdrop-filter:blur(2px); }
+.agent-control-drawer::backdrop { background:var(--al-backdrop); backdrop-filter:blur(2px); }
 
 .agent-control-drawer header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 20px 14px; }
 .agent-control-drawer header small { color:var(--al-accent); font-size:10px; font-weight:600; letter-spacing:.24em; }
@@ -16,19 +16,19 @@
 .agent-control-drawer button:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 
 .agent-control-drawer .control-close { align-self:flex-start; width:32px; height:32px; flex:none; border:1px solid var(--al-line-strong); border-radius:50%; background:transparent; color:var(--al-text-2); font-size:20px; line-height:1; }
-.agent-control-drawer .control-close:hover { background:var(--al-bg-3); color:var(--al-text-1); border-color:rgba(203,183,228,.4); }
+.agent-control-drawer .control-close:hover { background:var(--al-bg-3); color:var(--al-accent-strong); border-color:var(--al-accent-strong); }
 
 /* 分段式页签：轨道 + 选中胶囊 */
 .agent-control-drawer nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; margin:0 16px 10px; padding:4px; background:var(--al-bg-0); border:1px solid var(--al-line); border-radius:var(--al-r-m); }
 .agent-control-drawer nav button { padding:7px 2px; border:0; border-radius:var(--al-r-s); background:none; color:var(--al-text-2); font-size:12px; white-space:nowrap; }
 .agent-control-drawer nav button:hover { background:var(--al-bg-3); color:var(--al-text-1); }
-.agent-control-drawer nav button[aria-pressed=true] { color:var(--al-on-accent); font-weight:600; background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent)); box-shadow:0 2px 8px rgba(150,116,200,.28); }
+.agent-control-drawer nav button[aria-pressed=true] { color:var(--al-on-accent); font-weight:600; background:var(--al-accent); box-shadow:var(--al-shadow-accent); }
 .agent-control-drawer nav button[aria-pressed=true]:hover { background:var(--al-accent-strong); }
 
 .agent-control-drawer .control-status { flex:none; padding:0 20px 10px; color:var(--al-accent-strong); font-size:12px; }
 .agent-control-drawer .control-status:empty { display:none; }
 .agent-control-drawer .control-retry { align-self:flex-start; margin:0 20px 10px; border:1px solid var(--al-line-strong); border-radius:var(--al-r-s); padding:5px 12px; background:var(--al-bg-3); }
-.agent-control-drawer .control-retry:hover { background:var(--al-bg-4); border-color:rgba(203,183,228,.4); }
+.agent-control-drawer .control-retry:hover { background:var(--al-bg-4); border-color:var(--al-accent-strong); }
 
 .agent-control-drawer .control-body { flex:1; min-height:0; border-top:1px solid var(--al-line); }
 .agent-control-frame { display:block; width:100%; height:100%; border:0; }

@@ -8,8 +8,8 @@ export type ControlPanel = keyof typeof CONTROL_PANELS;
 export interface ControlEvent { type: string; messageId?: string; url?: string; endpoint?: string; reason?: string; code?: string }
 
 export const CONTROL_APPEARANCE = {
-  colorScheme: 'dark', accent: '#bca5df', background: '#241f26', panel: '#2f2933',
-  foreground: '#e8e2e6', muted: '#a89aa8', divider: '#4a4048', radius: '10px',
+  colorScheme: 'dark', accent: '#63e6be', background: '#0b1210', panel: '#121b17',
+  foreground: '#e6fff7', muted: '#8fa9a0', divider: 'rgba(230,255,247,0.10)', radius: '10px',
   fontFamily: '"Microsoft YaHei", system-ui, sans-serif', fontSize: '13px',
   contentMaxWidth: '860px', spacing: '12px',
 };

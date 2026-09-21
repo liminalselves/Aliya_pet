@@ -10,21 +10,21 @@
 #chat-ui [hidden] { display:none!important; }
 #chat-ui button,#chat-ui input,#chat-ui textarea { font:inherit; }
 #chat-ui button { cursor:pointer; color:inherit; background:transparent; border:0; border-radius:6px; padding:3px 7px; transition:background var(--al-t-fast) var(--al-ease); }
-#chat-ui button:hover { background:#ffffff18; }
+#chat-ui button:hover { background:var(--al-hover-fill); }
 #chat-ui button:disabled { opacity:.5; cursor:default; }
-#chat-ui button:focus-visible,#chat-ui textarea:focus-visible,#chat-ui input:focus-visible { outline:none; box-shadow:0 0 0 2px var(--al-accent); }
+#chat-ui button:focus-visible,#chat-ui textarea:focus-visible,#chat-ui input:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 
 /* ---- 内嵌入口（pet 脚下的小药丸） ---- */
-.chat-launcher { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; padding:6px 15px; border-radius:var(--al-r-pill); border:1px solid var(--al-line-strong); background:rgba(28,23,37,.82); color:var(--al-accent-strong); font:12px/1 var(--al-font); letter-spacing:.1em; cursor:pointer; pointer-events:auto; box-shadow:0 4px 14px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.07); backdrop-filter:blur(8px); transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease); }
+.chat-launcher { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; padding:6px 15px; border-radius:var(--al-r-pill); border:1px solid var(--al-line-strong); background:var(--al-surface-card); color:var(--al-text-2); font:12px/1 var(--al-font); letter-spacing:.1em; cursor:pointer; pointer-events:auto; box-shadow:var(--al-shadow-1); backdrop-filter:blur(8px); transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease); }
 .chat-launcher svg { display:block; flex:none; }
-.chat-launcher:hover { background:var(--al-bg-4); border-color:rgba(203,183,228,.42); transform:translateX(-50%) translateY(-1px); box-shadow:0 7px 18px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09); }
+.chat-launcher:hover { background:var(--al-bg-4); border-color:var(--al-accent-strong); color:var(--al-accent-strong); transform:translateX(-50%) translateY(-1px); box-shadow:var(--al-shadow-2); }
 .chat-launcher:active { transform:translateX(-50%) scale(.96); }
-.chat-launcher:focus-visible { outline:none; box-shadow:0 0 0 2px var(--al-accent),0 4px 14px rgba(0,0,0,.45); }
-.chat-launcher.open { background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent)); border-color:transparent; color:var(--al-on-accent); box-shadow:var(--al-shadow-accent); }
+.chat-launcher:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
+.chat-launcher.open { background:var(--al-accent); border-color:var(--al-accent); color:var(--al-on-accent); box-shadow:var(--al-shadow-accent); }
 /* 内嵌模式（Android/web）下 #chat-ui button 基础样式优先级更高，需要覆盖回来 */
-#chat-ui .chat-launcher { border:1px solid var(--al-line-strong); background:rgba(28,23,37,.82); padding:6px 15px; }
+#chat-ui .chat-launcher { border:1px solid var(--al-line-strong); background:var(--al-surface-card); padding:6px 15px; }
 #chat-ui .chat-launcher:hover { background:var(--al-bg-4); }
-#chat-ui .chat-launcher.open,#chat-ui .chat-launcher.open:hover { background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent)); color:var(--al-on-accent); }
+#chat-ui .chat-launcher.open,#chat-ui .chat-launcher.open:hover { background:var(--al-accent); color:var(--al-on-accent); }
 /* 独立 chat 原生窗口由 pet 下方按钮开关；这里不能再出现第二个备用入口。 */
 body.chat-window #chat-ui .chat-launcher { display:none!important; }
 /* pet 侧按钮用 hidden 属性隐藏：.chat-launcher 的 display:flex 会压过 UA 的 [hidden] 规则，必须显式补。 */
@@ -35,18 +35,18 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .chat-shell { position:absolute; inset:0 8px 6px; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-start; container-type:inline-size; }
 
 /* ---- 回复/连接面板 ---- */
-.gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - 52px); border:1px solid var(--al-line-strong); border-bottom:0; border-radius:var(--al-r-m) var(--al-r-m) 0 0; background:linear-gradient(180deg,rgba(44,36,56,.78),rgba(33,27,43,.84)); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2),inset 0 1px 0 rgba(255,255,255,.05); overflow:hidden; backdrop-filter:blur(10px); }
+.gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - 52px); border:1px solid var(--al-line-strong); border-bottom:0; border-radius:var(--al-r-m) var(--al-r-m) 0 0; background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; backdrop-filter:blur(10px); }
 /* 连接/会话/历史屏需要完整高度；回复页只有一句，内容决定高度但至少保持可读。 */
 .chat-shell.with-panel .gal-panel { min-height:min(96px,calc(100% - 52px)); }
-.gal-nameplate { display:flex; align-items:center; gap:7px; min-height:25px; padding:2px 6px 2px 12px; background:linear-gradient(180deg,rgba(211,193,239,.94),rgba(185,160,224,.88)); color:var(--al-on-accent); user-select:none; flex:none; box-shadow:inset 0 -1px rgba(0,0,0,.14); }
+.gal-nameplate { display:flex; align-items:center; gap:7px; min-height:25px; padding:2px 6px 2px 12px; background:var(--al-accent); color:var(--al-on-accent); user-select:none; flex:none; box-shadow:inset 0 -1px rgba(0,0,0,.14); }
 .gal-nameplate strong { font-size:clamp(11px,3.8cqw,12.5px); font-weight:700; letter-spacing:.08em; }
-.gal-nameplate .panel-title { color:#5a4874; font-size:9.5px; letter-spacing:.06em; }
-.gal-nameplate .close-panel { margin-left:auto; padding:0 7px; border-radius:var(--al-r-s); color:#3d2f52; font-size:14px; line-height:1.3; }
-.gal-nameplate .close-panel:hover { background:rgba(0,0,0,.14); }
-.gal-content { flex:1; min-height:0; padding:9px 12px; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(106,90,126,.4) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
-.gal-content::selection,.message-text::selection { background:rgba(150,116,200,.5); }
+.gal-nameplate .panel-title { color:var(--al-on-accent-muted); font-size:9.5px; letter-spacing:.06em; }
+.gal-nameplate .close-panel { margin-left:auto; padding:0 7px; border-radius:var(--al-r-s); color:var(--al-on-accent); font-size:14px; line-height:1.3; }
+.gal-nameplate .close-panel:hover { background:var(--al-on-accent-hover); }
+.gal-content { flex:1; min-height:0; padding:9px 12px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content::selection,.message-text::selection { background:var(--al-selection); }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
-.gal-content::-webkit-scrollbar-thumb { background:rgba(106,90,126,.5); border-radius:3px; }
+.gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
 .gal-content::-webkit-scrollbar-track { background:transparent; }
 .gal-panel.replying .gal-content { cursor:pointer; }
 
@@ -75,17 +75,17 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content summary { cursor:pointer; color:var(--al-text-2); }
 .gal-content .muted-note { color:var(--al-text-3); font-size:11px; margin:2px 0; }
 
-/* 按钮分级：主操作紫色药丸（与发送一致），次要 ghost 淡边框，避免满屏裸文字按钮。 */
-.gal-content .btn-primary { background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent))!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill)!important; padding:4px 14px!important; font-weight:600; box-shadow:0 2px 8px rgba(150,116,200,.28); }
+/* 按钮分级：主操作玉绿色药丸（与发送一致），次要 ghost 淡边框，避免满屏裸文字按钮。 */
+.gal-content .btn-primary { background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill)!important; padding:4px 14px!important; font-weight:600; box-shadow:var(--al-shadow-accent); }
 .gal-content .btn-primary:hover { background:var(--al-accent-strong)!important; }
 /* #chat-ui button 的 ID 规则会压过这里的 border/radius，必须 !important。 */
 .gal-content .ghost { border:1px solid var(--al-line-strong)!important; border-radius:var(--al-r-pill)!important; padding:3px 11px!important; font-size:.92em; color:var(--al-text-2); }
-.gal-content .ghost:hover { border-color:rgba(203,183,228,.4)!important; background:#ffffff12; }
+.gal-content .ghost:hover { border-color:var(--al-accent-strong)!important; background:var(--al-hover-fill); color:var(--al-accent-strong); }
 .auth-actions { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
 .gal-content form.manual { display:flex; gap:6px; margin:6px 0 0; }
 .gal-content form.manual input { flex:1; }
-.gal-content input { min-width:0; width:100%; color:inherit; background:#ffffff0e; border:1px solid var(--al-line-strong); border-radius:var(--al-r-s); padding:4px 8px; transition:border-color var(--al-t-fast) var(--al-ease),background var(--al-t-fast) var(--al-ease); }
-.gal-content input:focus { border-color:var(--al-accent); outline:none; background:#ffffff14; box-shadow:0 0 0 3px var(--al-accent-soft); }
+.gal-content input { min-width:0; width:100%; color:inherit; background:var(--al-bg-3); border:1px solid var(--al-line-strong); border-radius:var(--al-r-s); padding:4px 8px; transition:border-color var(--al-t-fast) var(--al-ease),background var(--al-t-fast) var(--al-ease); }
+.gal-content input:focus { border-color:var(--al-accent); outline:none; background:var(--al-bg-4); box-shadow:var(--al-focus-ring); }
 /* 记录/定位屏的工具行：刷新等次要操作右对齐收在角落，不与正文争视觉。 */
 .panel-tools { display:flex; justify-content:flex-end; margin:-2px 0 2px; }
 /* 记录截断提示：居中弱化，上下发线收束成一条分隔带 */
@@ -99,9 +99,9 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .session-actions { display:flex; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid var(--al-line); }
 .gal-content article small { color:var(--al-accent); }
 .session-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; width:100%; text-align:left; border-bottom:1px solid var(--al-line)!important; border-radius:var(--al-r-s); padding:7px 8px!important; margin:0 -8px; transition:background var(--al-t-fast) var(--al-ease); }
-.session-row:hover { background:#ffffff0d; }
+.session-row:hover { background:var(--al-hover-fill); }
 .session-row small { flex-basis:100%; color:var(--al-text-3); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.unread-dot { width:5px; height:5px; border-radius:50%; background:var(--al-accent); box-shadow:0 0 6px var(--al-accent); }
+.unread-dot { width:5px; height:5px; border-radius:50%; background:var(--al-success); }
 .gal-footer { display:flex; align-items:center; gap:10px; padding:3px 12px 6px; color:var(--al-text-3); font-size:10px; }
 .page-hint { flex:1; letter-spacing:.05em; }
 .page-hint.blink { animation:hint-blink 1.3s ease-in-out infinite; }
@@ -109,11 +109,11 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .dismiss-reply { font-size:10px; padding:1px 7px; }
 
 /* ---- 输入区 ---- */
-.chat-composer { position:relative; width:100%; flex:none; padding:4px 8px 2px; border:1px solid var(--al-line-strong); border-radius:0 0 var(--al-r-m) var(--al-r-m); background:rgba(33,27,43,.82); pointer-events:auto; box-shadow:var(--al-shadow-2); backdrop-filter:blur(10px); transition:border-color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease); }
-.chat-composer:focus-within { border-color:var(--al-accent); box-shadow:0 0 0 3px var(--al-accent-soft),var(--al-shadow-2); }
+.chat-composer { position:relative; width:100%; flex:none; padding:4px 8px 2px; border:1px solid var(--al-line-strong); border-radius:0 0 var(--al-r-m) var(--al-r-m); background:var(--al-surface-card); pointer-events:auto; box-shadow:var(--al-shadow-2); backdrop-filter:blur(10px); transition:border-color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease); }
+.chat-composer:focus-within { border-color:var(--al-accent); box-shadow:var(--al-focus-ring),var(--al-shadow-2); }
 /* 只有输入框时是一枚贴脚的紧凑药丸；回复/连接面板出现时与上方面板无缝连成卡片。 */
 .chat-shell.composer-only .chat-composer { border-radius:var(--al-r-m); animation:gal-in .18s var(--al-ease); }
-.chat-composer textarea { display:block; width:100%; height:26px; max-height:64px; resize:none; color:#faf7ff; background:none; border:0; padding:2px 3px; line-height:21px; font-size:clamp(11.5px,4cqw,13px); }
+.chat-composer textarea { display:block; width:100%; height:26px; max-height:64px; resize:none; color:var(--al-text-1); background:none; border:0; padding:2px 3px; line-height:21px; font-size:clamp(11.5px,4cqw,13px); }
 .chat-composer textarea::placeholder { color:var(--al-text-3); }
 .composer-toolbar { display:flex; gap:1px; align-items:center; font-size:10px; color:var(--al-text-3); }
 .composer-toolbar button { padding:1px 5px!important; }
@@ -122,7 +122,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .composer-toolbar .session-config:focus-visible { color:var(--al-accent-strong); border-color:var(--al-accent); }
 .composer-toolbar .session-config:disabled { opacity:.5; cursor:default; }
 .chat-status { margin-left:auto; font-size:9.5px; }
-.send { background:linear-gradient(180deg,var(--al-accent-strong),var(--al-accent))!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill); padding:1px 10px!important; font-weight:600; box-shadow:0 2px 8px rgba(150,116,200,.28); }
+.send { background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill); padding:1px 10px!important; font-weight:600; box-shadow:var(--al-shadow-accent); }
 .send:hover { background:var(--al-accent-strong)!important; }
 .close-window { font-size:12px; padding:0 6px!important; }
 .message-text { white-space:normal; }
@@ -137,15 +137,15 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 @keyframes typing-bounce { 0%,60%,100% { transform:translateY(0); opacity:.45; } 30% { transform:translateY(-5px); opacity:1; } }
 
 /* ---- 消息排版 ---- */
-.message-text pre { white-space:pre; overflow:auto; background:rgba(16,13,22,.7); border:1px solid var(--al-line); padding:7px 9px; border-radius:var(--al-r-s); font-size:.92em; }
+.message-text pre { white-space:pre; overflow:auto; background:var(--al-surface-code); border:1px solid var(--al-line); padding:7px 9px; border-radius:var(--al-r-s); font-size:.92em; }
 .message-text code { font-family:Consolas,monospace; }
 .message-text a { color:var(--al-accent-strong); }
 .message-text blockquote { margin:8px 0; padding-left:10px; border-left:2px solid var(--al-accent-deep); }
 .message-text table { border-collapse:collapse; }
 .message-text td,.message-text th { border:1px solid var(--al-line-strong); padding:4px 8px; }
-.message-text th { background:#ffffff14; }
+.message-text th { background:var(--al-accent-soft); }
 .message-text pre::-webkit-scrollbar { width:4px; height:4px; }
-.message-text pre::-webkit-scrollbar-thumb { background:rgba(106,90,126,.5); border-radius:3px; }
+.message-text pre::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
 .message-table-wrap { overflow:auto; }
 .mfm-x2 { font-size:1.5em; } .mfm-x3 { font-size:2em; } .mfm-x4 { font-size:2.5em; }
 .mfm-center { display:block; text-align:center; } .mfm-flip { display:inline-block; transform:scaleX(-1); }

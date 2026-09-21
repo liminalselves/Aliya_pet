@@ -40,17 +40,18 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
   chat 打开后隐藏 pet 脚下的入口按钮（pet 侧 `.chat-launcher[hidden]`
   需 `display:none!important` 压过自身的 `display:flex`），关闭后恢复。
-- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（夜紫色阶、
-  主紫、圆角、阴影、动效、焦点环），pet/聊天/设置/记录/托管抽屉只引用变量、
-  不自造色值。面板/输入框半透明（透出桌面与模型，backdrop 10px 模糊），
-  字号随窗口宽度自适应（`.chat-shell` container-type + cqw clamp
+- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（Jade Terminal
+  深色阶、玉石绿主色、低对比边框、圆角、阴影、动效、焦点环），pet/聊天/
+  设置/记录/托管抽屉只引用变量，不自造色值。页面底色 `#0B1210`，卡片与面板
+  `#121B17`，主操作 `#63E6BE`，链接与悬停强调 `#2FCF9C`；不使用装饰渐变或
+  强发光。透明窗口内的面板/输入框保留半透明（透出桌面与模型，backdrop 10px
+  模糊），字号随窗口宽度自适应（`.chat-shell` container-type + cqw clamp
   11.5–13px）；名牌条 25px 高，工具栏保留记录/会话/会话配置/发送/×（退出账号
-  在会话屏内）。
-  按钮分级：主操作 `.btn-primary` 紫药丸（与发送一致），次要 `.ghost`
-  淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，border/radius
-  需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌不抢软键盘），
-  composer 有 `:focus-within` 紫色聚焦环；历史角色标签 who-user/who-aliya
-  双色区分。
+  在会话屏内）。按钮分级：主操作 `.btn-primary` 玉绿色药丸（与发送一致），
+  次要 `.ghost` 淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，
+  border/radius 需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌
+  不抢软键盘），composer 有 `:focus-within` 玉绿色聚焦环；历史角色标签
+  who-user/who-aliya 双色区分。
 - 锚点由 pet 前端 `sync_chat_anchor(x,y,w,h)` 上报（物理像素，与
   `update_hit_mask` 的 win_* 同源）；未上报回退原生查询。
 - 壳命令：`show_chat`/`hide_chat`/`sync_chat_anchor`/

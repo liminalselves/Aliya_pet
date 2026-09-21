@@ -16,10 +16,10 @@ body::after {
   opacity: 0;
 }
 body.snap-confirm::after { animation: snap-confirm .65s var(--al-ease); }
-body[data-snap-edge~="left"]::after { border-left-color: rgba(211, 193, 239, .9); }
-body[data-snap-edge~="right"]::after { border-right-color: rgba(211, 193, 239, .9); }
-body[data-snap-edge~="top"]::after { border-top-color: rgba(211, 193, 239, .9); }
-body[data-snap-edge~="bottom"]::after { border-bottom-color: rgba(211, 193, 239, .9); }
+body[data-snap-edge~="left"]::after { border-left-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="right"]::after { border-right-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="top"]::after { border-top-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emphasis); }
 @keyframes snap-confirm { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
 
 /* 台词气泡：角色头顶居中，不拦截指针。
@@ -39,15 +39,15 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: rgba(211, 193, 239,
   text-size-adjust: 100%;
   padding: 10px 16px;
   border-radius: var(--al-r-l);
-  border: 1px solid rgba(150, 116, 200, 0.28);
-  background: rgba(255, 254, 255, 0.96);
-  color: #3a3335;
+  border: 1px solid var(--al-line-strong);
+  background: var(--al-surface-card-strong);
+  color: var(--al-text-1);
   font-family: var(--al-font);
   font-size: 14px;
   line-height: 1.55;
   text-align: center;
   letter-spacing: 0.02em;
-  box-shadow: 0 6px 20px rgba(60, 40, 80, 0.22), 0 1px 3px rgba(60, 40, 80, 0.12);
+  box-shadow: var(--al-shadow-2);
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
@@ -66,8 +66,8 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: rgba(211, 193, 239,
   height: 10px;
   margin-left: -5px;
   background: inherit;
-  border-right: 1px solid rgba(150, 116, 200, 0.28);
-  border-bottom: 1px solid rgba(150, 116, 200, 0.28);
+  border-right: 1px solid var(--al-line-strong);
+  border-bottom: 1px solid var(--al-line-strong);
   transform: rotate(45deg);
 }
 

@@ -1,57 +1,79 @@
 /**
  * Aliya 设计规范（唯一权威来源）：
- * 夜紫深色阶 + 薰衣草主色；所有 Web 表面（pet/聊天/设置/托管抽屉）从这里取 token。
+ * Jade Terminal 深色主题；所有 Web 表面（pet/聊天/设置/记录/托管抽屉）从这里取 token。
  * 新表面只引用变量，不再自造色值、圆角、阴影与动效参数。
  */
 :root {
+  color-scheme: dark;
+
   /* 字体 */
   --al-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
 
-  /* 深色阶（夜紫，自底向亮） */
-  --al-bg-0: #131017; /* 窗口底 / 最深处 */
-  --al-bg-1: #1a1521; /* 页面底 */
-  --al-bg-2: #231d2c; /* 卡片 */
-  --al-bg-3: #2c2436; /* 控件 */
-  --al-bg-4: #372d44; /* 控件悬停 */
-  --al-surface-header: rgba(44, 36, 54, 0.72);
-  --al-surface-page: rgba(26, 21, 33, 0.72);
-  --al-surface-card: rgba(35, 29, 44, 0.94);
-  --al-surface-card-strong: rgba(44, 36, 54, 0.96);
-  --al-surface-card-focus: rgba(55, 45, 68, 0.98);
-  --al-surface-code: rgba(16, 13, 22, 0.72);
-  /* 悬浮于媒体内容上的半透明标签/按钮底（配图药丸、圆形操作钮） */
-  --al-overlay-chip: rgba(19, 16, 23, 0.62);
-  --al-overlay-chip-hover: rgba(44, 36, 54, 0.85);
+  /* Jade Terminal 核心色 */
+  --color-primary: #63e6be;
+  --color-accent: #2fcf9c;
+  --color-bg: #0b1210;
+  --color-surface: #121b17;
+  --color-text: #e6fff7;
+  --color-text-secondary: #8fa9a0;
+  --color-success: #4ddba9;
+  --color-warning: #e0c56d;
+  --color-error: #e26c79;
 
-  /* 描边（薰衣草色系透明线，层级递增） */
-  --al-line: rgba(203, 183, 228, 0.10);
-  --al-line-strong: rgba(203, 183, 228, 0.22);
+  /* 深色阶（自底向亮） */
+  --al-bg-0: var(--color-bg); /* 窗口底 / 页面底 */
+  --al-bg-1: #0e1713; /* 页面内底层 */
+  --al-bg-2: var(--color-surface); /* 卡片 / 面板 */
+  --al-bg-3: #15201b; /* 控件 */
+  --al-bg-4: #18241f; /* 控件悬停 */
+  --al-surface-header: rgba(18, 27, 23, 0.96);
+  --al-surface-page: rgba(11, 18, 16, 0.94);
+  --al-surface-card: rgba(18, 27, 23, 0.94);
+  --al-surface-card-strong: rgba(21, 32, 27, 0.97);
+  --al-surface-card-focus: rgba(24, 36, 31, 0.98);
+  --al-surface-code: rgba(7, 13, 11, 0.86);
+  --al-overlay-chip: rgba(11, 18, 16, 0.72);
+  --al-overlay-chip-hover: rgba(24, 36, 31, 0.92);
+  --al-backdrop: rgba(4, 10, 7, 0.72);
+
+  /* 描边与交互叠层 */
+  --al-line: rgba(230, 255, 247, 0.08);
+  --al-line-strong: rgba(230, 255, 247, 0.12);
+  --al-hover-fill: rgba(230, 255, 247, 0.06);
+  --al-active-fill: rgba(99, 230, 190, 0.12);
+  --al-selection: rgba(99, 230, 190, 0.28);
+  --al-scrollbar: rgba(143, 169, 160, 0.42);
 
   /* 文字 */
-  --al-text-1: #efeaf5;
-  --al-text-2: #b3a8c4;
-  --al-text-3: #847997;
+  --al-text-1: var(--color-text);
+  --al-text-2: var(--color-text-secondary);
+  --al-text-3: #6f877f;
 
-  /* 主题紫 */
-  --al-accent: #bca5df;
-  --al-accent-strong: #d3c1ef;
-  --al-accent-soft: rgba(188, 165, 223, 0.14);
-  --al-accent-deep: #8a68b8;
-  --al-on-accent: #251d33;
+  /* 主题玉石绿；保留既有变量名，避免各窗口重复定义 */
+  --al-accent: var(--color-primary);
+  --al-accent-strong: var(--color-accent);
+  --al-accent-soft: var(--al-active-fill);
+  --al-accent-deep: #1fae83;
+  --al-accent-emphasis: rgba(99, 230, 190, 0.9);
+  --al-on-accent: #08130f;
+  --al-on-accent-muted: rgba(8, 19, 15, 0.68);
+  --al-on-accent-hover: rgba(8, 19, 15, 0.12);
 
   /* 状态 */
-  --al-danger: #e78a92;
+  --al-success: var(--color-success);
+  --al-warning: var(--color-warning);
+  --al-danger: var(--color-error);
 
   /* 圆角 */
   --al-r-s: 8px;
-  --al-r-m: 12px;
-  --al-r-l: 16px;
+  --al-r-m: 10px;
+  --al-r-l: 12px;
   --al-r-pill: 999px;
 
-  /* 阴影 */
-  --al-shadow-1: 0 2px 8px rgba(0, 0, 0, 0.25);
-  --al-shadow-2: 0 10px 28px rgba(0, 0, 0, 0.38);
-  --al-shadow-accent: 0 4px 16px rgba(150, 116, 200, 0.35);
+  /* 阴影：只提供轻微层级，不做发光 */
+  --al-shadow-1: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --al-shadow-2: 0 10px 28px rgba(0, 0, 0, 0.28);
+  --al-shadow-accent: 0 4px 14px rgba(47, 207, 156, 0.16);
 
   /* 动效：统一缓动，快档用于悬停/按下，中档用于面板进出 */
   --al-ease: cubic-bezier(0.22, 0.8, 0.32, 1);
@@ -60,5 +82,5 @@
   --al-t-med: 0.22s;
 
   /* 焦点环（仅 :focus-visible 使用） */
-  --al-focus-ring: 0 0 0 2px var(--al-bg-1), 0 0 0 4px var(--al-accent);
+  --al-focus-ring: 0 0 0 3px rgba(99, 230, 190, 0.35);
 }
