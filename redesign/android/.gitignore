@@ -5,3 +5,7 @@ local.properties
 .idea/
 *.iml
 captures/
+
+# 正式签名（密钥不入库）
+keystore.properties
+keystore/
