@@ -99,7 +99,7 @@ export class ChatView {
         <section class="gal-panel" aria-label="Aliya 对话" hidden>
           <button class="close-panel" aria-label="关闭对话框">×</button>
           <div class="gal-content" tabindex="0"></div>
-          <footer class="gal-footer" hidden><span class="page-hint"></span><button class="dismiss-reply">收起</button></footer>
+          <footer class="gal-footer" hidden><span class="page-hint"></span></footer>
         </section>
         <form class="chat-composer" hidden>
           <textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea>
@@ -112,8 +112,8 @@ export class ChatView {
     this.get('.chat-launcher').onclick = () => this.setOpen(true);
     this.get('.close-window').onclick = () => this.close();
     this.get('.close-panel').onclick = () => { if (this.screen === 'ready') this.hideReply(); else this.close(); };
-    this.get('.dismiss-reply').onclick = () => this.hideReply();
-    this.content.addEventListener('click', e => this.onContentClick(e));
+    // 捕获阶段挂面板：先于渲染器冒泡监听（图片外部打开）消费点击，纯图片页也点得动。
+    this.panel.addEventListener('click', e => this.onPanelClick(e), true);
     this.get('.history').onclick = () => {
       if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_records')).catch(() => {});
       else this.showHistory();
@@ -472,12 +472,21 @@ export class ChatView {
   private clearCueTimer(): void {
     if (this.cueTimer) { clearTimeout(this.cueTimer); this.cueTimer = null; }
   }
-  private onContentClick(e: MouseEvent): void {
+  /**
+   * GAL 式推进：播放中点击直接补完本页，播完点击翻下一页，末页点击收起。
+   * 播放期间图片点击（渲染器的 msk-zoom 外部打开）让位给翻页——纯图片页占满
+   * 点击区域，不拦截会表现为「点不动」；放大看图仍可在记录里点。
+   * 链接/生图按钮等真交互控件不翻页。播放中 gal-content 为 user-select:none
+   * （见 chat.css），点击不会触发浏览器选词——可选文本时快速连点会双击选词/
+   * 三击选段，选区反复重建既吞点击又闪高亮（「点不动/误选中」的根因）。
+   */
+  private onPanelClick(e: MouseEvent): void {
     if (!this.replyActive || this.screen !== 'ready' || this.historyVisible || !this.segments.length) return;
-    // 链接/图片/生图按钮交给渲染器处理，不参与翻页；划选文本也不翻页。
-    if ((e.target as Element | null)?.closest('a,button,img,[data-msk-action]')) return;
-    const selection = this.content.ownerDocument.getSelection();
-    if (selection && !selection.isCollapsed) return;
+    if ((e.target as Element | null)?.closest('a,button,[data-msk-action]')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    // 保险：清掉播放开始前（非 replying 态）遗留的选区。
+    this.content.ownerDocument.getSelection()?.removeAllRanges();
     if (this.typewriter?.typing) { this.typewriter.finish(); return; }
     if (this.pageIndex < this.segments.length - 1) this.showPage(this.pageIndex + 1, true);
     else this.hideReply();

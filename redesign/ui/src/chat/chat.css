@@ -45,7 +45,8 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
 .gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
 .gal-content::-webkit-scrollbar-track { background:transparent; }
-.gal-panel.replying .gal-content { cursor:pointer; }
+/* 播放期间文字不可选：连点不会闪出选词高亮（gal 对话框手感）；划选复制去记录。 */
+.gal-panel.replying .gal-content { cursor:pointer; user-select:none; -webkit-user-select:none; }
 
 /* 回复分页：MSK 分段一段一页，图片/贴纸收敛到对话框尺度 */
 .gal-content .msk-segment + .msk-segment { margin-top:0; }
@@ -116,7 +117,6 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .page-hint { flex:1; letter-spacing:.05em; }
 .page-hint.blink { animation:hint-blink 1.3s ease-in-out infinite; }
 @keyframes hint-blink { 0%,100% { opacity:.4; } 50% { opacity:1; } }
-.dismiss-reply { font-size:10px; padding:1px 7px; }
 
 /* ---- 输入区 ---- */
 .chat-composer { position:relative; width:100%; flex:none; padding:4px 8px 2px; border:1px solid var(--al-line-strong); border-radius:0 0 var(--al-r-m) var(--al-r-m); background:var(--al-surface-card); pointer-events:auto; box-shadow:var(--al-shadow-2); backdrop-filter:blur(10px); transition:border-color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease); }
