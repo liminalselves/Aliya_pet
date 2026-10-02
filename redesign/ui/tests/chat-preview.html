@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>chat reply preview fixture</title>
+<style>
+  html, body { margin: 0; background: #14161b; }
+  /* 固定 420x240 舞台，与真实视口无关：矮窗才能造出内容超高出滚动条的场景。 */
+  #chat-ui { inset: auto !important; top: 0 !important; left: 0 !important; width: 420px !important; height: 240px !important; }
+</style>
+</head>
+<body>
+<script type="module">
+import { ChatView } from '../src/chat/view.ts';
+
+// 最小桩：不触网。bootstrap 走「未连接」分支渲染连接屏，随后被 enter() 覆盖。
+const stubAuth = {
+  token: null,
+  resumeCallback: async () => false,
+  validateSaved: async () => {},
+  loginManual: async () => {},
+  loginBrowser: async () => {},
+  savedUser: () => null,
+  logout() {},
+};
+const controller = {
+  busy: false, messages: [], latest: null, error: '', persist: false,
+  onChange: null, onCue: null, onCancelPerformance: null,
+  stop() {}, send() {}, retry() {}, useProvider() {}, replaceHistory() {},
+};
+const view = new ChatView(controller, stubAuth, () => {}, undefined);
+
+// 300px 高占位图：顶端/底端带标记，截图一眼看出停在顶部还是底部。
+const TALL_IMG = 'data:image/svg+xml,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="300">`
+  + `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">`
+  + `<stop offset="0" stop-color="#7fb069"/><stop offset="1" stop-color="#274156"/>`
+  + `</linearGradient></defs><rect width="160" height="300" fill="url(#g)"/>`
+  + `<text x="80" y="28" font-size="17" fill="#fff" text-anchor="middle">图顶 TOP</text>`
+  + `<text x="80" y="284" font-size="17" fill="#fff" text-anchor="middle">图底 BOTTOM</text></svg>`);
+
+const SEGMENTS = [
+  `<div class="msk-segment"><p>第一页，一句短短的问候。</p></div>`,
+  `<div class="msk-segment"><p>看，这是刚画好的插图！</p>`
+  + `<div class="msk-draw-card"><div class="msk-draw-body">`
+  + `<img class="msk-draw-image msk-zoom" style="width:160px;height:300px" src="${TALL_IMG}" alt="配图">`
+  + `</div></div><p>配图收尾说明。</p></div>`,
+  `<div class="msk-segment"><p>最后一页，今天就聊到这里。</p></div>`,
+];
+
+function enter() {
+  view.screen = 'ready';
+  view.setOpen(true);
+  view.replyActive = true;
+  view.playing = true;
+  view.historyVisible = false;
+  view.content.innerHTML = SEGMENTS.join('');
+  view.panel.hidden = false;
+  view.updateLayoutMode();
+  view.resyncPages();
+  const page = Number(new URLSearchParams(location.search).get('page') ?? 0);
+  if (page > 0) view.showPage(page, true);
+}
+
+window.__view = view;
+window.__drive = {
+  enter,
+  finish: () => view.typewriter?.finish(),
+  page: i => view.showPage(i, true),
+  state: () => ({
+    page: view.pageIndex,
+    typing: !!view.typewriter?.typing,
+    scrollTop: view.content.scrollTop,
+    scrollH: view.content.scrollHeight,
+    clientH: view.content.clientHeight,
+    overflow: view.content.scrollHeight - view.content.clientHeight,
+    measured: view.measureContentHeight(),
+    shellH: Math.round(view.root.querySelector('.chat-shell').getBoundingClientRect().height),
+    hint: view.root.querySelector('.page-hint').textContent,
+  }),
+};
+// bootstrap 是异步微任务（无网络），等一拍再进入就绪态，避免被连接屏覆盖。
+setTimeout(enter, 50);
+window.__ready = true;
+</script>
+</body>
+</html>

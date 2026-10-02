@@ -34,6 +34,12 @@ const HISTORY_ROUND_LIMIT = 50;
 /** 表演指令页（.msk-cue）派发后的停顿：不建打字机，静默自动翻页。 */
 const CUE_PAGE_MS = 400;
 
+/**
+ * 焦点回归只消化这个时效内的控制请求。新鲜请求在写入（storage 事件）或忙碌
+ * 结束时已被消费；陈留至今的是漏网残留，消化它会让「点一下输入框突然重播旧消息」。
+ */
+const CONTROL_FOCUS_MAX_AGE_MS = 20_000;
+
 /** 取末尾最近 N 轮的起始下标；不足 N 轮返回 0。 */
 function lastRoundsStart(messages: ChatMessage[], rounds: number): number {
   let seen = 0;
@@ -142,7 +148,23 @@ export class ChatView {
     controller.persist = false;
     controller.onChange = () => this.changed();
     window.addEventListener('storage', e => { if (e.key === CONTROL_REQUEST_KEY) void this.applyControlRequest(); });
-    window.addEventListener('focus', () => { void this.applyControlRequest(); });
+    window.addEventListener('focus', () => {
+      // 焦点回归只消化新鲜请求；陈旧的直接清掉，不再补播（见常量注释）。
+      const request = readControlRequest(this.storage);
+      if (request && Date.now() - request.at > CONTROL_FOCUS_MAX_AGE_MS) {
+        if (readControlRequest(this.storage)?.at === request.at) this.storage?.removeItem(CONTROL_REQUEST_KEY);
+        return;
+      }
+      void this.applyControlRequest();
+    });
+    // 生图/附图解码晚于翻页量高：载入后按真实高度补量窗口。
+    // 逐字播放中文本是收起的，此时量高会误判，跳过（播完 onDone 已补量）。
+    this.content.addEventListener('load', e => {
+      const img = e.target as Element | null;
+      if (!(img instanceof HTMLImageElement) || !img.closest('.msk-draw-card,.msk-attachment')) return;
+      if (this.screen !== 'ready' || !this.replyActive || this.historyVisible || this.typewriter?.typing) return;
+      this.reportLayout();
+    }, true);
     void this.bootstrap();
   }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
@@ -208,9 +230,18 @@ export class ChatView {
     requestAnimationFrame(() => {
       // 逐字播放中文本是收起的，量到的是塌陷高度；播放路径已在翻页时同步量好。
       if (this.typewriter?.typing) return;
-      const shell = this.get('.chat-shell');
-      send(Math.ceil(shell.getBoundingClientRect().height + 6));
+      send(this.measureContentHeight());
     });
+  }
+  /**
+   * 期望窗口内容高：gal-panel 被 max-height 钳在当前窗口内，直接量 shell 会越量
+   * 越矮（矮窗里的高页量出矮高，窗口再也长不回来）；补上 gal-content 的滚动
+   * 溢出量，还原内容自然高度，窗口才能随高页长到位。
+   */
+  private measureContentHeight(): number {
+    const shell = this.get('.chat-shell');
+    const overflow = Math.max(0, this.content.scrollHeight - this.content.clientHeight);
+    return Math.ceil(shell.getBoundingClientRect().height + overflow + 6);
   }
   private showConnect(message = ''): void {
     this.screen = 'connect'; this.composer.hidden = true; this.clearRendering();
@@ -421,13 +452,14 @@ export class ChatView {
       return;
     }
     // 逐字播放会收起文本；趁整页文字还在先同步量高上报，窗口贴合每一页而不是整条回复。
-    this.reportLayout(Math.ceil(this.get('.chat-shell').getBoundingClientRect().height + 6));
+    this.reportLayout(this.measureContentHeight());
     if (page && animate) {
       page.classList.add('gal-page-in');
       this.typewriter = new Typewriter(page);
+      // 播放中跟随最新冒出的文字；播完回到页首——超高页（大图/长文）默认从顶部读起。
       this.typewriter.onProgress = () => { this.content.scrollTop = this.content.scrollHeight; };
       this.typewriter.onDone = () => {
-        this.content.scrollTop = this.content.scrollHeight;
+        this.content.scrollTop = 0;
         this.updateHint();
         // 图片等异步资源可能在播放结束后才载入完成，补一次量高。
         this.reportLayout();
@@ -567,7 +599,13 @@ export class ChatView {
       if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
       else this.status.textContent = '目标消息已删除或不在可见记录中。';
     } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
-    finally { this.controlRequestActive = false; }
+    finally {
+      this.controlRequestActive = false;
+      // 处理期间写入的新请求被入口守卫跳过，这里补消费；同一条不重复进
+      // （tauri 定位键故意留给记录窗移除，at 相同即跳出，不会自旋）。
+      const next = readControlRequest(this.storage);
+      if (next && next.at !== request.at) void this.applyControlRequest();
+    }
   }
   private error(e: unknown): string { return e instanceof Error ? e.message : '连接失败，请重试。'; }
 }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>records preview</title>
+<link rel="stylesheet" href="/src/records/records.css">
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+// records 窗口的纯样式夹具：手工镜像 window.ts 的 DOM 结构与渲染器输出，
+// 供 CDP 截图自审。?state=loading|empty 切换加载骨架/空态，默认消息列表。
+const ICON_LOGO = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H13l-4.2 3.4a.6.6 0 0 1-1-.45V16.5h-.3A3.5 3.5 0 0 1 4 12.5Z"/><path d="M8.5 8.5h7M8.5 11.7h4.5"/></svg>';
+const ICON_REFRESH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.46-5.74"/><path d="M20 3.6V8h-4.4"/></svg>';
+const ICON_DOWN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg>';
+const ICON_EMPTY = '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5.5a4 4 0 0 1-4 4h-4.6L8 19.8a.55.55 0 0 1-.9-.42V16.5H8a4 4 0 0 1-4-4Z"/><path d="M8.4 8.1h7.2M8.4 11.4h4.2"/></svg>';
+
+const img = (w, h, label, c1, c2) => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${w * 0.5}" cy="${h * 0.42}" r="${Math.min(w, h) * 0.2}" fill="rgba(255,255,255,.18)"/><text x="50%" y="82%" fill="rgba(255,255,255,.65)" font-family="sans-serif" font-size="${Math.min(w, h) * 0.09}" text-anchor="middle">${label}</text></svg>`);
+const DRAW_IMG = img(560, 700, '生成立绘', '%232a4d42', '%23122126');
+const STICKER = img(200, 200, '贴纸', '%23344d7a', '%231c2a44');
+const ATTACH = img(680, 420, '用户附图', '%23444d2a', '%2320261c');
+
+const msg = (cls, head, body) => `<article class="record-message ${cls}"><header>${head}</header><div class="message-text">${body}</div></article>`;
+const aHead = (t, extra = '') => `<strong>Aliya</strong><time>${t}</time><button type="button" class="record-replay" ${extra}>重新播放</button>`;
+const uHead = t => `<strong>你</strong><time>${t}</time>`;
+const day = d => `<div class="record-day">${d}</div>`;
+
+const listHtml = `
+<div class="records-truncated">更早的对话已省略 · 仅显示最近 50 轮</div>
+${day('9月14日')}
+${msg('record-assistant', aHead('17:46'), '<p>收到收到～</p><p>线路挺稳的</p><p>诶 都快六点了 你在干嘛呢</p>')}
+${msg('record-user', uHead('17:46'), '<p>123</p>')}
+${msg('record-user', uHead('17:47'), '<p>刚吃完饭，随手测一下长消息的效果：这段文字故意写得比较长，用来观察气泡在宽窗口下的换行、最大宽度和行距是不是舒服，够不够有阅读的感觉。</p>')}
+${day('昨天')}
+${msg('record-assistant', aHead('00:11'), `<p>给给给 我的私藏表情包</p><img class="msk-sticker msk-zoom" src="${STICKER}" alt="表情包 happy"><p>够看了吧 要不要挑一个？</p>`)}
+${msg('record-assistant', aHead('00:12'), `<div class="msk-draw-card" data-msk-draw="0"><div class="msk-draw-head"><span class="msk-draw-title">配图</span></div><div class="msk-draw-body" data-msk-draw-body="0"><img class="msk-draw-image msk-zoom" src="${DRAW_IMG}" alt="配图"><div class="msk-draw-foot"><button type="button" class="msk-draw-btn" data-msk-action="retry" data-msk-draw-index="0">重新生成</button></div></div></div>`)}
+${msg('record-user', uHead('08:17'), `<div class="msk-attachment"><img class="msk-attachment-img msk-zoom" src="${ATTACH}" alt="附图"></div><p>你看这个</p>`)}
+${day('今天')}
+${msg('record-system', '<strong>上下文分界</strong><time></time>', '从这里开始新的上下文')}
+${msg('record-assistant record-target', aHead('10:16'), '<p>查岗啦！</p><p>让我看看是谁还没去吃午饭呀？(ﾟ∀ﾟ*)</p><p>这条是上下文定位的目标消息，应该带高亮描边。</p>')}
+${msg('record-assistant', aHead('10:17'), `<div class="msk-draw-card" data-msk-draw="1"><div class="msk-draw-head"><span class="msk-draw-title">配图</span></div><div class="msk-draw-body" data-msk-draw-body="1"><div class="msk-draw-state">尚未生成</div><div class="msk-draw-foot"><button type="button" class="msk-draw-btn" data-msk-action="generate" data-msk-draw-index="1">立即生成</button></div></div></div>`)}
+${msg('record-assistant', aHead('10:18'), `<div class="msk-draw-card" data-msk-draw="2"><div class="msk-draw-head"><span class="msk-draw-title">配图</span></div><div class="msk-draw-body" data-msk-draw-body="2"><div class="msk-draw-state"><span class="msk-draw-spinner" aria-hidden="true"></span> 图片生成中...</div></div></div>`)}
+`;
+
+const skeletonHtml = [46, 30, 58, 36, 42].map((w, i) =>
+  `<div class="record-skeleton${i % 2 ? ' right' : ''}" style="--w:${w}%"><i></i><i></i></div>`).join('');
+
+const emptyHtml = `<div class="records-empty">${ICON_EMPTY}<h2>还没有聊天记录</h2><p>在聊天窗口和 Aliya 说点什么吧。</p><button type="button" class="records-open-chat">打开聊天窗口</button></div>`;
+
+const state = new URLSearchParams(location.search).get('state') || 'list';
+const listContent = state === 'loading' ? skeletonHtml : state === 'empty' ? emptyHtml : listHtml;
+const statusShown = new URLSearchParams(location.search).has('status');
+
+document.getElementById('app').innerHTML = `<main class="records-shell">
+  <header class="records-header">
+    <div class="records-brand"><span class="records-logo">${ICON_LOGO}</span><div class="records-heading"><span class="records-kicker">ALIYA ARCHIVE</span><h1>聊天记录</h1></div></div>
+    <div class="records-side"><div class="records-session"><span class="records-title">Aliya</span><span class="records-meta">最近 50 轮 · 42 条</span></div><button type="button" class="records-refresh${state === 'loading' ? ' loading' : ''}" title="刷新" aria-label="刷新">${ICON_REFRESH}</button></div>
+  </header>
+  <div class="records-status${statusShown ? ' show' : ''}" role="status" data-kind="info">已在对话框中重新播放。</div>
+  <section class="records-list" aria-label="聊天记录">${listContent}</section>
+  <button type="button" class="records-tobottom show" title="回到底部" aria-label="回到底部">${ICON_DOWN}</button>
+</main>`;
+</script>
+</body>
+</html>
