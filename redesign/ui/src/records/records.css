@@ -27,9 +27,13 @@ button { font: inherit; }
 
 /* 消息气泡：按内容自适应，用户靠右、Aliya 靠左，不把整屏拉成固定卡片列 */
 .record-message { width: fit-content; max-width: min(78%, 620px); margin: 10px 0; padding: 10px 13px 11px; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); overflow-wrap: anywhere; transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
-.record-message header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.record-message header { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .record-message header strong { color: var(--al-accent-strong); font-size: 11px; font-weight: 650; letter-spacing: .06em; }
 .record-message header time { color: var(--al-text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.record-replay { margin-left: auto; padding: 2px 8px; border: 1px solid transparent; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-size: 10px; cursor: pointer; transition: color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.record-replay:hover { color: var(--al-accent-strong); background: var(--al-accent-soft); border-color: var(--al-line); }
+.record-replay:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.record-replay:disabled { opacity: .45; cursor: default; }
 .record-user { margin-left: auto; border-color: var(--al-line-strong); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: var(--al-surface-card-strong); }
 .record-user header strong { color: var(--al-text-2); }
 .record-system { width: min(70%, 560px); margin: 18px auto; padding-block: 8px; text-align: center; background: transparent; border-style: dashed; box-shadow: none; color: var(--al-text-3); }

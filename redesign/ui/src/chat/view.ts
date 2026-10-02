@@ -91,7 +91,7 @@ export class ChatView {
       <button class="chat-launcher" aria-label="和 Aliya 聊天"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9.4L4 21.6V18H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>聊天</span></button>
       <div class="chat-shell">
         <section class="gal-panel" aria-label="Aliya 对话" hidden>
-          <header class="gal-nameplate"><strong>Aliya</strong><span class="panel-title"></span><button class="close-panel" aria-label="关闭对话框">×</button></header>
+          <button class="close-panel" aria-label="关闭对话框">×</button>
           <div class="gal-content" tabindex="0"></div>
           <footer class="gal-footer" hidden><span class="page-hint"></span><button class="dismiss-reply">收起</button></footer>
         </section>
@@ -175,8 +175,7 @@ export class ChatView {
     return this.operation.signal;
   }
   private clearRendering(): void { for (const task of this.rendered) task.cancel(); this.rendered = []; }
-  private showPanel(title: string): void {
-    this.get('.panel-title').textContent = title;
+  private showPanel(_title = ''): void {
     this.panel.hidden = !this.isOpen;
     this.get('.gal-footer').hidden = true;
     this.updateLayoutMode();
@@ -197,15 +196,20 @@ export class ChatView {
     this.onLayoutChange?.();
   }
   /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
-  private reportLayout(): void {
+  private reportLayout(measuredHeight?: number): void {
     if (platform !== 'tauri') return;
     const mode = document.body.dataset.chatLayout ?? 'setup';
-    requestAnimationFrame(() => {
-      const shell = this.get('.chat-shell');
-      const height = Math.ceil(shell.getBoundingClientRect().height + 6);
+    const send = (height: number) => {
       void import('@tauri-apps/api/core')
         .then(m => m.invoke('set_chat_layout', { mode, contentHeight: height }))
         .catch(() => {});
+    };
+    if (measuredHeight !== undefined) { send(measuredHeight); return; }
+    requestAnimationFrame(() => {
+      // 逐字播放中文本是收起的，量到的是塌陷高度；播放路径已在翻页时同步量好。
+      if (this.typewriter?.typing) return;
+      const shell = this.get('.chat-shell');
+      send(Math.ceil(shell.getBoundingClientRect().height + 6));
     });
   }
   private showConnect(message = ''): void {
@@ -366,7 +370,11 @@ export class ChatView {
     this.content.append(dots, text);
     const token = message.id;
     this.replyToken = token;
-    const task = this.bindMessage(message, text, message.role === 'assistant', () => this.resyncPages());
+    const task = this.bindMessage(message, text, message.role === 'assistant', () => {
+      this.resyncPages();
+      // 生图/表情异步落地后页面会变高；逐字播放中文本是收起的，此时量高会误判，跳过。
+      if (!this.typewriter?.typing) this.reportLayout();
+    });
     this.showPanel(''); this.updateHint();
     if (!task) { this.replyActive = false; this.updateHint(); return; }
     void task.settled.then(() => {
@@ -412,10 +420,18 @@ export class ChatView {
       this.updateHint();
       return;
     }
+    // 逐字播放会收起文本；趁整页文字还在先同步量高上报，窗口贴合每一页而不是整条回复。
+    this.reportLayout(Math.ceil(this.get('.chat-shell').getBoundingClientRect().height + 6));
     if (page && animate) {
       page.classList.add('gal-page-in');
       this.typewriter = new Typewriter(page);
-      this.typewriter.onDone = () => this.updateHint();
+      this.typewriter.onProgress = () => { this.content.scrollTop = this.content.scrollHeight; };
+      this.typewriter.onDone = () => {
+        this.content.scrollTop = this.content.scrollHeight;
+        this.updateHint();
+        // 图片等异步资源可能在播放结束后才载入完成，补一次量高。
+        this.reportLayout();
+      };
       this.typewriter.start();
     }
     this.content.scrollTop = 0;
@@ -509,6 +525,23 @@ export class ChatView {
       }
       if (request.action === 'refresh') {
         await this.enterSession(this.activeSession); return;
+      }
+      if (request.action === 'replay') {
+        const current = this.controller.messages.find(message => (message.messageId || message.id) === request.messageId);
+        let message = current;
+        if (!message) {
+          const around = await new MskClient(this.auth.token).messagesAround(request.sessionId, request.messageId!, this.operation?.signal);
+          const source = around.find(item => item.id === request.messageId && item.role === 'assistant');
+          if (source) message = { id: source.id, messageId: source.id, role: 'assistant', text: source.content, file: source.file, status: 'complete' };
+        }
+        if (!message || message.role !== 'assistant') {
+          this.status.textContent = '这条回复已删除，无法重新播放。';
+          return;
+        }
+        this.setOpen(true);
+        this.showReply(message);
+        if (platform === 'tauri') await import('@tauri-apps/api/core').then(m => m.invoke('show_chat'));
+        return;
       }
       if (platform === 'tauri') {
         await import('@tauri-apps/api/core').then(m => m.invoke('show_records'));

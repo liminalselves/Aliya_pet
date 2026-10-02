@@ -293,7 +293,8 @@ fn position_chat_with_content(app: &AppHandle, anchor: &ChatAnchorState, content
     let requested_css = content_height.map(|h| h as f64).unwrap_or(default_h_css);
     let h_css = match layout {
         ChatLayout::Composer => requested_css.clamp(62.0, 88.0),
-        ChatLayout::Reply => requested_css.clamp(150.0, default_h_css),
+        // 回复页按当前页内容量高：一行短句也该是窄条，不为未来页预留空白。
+        ChatLayout::Reply => requested_css.clamp(118.0, default_h_css),
         // 授权/会话页必须给足高度，不以尚未完成布局的一次测量把内容裁掉。
         ChatLayout::Setup => default_h_css.max(300.0),
     };

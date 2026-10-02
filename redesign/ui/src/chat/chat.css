@@ -38,12 +38,9 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - 52px); border:1px solid var(--al-line-strong); border-bottom:0; border-radius:var(--al-r-m) var(--al-r-m) 0 0; background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; backdrop-filter:blur(10px); }
 /* 连接/会话/历史屏需要完整高度；回复页只有一句，内容决定高度但至少保持可读。 */
 .chat-shell.with-panel .gal-panel { min-height:min(96px,calc(100% - 52px)); }
-.gal-nameplate { display:flex; align-items:center; gap:7px; min-height:25px; padding:2px 6px 2px 12px; background:var(--al-accent); color:var(--al-on-accent); user-select:none; flex:none; box-shadow:inset 0 -1px rgba(0,0,0,.14); }
-.gal-nameplate strong { font-size:clamp(11px,3.8cqw,12.5px); font-weight:700; letter-spacing:.08em; }
-.gal-nameplate .panel-title { color:var(--al-on-accent-muted); font-size:9.5px; letter-spacing:.06em; }
-.gal-nameplate .close-panel { margin-left:auto; padding:0 7px; border-radius:var(--al-r-s); color:var(--al-on-accent); font-size:14px; line-height:1.3; }
-.gal-nameplate .close-panel:hover { background:var(--al-on-accent-hover); }
-.gal-content { flex:1; min-height:0; padding:9px 12px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.close-panel { position:absolute; top:5px; right:6px; z-index:2; width:22px; height:22px; padding:0!important; border-radius:50%!important; color:var(--al-text-3); font-size:14px; line-height:22px; opacity:.72; }
+.close-panel:hover { background:var(--al-hover-fill)!important; color:var(--al-text-1); opacity:1; }
+.gal-content { flex:1; min-height:0; padding:12px 28px 10px 12px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
 .gal-content::selection,.message-text::selection { background:var(--al-selection); }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
 .gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
@@ -54,13 +51,26 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content .msk-segment + .msk-segment { margin-top:0; }
 /* 表演指令页：仅承载 data-express/data-play 供翻页派发，任何时刻不渲染 */
 .gal-content .msk-segment.msk-cue { display:none!important; }
-.gal-content .msk-draw-image { max-height:140px; border-radius:var(--al-r-s); }
-.gal-content .msk-sticker { height:72px; }
+/* 行内自定义表情跟随字号（共享样式默认 96px，会把行高撑爆）；角色贴纸独占一页，可稍大。 */
+.gal-content .msk-emoji-img { height:1.5em; width:auto; vertical-align:-0.32em; }
+.gal-content .msk-sticker { height:64px; }
 .gal-content .msk-attachment-img { max-height:160px; border-color:var(--al-line-strong); background:var(--al-bg-3); }
-.gal-content .msk-draw-card { background:var(--al-bg-3); border-color:var(--al-line-strong); }
-.gal-content .msk-draw-head { color:var(--al-accent-strong); border-bottom-color:var(--al-line); }
-.gal-content .msk-draw-state { color:var(--al-text-2); }
-.gal-content .msk-draw-btn { background:var(--al-bg-4); border-color:var(--al-line-strong); color:var(--al-accent-strong); }
+/* 生图卡片：与记录页同形态——隐藏“配图”标题与 prompt，重生成按钮浮在图上；无图状态退回上下布局。 */
+.gal-content .msk-draw-card { position:relative; width:fit-content; max-width:100%; margin:2px 0; overflow:hidden; border-color:var(--al-line-strong); background:var(--al-bg-3); }
+.gal-content .msk-draw-head { display:none; }
+.gal-content .msk-draw-body { display:block; min-height:0; gap:0; }
+.gal-content .msk-draw-image { display:block; width:auto; height:auto; max-width:100%; max-height:150px; border-radius:0; }
+.gal-content .msk-draw-state { display:grid; place-items:center; gap:6px; min-height:72px; padding:10px 12px; color:var(--al-text-2); font-size:11px; }
+.gal-content .msk-draw-error { color:var(--al-danger); }
+.gal-content .msk-draw-foot { display:flex; gap:6px; padding:0 8px 8px; }
+/* #chat-ui button 的 ID 规则会压过这里的字号/圆角/底色，与 .ghost 同理必须 !important。 */
+.gal-content .msk-draw-btn { border:1px solid var(--al-line-strong)!important; border-radius:var(--al-r-pill)!important; background:var(--al-bg-4)!important; color:var(--al-accent-strong)!important; font-size:11px!important; padding:3px 10px!important; }
+.gal-content .msk-draw-btn:hover { border-color:var(--al-accent)!important; }
+.gal-content .msk-draw-btn[disabled] { opacity:.5; cursor:wait; }
+.gal-content .msk-draw-card:has(img) .msk-draw-foot { position:absolute; top:7px; right:7px; z-index:1; padding:0; }
+.gal-content .msk-draw-card:has(img) .msk-draw-btn { width:26px; height:26px; padding:0!important; border:0!important; border-radius:50%!important; background:var(--al-overlay-chip)!important; backdrop-filter:blur(8px); color:var(--al-text-1)!important; font-size:0!important; }
+.gal-content .msk-draw-card:has(img) .msk-draw-btn::after { content:'↻'; font-size:14px; line-height:1; }
+.gal-content .msk-draw-card:has(img) .msk-draw-btn:hover { background:var(--al-overlay-chip-hover)!important; }
 
 /* 逐字播放：原子元素隐藏时保留占位（布局稳定），揭示时整块淡入 */
 .tw-atomic { visibility:hidden; }

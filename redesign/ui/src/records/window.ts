@@ -186,6 +186,15 @@ class RecordsView {
         }
       }
       head.append(author, time);
+      if (message.role === 'assistant') {
+        const replay = document.createElement('button');
+        replay.type = 'button';
+        replay.className = 'record-replay';
+        replay.textContent = '重新播放';
+        replay.title = '在桌宠对话框中重新播放这条回复';
+        replay.onclick = () => { void this.replayMessage(sessionId, message.id, replay); };
+        head.append(replay);
+      }
       const body = document.createElement('div');
       body.className = 'message-text';
       article.append(head, body);
@@ -203,6 +212,23 @@ class RecordsView {
       target?.focus({ preventScroll: true });
     });
     else if (targetId) this.status.textContent = '目标消息已删除或不在可见记录中。';
+  }
+
+  private async replayMessage(sessionId: string, messageId: string, button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    this.status.textContent = '正在打开对话框……';
+    try {
+      localStorage.setItem(CONTROL_REQUEST_KEY, JSON.stringify({ sessionId, messageId, action: 'replay', at: Date.now() }));
+      if (platform === 'tauri') {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('show_chat');
+      }
+      this.status.textContent = '已在对话框中重新播放。';
+    } catch (error) {
+      this.status.textContent = error instanceof Error ? error.message : '重新播放失败，请重试。';
+    } finally {
+      button.disabled = false;
+    }
   }
 
   private bindMessage(sessionId: string, message: MskTimelineMessage, container: HTMLElement): void {

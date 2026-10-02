@@ -22,6 +22,8 @@ export class Typewriter {
   typing = false;
   /** 播放完成（含 finish 补完）回调，每页至多触发一次。 */
   onDone: (() => void) | null = null;
+  /** 内容增长回调，用于让受限高度的对话框持续跟随最新文字。 */
+  onProgress: (() => void) | null = null;
   private units: Unit[] = [];
   private unitIndex = 0;
   private charIndex = 0;
@@ -46,6 +48,7 @@ export class Typewriter {
       if (unit.kind === 'text') unit.node.data = unit.text;
       else this.reveal(unit.el);
     }
+    this.onProgress?.();
     this.complete();
   }
 
@@ -90,6 +93,7 @@ export class Typewriter {
     if (unit.kind === 'el') {
       this.reveal(unit.el);
       this.unitIndex++;
+      this.onProgress?.();
       return;
     }
     // 每次冒出一个字符（按 UTF-16 code unit 推进会把代理对劈开，按码点切）
@@ -97,6 +101,7 @@ export class Typewriter {
     const step = next.length === 2 && /[\uD800-\uDBFF]/.test(next[0]!) ? 2 : 1;
     this.charIndex += step;
     unit.node.data = unit.text.slice(0, this.charIndex);
+    this.onProgress?.();
     if (this.charIndex >= unit.text.length) { this.unitIndex++; this.charIndex = 0; }
   }
 

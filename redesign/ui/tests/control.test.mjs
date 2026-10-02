@@ -71,6 +71,17 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   assert.equal(posts.length, 3);
 });
 
+test('control request accepts replay only with a message id', () => {
+  const config = loadMskConfig();
+  const bridge = load('control-bridge', config, { Date });
+  const now = Date.now();
+  const storage = value => ({ getItem: () => JSON.stringify(value) });
+  assert.equal(bridge.readControlRequest(storage({ sessionId: 's', action: 'replay', at: now })), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(bridge.readControlRequest(storage({ sessionId: 's', action: 'replay', messageId: 'm', at: now })))), {
+    sessionId: 's', action: 'replay', messageId: 'm', at: now,
+  });
+});
+
 test('message navigation loads visible surrounding records including an old divider', async () => {
   const config = loadMskConfig();
   const { MskClient } = load('client', config, { AbortSignal, crypto });

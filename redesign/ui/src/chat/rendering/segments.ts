@@ -13,6 +13,8 @@ const VOID_HTML_TAGS = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
+const PROSE_PAGE_CHARS = 72;
+const INLINE_MARKUP_RE = /[`*_~\[\]<>]|https?:\/\//i;
 
 /** 表情包 token（角色标签按语法即有效；全站表情须命中表情表，功能关闭时全部视为普通文本） */
 const STICKER_TOKEN_RE = /\[\[agent_sticker\s+key=[a-zA-Z0-9_-]{1,32}\s*\]\]|:([a-zA-Z0-9_]+):/g;
@@ -38,6 +40,32 @@ function updateHtmlStack(line: string, stack: string[]): boolean {
     }
   }
   return sawHtml;
+}
+
+/** 超长纯文本按句子与长度拆页；带 Markdown/HTML 的结构化行保持整体。 */
+function splitLongProse(text: string): string[] {
+  const trimmed = text.trim();
+  if (trimmed.length <= PROSE_PAGE_CHARS || INLINE_MARKUP_RE.test(trimmed)) return [trimmed];
+  const sentences = trimmed.match(/[^。！？!?；;…]+(?:[。！？!?；;…]+|$)/g)?.map(part => part.trim()).filter(Boolean) ?? [trimmed];
+  const pages: string[] = [];
+  let current = '';
+  const flush = () => {
+    if (current) pages.push(current);
+    current = '';
+  };
+  for (const sentence of sentences) {
+    let rest = sentence;
+    while (rest.length > PROSE_PAGE_CHARS) {
+      if (current) flush();
+      pages.push(rest.slice(0, PROSE_PAGE_CHARS));
+      rest = rest.slice(PROSE_PAGE_CHARS);
+    }
+    if (!rest) continue;
+    if (current && current.length + rest.length > PROSE_PAGE_CHARS) flush();
+    current += rest;
+  }
+  flush();
+  return pages.length ? pages : [trimmed];
 }
 
 /** 普通文本行内按有效表情包 token 切分；无效 token（如 12:30:45 的 :30:）不切分。 */
@@ -148,9 +176,9 @@ export function splitAgentMessageIntoSegments(
       i++;
     } while (sawHtml && htmlStack.length > 0 && i < lines.length);
     if (i - start === 1) {
-      // 单行普通文本：行内再按有效表情包 token 切分，让每个表情包独占一个气泡
+      // 单行普通文本：表情包独占一页；纯文本过长时再按句子和长度拆页。
       for (const piece of splitLineByStickerTokens(lines[start]!, isEmoji, isSticker)) {
-        segments.push(piece);
+        segments.push(...splitLongProse(piece));
       }
     } else {
       // 多行 HTML 块保持整体，不按 token 拆分

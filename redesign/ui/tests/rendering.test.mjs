@@ -108,6 +108,13 @@ test('展示分段与 misskey 权威行为一致：代码块/表格/列表/引�
     '结尾',
   ]);
   assert.deepEqual(plain(splitAgentMessageIntoSegments('第一段\n\n第二段')), ['第一段', '第二段']);
+  const longProse = '这是第一句，用来确认很长的回复不会继续挤在同一个播放页里。'.repeat(3) + '这是最后一句。';
+  const prosePages = plain(splitAgentMessageIntoSegments(longProse));
+  assert.ok(prosePages.length > 1);
+  assert.equal(prosePages.join(''), longProse);
+  assert.ok(prosePages.every(page => page.length <= 72));
+  const markdownLine = `请查看 [说明](https://example.com/${'x'.repeat(120)})`;
+  assert.deepEqual(plain(splitAgentMessageIntoSegments(markdownLine)), [markdownLine]);
   assert.deepEqual(plain(splitAgentMessageIntoSegments('---\n正文')), ['正文']);
   assert.deepEqual(plain(splitAgentMessageIntoSegments('   \n  ')), []);
   assert.deepEqual(plain(splitAgentMessageIntoSegments('')), []);
