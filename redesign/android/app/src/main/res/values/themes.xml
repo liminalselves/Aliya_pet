@@ -2,8 +2,8 @@
 <resources>
     <style name="Theme.AliyaPet" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@drawable/bg_main</item>
-        <!-- 浅色背景：状态栏/导航栏用深色图标（代码内 WindowInsetsControllerCompat 双保险） -->
-        <item name="android:windowLightStatusBar">true</item>
+
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
     <!-- 底部菜单 Dialog：自带滑入/滑出窗口动画 -->

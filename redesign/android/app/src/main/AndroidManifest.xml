@@ -31,8 +31,7 @@
             </intent-filter>
         </activity>
 
-        <!-- MiAuth 回调中转：aliyapet://miauth/?session=... 写入偏好后即退，
-             不落在 MainActivity 上（回前台会停掉悬浮窗，打断悬浮窗里的授权等待）。 -->
+        <!-- MiAuth callbacks always return to the main conversation page. -->
         <activity
             android:name=".AuthRelayActivity"
             android:exported="true"

@@ -163,3 +163,18 @@ button { font: inherit; }
   .message-text .msk-draw-image { max-width: 260px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; transition: none !important; } }
+
+.android-records .records-header { gap:8px; padding:8px; }
+.android-records .records-logo, .android-records .records-kicker { display:none; }
+.android-records .records-brand { flex:1; }
+.android-records .records-title { max-width:100px; }
+.records-back { flex:none; width:40px; height:44px; border:0; border-radius:var(--al-r-s); background:transparent; color:var(--al-text-1); font-size:28px; cursor:pointer; }
+.records-back:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
+.android-records .records-refresh { width:44px; height:44px; }
+.android-records .record-message { max-width:94%; }
+.android-records .record-message header { flex-wrap:wrap; }
+.android-records .message-text .msk-draw-image { max-width:min(260px, 72vw); }
+@media (hover:none) {
+  .record-replay { opacity:1; min-height:36px; }
+  .message-text .msk-draw-card:has(img) .msk-draw-btn { opacity:1; width:40px; height:40px; }
+}

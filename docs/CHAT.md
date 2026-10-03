@@ -72,9 +72,8 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   窗口永久隐藏备用入口。设置主菜单的「聊天」区只展示 Misskey 连接状态、
   当前会话和会话配置，不再提供冗余的“打开聊天窗口”按钮。
 
-Android/web 无独立窗口：ChatView 内嵌 pet 页（Android 主界面默认展开；
-悬浮窗同样可用聊天，入口按钮常驻，见下节）。chat 页面与 pet 页共用同一套
-ChatView/渲染代码。
+Android 主界面内嵌 ChatView，记录使用同源辅助页；悬浮窗不初始化聊天。
+web 开发模式保留内嵌记录。安卓容器与验收边界见 [ANDROID.md](ANDROID.md)。
 
 ## 实例地址与开发配置
 
@@ -117,9 +116,9 @@ Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据�
 - 抽屉固定高度，内部页面自己滚动。认证错误或加载超时显示中文提示和重试入口。
 - 登录或选中会话变化会关闭旧面板；同账号令牌变化通过 update-token 更新。
 - 修改成功后刷新会话摘要并通知聊天重新读取上下文；删除当前会话后清理选择。
-- 消息与上下文分界导航在 Windows 交给独立 `records` 窗口，在 Android/web
-  仍交给 ChatView 内嵌记录面板；两者都读取目标附近的可见时间线，不使用返回
-  原始内部控制内容的消息编辑接口。目标不存在时显示提示。
+- 消息与上下文分界导航在 Windows/Android 交给共用的 `records` 页，web 开发
+  仍使用 ChatView 内嵌面板；都读取目标附近的可见时间线，不使用消息编辑接口。
+  目标不存在时显示提示。
 - 外部链接通过平台已有 `openUrl` 打开。聊天本身不嵌入 Misskey 消息列表。
 
 ## 验权（MiAuth）
@@ -131,7 +130,7 @@ Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据�
 | 平台 | 回调方式 |
 | --- | --- |
 | Windows（Tauri） | 壳 `miauth_begin(session)` 绑 127.0.0.1 随机端口一次性监听（`miauth.rs`），回调只认 `/miauth/callback?session=匹配`，仅向 chat 窗口发 `miauth-callback {ok,query,session}`；`miauth_end(session)` 按身份取消；5 分钟超时 |
-| Android | manifest 注册 `aliyapet://miauth` deep link，由透明中转 `AuthRelayActivity` 接住：写入 ShellPrefs `miauth_callback` 即退（悬浮窗运行中不拉起主界面，避免停掉悬浮窗打断授权等待；未运行则照旧回 App）；前端轮询取走后清除；冷启动不丢（偏好持久） |
+| Android | `AuthRelayActivity` 接 `aliyapet://miauth`，写入 ShellPrefs `miauth_callback` 后返回主界面；保留页轮询换 token，被系统回收后从 pending/callback 恢复 |
 | web 开发 | 整页跳转授权，session 记入 `aliya_miauth_pending`，回跳后 `resumeCallback` 恢复换 token；也可手动填 token |
 
 拿到 session 后 `POST /api/miauth/{session}/check` 换 token；
@@ -143,7 +142,8 @@ Aliya_web 相同。
 - 列表来自 `agents/sessions/list-mine`，只保留 Aliya 角色
   （`characterId == akqruskge8w6003j`）。
 - 列表按最近活跃排序，每行显示名称、最后消息预览+相对时间、未读点。
-- 无会话时提示去 Misskey 创建（客户端不做创建）。
+- 「新建会话」复用 `MskClient.createSession`，确认固定文风可用后创建 Aliya 社区会话；
+  失败显示原因，可重试。「Misskey」打开浏览器管理会话。
 - 选中的会话按用户存 `aliya_session:{userId}`（JSON `{id,name}`，名称供
   设置页展示），下次验证 token 后自动恢复。
 
@@ -204,8 +204,8 @@ Aliya_web 相同。
   生图对齐 Misskey 智能体卡片形态——图片铺满卡片按自然比例显示无留白，
   不展示「配图」与生图 prompt，仅保留半透明圆形重生成按钮浮于图上；
   无图状态退回上下布局；
-  贴纸/全站表情收敛到消息尺度。关闭只隐藏复用。Android/web 仍使用 ChatView
-  内嵌记录屏。两种界面都只展示最近 50 轮（轮 = 一条用户消息及其后的
+  贴纸/全站表情收敛到消息尺度。Windows 关闭只隐藏复用，Android 记录页返回销毁。
+  web 保留内嵌记录屏。各界面只展示最近 50 轮（轮 = 一条用户消息及其后的
   Aliya 回复），本地裁掉或服务器还有更早页时显示
   「更早的对话已省略 · 仅显示最近 50 轮」。
 - 渲染由 `rendering/MskMessageRenderer` 负责，与 Aliya_web 对齐：
@@ -230,20 +230,8 @@ Aliya_web 相同。
 
 ## Android
 
-- 主界面（非悬浮窗）默认展开聊天；`adjustResize` + IME insets 让
-  键盘不遮挡输入；需要 INTERNET 权限。
-- 悬浮窗（`_wrapWindow`）与 PC 同样全程可用聊天（功能对齐 2026-09-18）：
-  - ChatView 内嵌悬浮窗 WebView，默认收起，脚下「聊天」药丸按钮常驻
-    （窗口矩形向下多留 46px 按钮条）；打开时窗口矩形按内容态扩展——
-    宽 = max(pet 宽, 可见模型宽 ×1.18 钳 260–560/屏宽)，脚线下方按
-    composer/reply/setup 追加 106/250/380px，聊天卡片锚窗口底部贴脚线
-    （`body.overlay-wrap.chat-open .chat-shell` flex-end）。窗口溢出屏幕时
-    平移原点（连带角色）钳回屏内；聊天打开期间随机台词/点击台词静默、
-    表演指令同页直驱 ChatPerformance，与内嵌模式同一套逻辑。
-  - **软键盘**：悬浮窗默认 `FLAG_NOT_FOCUSABLE`（不抢下层焦点），按下
-    任意文本框时前端经 `setWindowFocusable(true)` 临时摘掉标志并把焦点
-    交给 WebView，失焦恢复并收起输入法；键盘压住输入区时整体上移避让
-    （硬界：角色头顶不出屏，余量不足时接受部分遮挡）。
+主界面聊天、记录辅助页、八面板配置、双击返回、键盘与授权交接的权威说明
+及真机验收表见 [ANDROID.md](ANDROID.md)。悬浮窗只运行基础互动。
 
 ## 验证
 
@@ -262,10 +250,3 @@ deep link 回跳。
 及前端构建通过。浏览器仅确认设置入口与未连接禁用状态；抽屉点击和截图
 未完成，真实授权后的面板保存、消息导航及原生跨窗口联动尚未验收。
 后续测试由用户进行；临时无效凭证已清理，本次启动的开发服务已停止。
-
-2026-09-18 Android 功能对齐（悬浮窗聊天 + 设置页动作面板）：60 项单元
-回归、前端构建与 `assembleDebug` 通过；浏览器 mock AndroidShell 模拟
-悬浮窗 21 项检查全过（入口条带/聊天开合矩形扩展与屏内钳制/输入焦点
-桥接/键盘避让头不出屏/表演指令直驱/设置页动作经 notifyPetAction 转发），
-关闭态与聊天打开态截图自审通过。真机（软键盘实际弹出、MiAuth 中转
-Activity 回跳、跨 WebView storage 事件）归用户验收。

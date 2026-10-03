@@ -107,7 +107,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content article.history-target { border-left:2px solid var(--al-accent); padding-left:8px; background:var(--al-accent-soft); border-radius:0 var(--al-r-s) var(--al-r-s) 0; }
 .gal-content article .who-aliya { color:var(--al-accent-strong); }
 .gal-content article .who-user { color:var(--al-text-3); }
-.session-actions { display:flex; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid var(--al-line); }
+.session-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid var(--al-line); }
 .gal-content article small { color:var(--al-accent); }
 .session-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; width:100%; text-align:left; border-bottom:1px solid var(--al-line)!important; border-radius:var(--al-r-s); padding:7px 8px!important; margin:0 -8px; transition:background var(--al-t-fast) var(--al-ease); }
 .session-row:hover { background:var(--al-hover-fill); }
@@ -169,7 +169,22 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 body.chat-mobile .chat-shell { inset:0 8px 8px; }
 body.chat-mobile .gal-panel { max-height:calc(100% - 52px); }
-/* Android 悬浮窗：聊天 UI 锚到窗口底部贴脚线（窗口矩形已按内容态向下扩展），
-   面板+输入框整组从底部向上生长，覆盖角色下半身——与 PC 聊天窗口同形态。 */
-body.overlay-wrap.chat-open .chat-shell { justify-content:flex-end; }
+/* The native activity resizes the WebView to the real IME and system-bar insets. */
+body.android-main .chat-shell { inset:60px 12px 12px; max-width:560px; margin-inline:auto; justify-content:flex-end; }
+body.android-main .gal-panel { max-height:calc(100% - var(--chat-composer-height, 88px)); }
+body.android-main[data-chat-layout="reply"] .gal-panel { max-height:min(52%, calc(100% - var(--chat-composer-height, 88px))); }
+body.android-main[data-chat-layout="setup"] .gal-panel { border-bottom:1px solid var(--al-line-strong); border-radius:var(--al-r-m); max-height:100%; }
+body.android-main .gal-content { padding:16px 40px 16px 16px; font-size:14px; }
+body.android-main #chat-ui button { min-height:40px; }
+body.android-main #chat-ui .close-panel { width:36px; height:36px; min-height:36px; }
+body.android-main .chat-composer { padding:8px 10px 4px; }
+body.android-main .chat-composer textarea { height:34px; max-height:92px; font-size:16px; line-height:24px; }
+body.android-main .composer-toolbar { flex-wrap:wrap; gap:2px; font-size:12px; }
+body.android-main .chat-status:not(:empty) { flex-basis:100%; order:2; font-size:11px; }
+body.android-main .send { margin-left:auto; min-width:56px; }
+body.android-main .close-window { min-width:36px; }
+body.android-main .session-row { padding-block:12px!important; }
+body.android-main .session-row small { font-size:12px; }
+body.android-main .gal-content input { min-height:44px; font-size:16px; }
+body.android-main #chat-ui .chat-launcher { min-height:44px; bottom:16px; font-size:14px; }
 @media(prefers-reduced-motion:reduce) { #chat-ui * { animation:none!important; scroll-behavior:auto!important; } }

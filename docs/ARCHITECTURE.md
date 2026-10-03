@@ -4,12 +4,13 @@
 
 重写版采用**共享 Web 内核 + 双端薄壳**：几乎全部功能与渲染逻辑都在
 `redesign/ui/`（TypeScript）里实现一遍，Windows 与 Android 只是两个轻壳
-（窗口/托盘/悬浮窗/系统集成），因此双端功能天然对齐，没有两套实现。
+（窗口/托盘/悬浮窗/系统集成）。业务实现共用，功能入口和生命周期由各壳接线。
+Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见 [ANDROID.md](ANDROID.md)。
 
 ```
         ┌────────────────────────────────────────────┐
         │             共享前端（ui/src/）              │
-        │  platform.ts  ← 平台能力抽象（唯一的平台分叉点）│
+        │  platform.ts  ← 平台能力抽象│
         │  pet-app.ts     渲染循环 / 指针 / 窗口         │
         │  pet-model.ts   模型通道                      │
         │  interaction/   抚摸/程序式反应/点击          │
@@ -41,26 +42,25 @@
 - 加载后计算 drawable 顶点包围盒 `boundsW/boundsH`（模型坐标）；
 - 渲染比例 `s = 视口高 / 渲染余量 / boundsH`，模型原点居中；
 - 投影 = 视口像素 → NDC（y 翻转）。
-- 结果：角色高度占窗口的 `1/1.45`，包围盒内比例不变。
+- 结果：角色高度占窗口的 `1/1.22`，包围盒内比例不变。
 
 ### 2. 动作余量
 
-- **渲染余量 1.45**：占位动作（Hiyori）实测最大摆动超出旧版 1.18 余量，
-  故按最差帧需求 ×1.05 安全余量取 1.45。真动作接入后需重新测量（见
-  `docs/ACTIONS.md`）。
+- **渲染余量 1.22**：当前模型与自编动作的测量依据由 [ACTIONS.md](ACTIONS.md)
+  维护，更换模型/动作后需重新测量。
 - **窗口余量 1.18**：窗口尺寸 = 675 × scale × 1.18（宽再乘包围盒宽高比），
   与旧版 `ComputeTargetPixelSize` 一致。
 
 ## 平台适配层（ui/src/platform.ts）
 
-`platform.ts` 是前端唯一的平台分叉点，暴露统一能力：
+`platform.ts` 暴露统一系统能力；页面入口根据容器选择导航与布局：
 
 | 能力               | tauri                                  | android                          | web        |
 | ------------------ | -------------------------------------- | -------------------------------- | ---------- |
 | 窗口/屏幕度量       | `@tauri-apps/api/window`               | `AndroidShell.getMetrics()`      | 不可用     |
 | 窗口移动/改尺寸/定位 | `window.setPosition/setSize`（物理px） | `AndroidShell.moveWindowBy/...`  | 不可用     |
 | 置顶               | `setAlwaysOnTop`                       | 悬浮窗天然置顶                    | 不可用     |
-| 窗口焦点（软键盘）  | 系统窗口自然聚焦                        | `AndroidShell.setWindowFocusable` | 不可用    |
+| 键盘与焦点          | 系统窗口自然聚焦                       | Activity + IME insets；悬浮窗不聚焦 | 浏览器处理 |
 | 自启               | Rust `set_auto_start`（注册表）        | `AndroidShell.setAutoStart`      | 不可用     |
 | openUrl           | Rust `open_url`                        | `AndroidShell.openUrl`           | `window.open` |
 | 设置页→宠页通道     | `settings-changed` 事件                | `notifySettings` / `notifyPetAction` 壳桥转发 | 无 |
@@ -103,6 +103,6 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 窗口形态        | 透明无边框置顶小窗（512×768 基准）            | App 内全屏 / TYPE_APPLICATION_OVERLAY |
 | 菜单            | 系统托盘；左右键均展开菜单，显隐由菜单项控制     | 右上角 ⋮ 菜单 + 通知按钮               |
 | 悬浮窗触发      | 常驻小窗                                     | 退后台自动转悬浮窗（可关）             |
-| 聊天            | `chat` 跟随 pet；`records` 为可移动缩放独立窗  | 内嵌 ChatView：主界面默认展开；悬浮窗入口按钮 + 窗口矩形按内容态扩展（软键盘临时聚焦） |
+| 聊天            | `chat` 跟随 pet；`records` 为独立窗          | 主界面 ChatView + 记录/设置页面栈；悬浮无聊天 |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
 | 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |

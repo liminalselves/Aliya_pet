@@ -42,8 +42,6 @@ export interface AndroidShell {
   notifySettings(json: string): void;
   /** 设置页动作转发（play-action/express/set-mood 等 tray-action 形状 JSON）给桌宠页。 */
   notifyPetAction(json: string): void;
-  /** 悬浮窗临时变为可聚焦（键盘输入需要窗口焦点）；false 恢复并收起输入法。 */
-  setWindowFocusable(focusable: boolean): void;
 }
 
 export interface WindowMetrics {
@@ -302,9 +300,4 @@ export function notifyPetAction(payload: Record<string, unknown>): void {
       // 旧桥无此方法时静默
     }
   }
-}
-
-/** 悬浮窗窗口焦点切换（聊天输入需要软键盘）。 */
-export function setWindowFocusable(focusable: boolean): void {
-  if (platform === 'android') androidShell()?.setWindowFocusable?.(focusable);
 }

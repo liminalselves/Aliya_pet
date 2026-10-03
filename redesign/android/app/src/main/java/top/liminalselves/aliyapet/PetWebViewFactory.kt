@@ -5,9 +5,14 @@ import android.graphics.Color
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.net.Uri
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.CookieManager
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 
 /**
  * 共享 WebView 工厂：同一套 ui/dist 前端跑在 App 内与悬浮窗两个容器里。
@@ -20,6 +25,7 @@ object PetWebViewFactory {
     private const val DOMAIN = "https://appassets.androidplatform.net"
     const val PET_URL = "$DOMAIN/index.html"
     const val SETTINGS_URL = "$DOMAIN/settings.html"
+    const val RECORDS_URL = "$DOMAIN/records.html"
 
     init {
         // chrome://inspect 远程调试（仅调试构建）
@@ -29,7 +35,8 @@ object PetWebViewFactory {
     fun create(
         context: Context,
         bridge: ShellBridge,
-        onFirstPageFinished: (() -> Unit)? = null
+        onFirstPageFinished: (() -> Unit)? = null,
+        chooseFiles: ((ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Unit)? = null
     ): WebView {
         // AssetsPathHandler 无 pathPrefix 构造器：包一层把请求映射到 assets/pet/ 子目录
         val assets = WebViewAssetLoader.AssetsPathHandler(context)
@@ -46,8 +53,45 @@ object PetWebViewFactory {
         // 会把全部 CSS 字号放大（气泡 14px→17.5px）。CSS text-size-adjust 管不到
         // textZoom，只能在 native 端钉 100。
         web.settings.textZoom = 100
+        web.settings.mediaPlaybackRequiresUserGesture = false
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                if (chooseFiles == null) return false
+                chooseFiles(callback, params)
+                return true
+            }
+        }
+        web.setDownloadListener { url, _, _, _, _ -> ShellBridgeHostDefaults.openUrl(context, url) }
         web.setBackgroundColor(Color.TRANSPARENT)
         web.addJavascriptInterface(bridge, "AndroidShell")
+        // Blob URLs belong to their creating frame and may be revoked immediately after click.
+        if (chooseFiles != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(web, """
+                (() => {
+                    const click = HTMLAnchorElement.prototype.click;
+                    const save = async anchor => {
+                        try {
+                            const blob = await (await fetch(anchor.href)).blob();
+                            const reader = new FileReader();
+                            reader.onload = () => AndroidShell.saveDownload(anchor.download || 'aliya-export.json', blob.type,
+                                String(reader.result).split(',')[1]);
+                            reader.readAsDataURL(blob);
+                        } catch { alert('导出失败，请重试。'); }
+                    };
+                    HTMLAnchorElement.prototype.click = function() {
+                        if (this.download && /^(blob:|data:)/.test(this.href)) { void save(this); return; }
+                        return click.call(this);
+                    };
+                    document.addEventListener('click', event => {
+                        const anchor = event.target.closest?.('a[download]');
+                        if (anchor && /^(blob:|data:)/.test(anchor.href)) {
+                            event.preventDefault(); void save(anchor);
+                        }
+                    }, true);
+                })();
+            """.trimIndent(), setOf("*"))
+        }
         web.webViewClient = object : WebViewClientCompat() {
             private var firstDone = false
 
@@ -55,6 +99,12 @@ object PetWebViewFactory {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame || request.url.host == "appassets.androidplatform.net") return false
+                ShellBridgeHostDefaults.openUrl(context, request.url.toString())
+                return true
+            }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)

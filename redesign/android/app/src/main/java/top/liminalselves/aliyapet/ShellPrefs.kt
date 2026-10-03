@@ -49,15 +49,7 @@ object ShellPrefs {
         return when (key) {
             "autoStart" -> if (sp.getBoolean(K_AUTO_START, false)) "1" else "0"
             "overlayOnExit" -> if (sp.getString(K_OVERLAY_ON_EXIT, "1") == "1") "1" else "0"
-            "petX", "petY" -> {
-                // 前端写入的是字符串；同时可能存在浮点旧值
-                val s = sp.getString(key, null)
-                if (s != null) s
-                else {
-                    val f = sp.getFloat(key, Float.MIN_VALUE)
-                    if (f == Float.MIN_VALUE) "" else f.toInt().toString()
-                }
-            }
+            "petX", "petY" -> if (sp.contains(key)) sp.getFloat(key, 0f).toString() else ""
             else -> sp.getString(key, "") ?: ""
         }
     }

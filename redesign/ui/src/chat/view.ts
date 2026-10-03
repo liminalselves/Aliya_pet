@@ -10,7 +10,7 @@ import { MskMessageRenderer, type MskRendered } from './rendering/renderer';
 import { normalizeRegexRules } from './rendering/rules';
 import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } from './rendering/emoji';
 import type { MskApiCaller } from './rendering/types';
-import { openUrl, platform } from '../platform';
+import { openUrl, platform, shellAction } from '../platform';
 import './chat.css';
 
 /** 会话列表用的简短相对时间。 */
@@ -56,12 +56,6 @@ export class ChatView {
   readonly root = document.createElement('div');
   isOpen = false;
   pointerActive = false;
-  /** 布局态/开关变化（悬浮窗据此重算窗口矩形）。 */
-  onLayoutChange: (() => void) | null = null;
-  /** 按下文本输入框（悬浮窗需先把窗口切为可聚焦，软键盘才出得来）。 */
-  onInputActivate: (() => void) | null = null;
-  /** 输入框获焦/失焦（悬浮窗据此切换窗口焦点并避让键盘）。 */
-  onInputFocusChange: ((focused: boolean) => void) | null = null;
   private screen: 'connect' | 'sessions' | 'ready' = 'connect';
   private sequence = 0;
   private operation: AbortController | null = null;
@@ -116,13 +110,15 @@ export class ChatView {
     this.panel.addEventListener('click', e => this.onPanelClick(e), true);
     this.get('.history').onclick = () => {
       if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_records')).catch(() => {});
+      else if (platform === 'android') shellAction('open-records');
       else this.showHistory();
     };
     this.get('.sessions').onclick = () => { void this.loadSessions(); };
     this.get('.session-config').onclick = () => {
       if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_settings', { target: 'session-control' })).catch(() => {});
+      else if (platform === 'android') shellAction('open-session-control');
     };
-    this.get('.session-config').hidden = platform !== 'tauri';
+    this.get('.session-config').hidden = platform === 'web';
     this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     this.input.addEventListener('compositionstart', () => { this.composing = true; });
@@ -132,16 +128,10 @@ export class ChatView {
     };
     this.input.oninput = () => {
       this.input.style.height = 'auto'; this.input.style.height = `${Math.min(92, this.input.scrollHeight)}px`;
+      this.reportLayout();
     };
     this.input.onfocus = () => this.notify(); this.input.onblur = () => this.notify();
-    // 软键盘跟随对全部输入控件生效（composer 输入框 + 连接屏手动 token 框）
-    this.root.addEventListener('focusin', e => { if ((e.target as Element).matches?.('textarea, input')) this.onInputFocusChange?.(true); });
-    this.root.addEventListener('focusout', e => { if ((e.target as Element).matches?.('textarea, input')) this.onInputFocusChange?.(false); });
-    this.root.onpointerdown = e => {
-      this.pointerActive = true;
-      // 连接屏的手动 token 输入框同样需要软键盘：任何文本框按下即申请窗口焦点
-      if ((e.target as Element | null)?.closest('textarea, input')) this.onInputActivate?.();
-    };
+    this.root.onpointerdown = () => { this.pointerActive = true; };
     window.addEventListener('pointerup', () => { this.pointerActive = false; });
     window.addEventListener('blur', () => { this.pointerActive = false; this.notify(); });
     this.root.onkeydown = e => { if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); this.hideReply(); } };
@@ -169,10 +159,15 @@ export class ChatView {
   }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
-  /** 外部申请聚焦输入框（悬浮窗窗口变为可聚焦后补一次程序化聚焦）。 */
-  focusInput(): void { this.input.focus(); }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
   setOpen(open: boolean): void {
+    if (!open) {
+      this.clearPlayback();
+      this.clearRendering();
+      this.replyActive = false;
+      this.historyVisible = false;
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
     this.isOpen = open;
     this.get('.chat-launcher').hidden = open;
     this.composer.hidden = !open || this.screen !== 'ready';
@@ -182,6 +177,12 @@ export class ChatView {
     document.body.classList.toggle('chat-open', open);
     this.updateLayoutMode();
     this.onOpen(open); this.notify();
+  }
+  handleBack(): boolean {
+    if (!this.isOpen) return false;
+    if (this.screen === 'ready' && !this.panel.hidden) this.hideReply();
+    else this.close();
+    return true;
   }
   private close(): void {
     this.setOpen(false);
@@ -215,10 +216,15 @@ export class ChatView {
         // Windows 记录已迁入独立 records 窗口。
         : this.screen === 'ready' && !this.historyVisible ? 'reply' : 'setup';
     this.reportLayout();
-    this.onLayoutChange?.();
   }
   /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
   private reportLayout(measuredHeight?: number): void {
+    if (platform === 'android') {
+      requestAnimationFrame(() => {
+        document.body.style.setProperty('--chat-composer-height', `${this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height}px`);
+      });
+      return;
+    }
     if (platform !== 'tauri') return;
     const mode = document.body.dataset.chatLayout ?? 'setup';
     const send = (height: number) => {
@@ -287,7 +293,7 @@ export class ChatView {
       const selected = restore ? list.find(s => s.id === savedId) : null;
       if (selected) { await this.enterSession(selected); return; }
       this.content.replaceChildren();
-      if (!list.length) this.content.textContent = '还没有与 Aliya 的会话，请在 Misskey 创建后刷新。';
+      if (!list.length) this.content.textContent = '还没有与 Aliya 的会话。可以创建会话，或打开 Misskey 管理现有会话。';
       // 最近活跃的会话排前面，省去翻找。
       list.sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''));
       for (const session of list) {
@@ -300,6 +306,23 @@ export class ChatView {
         row.onclick = () => { void this.enterSession(session); }; this.content.append(row);
       }
       const actions = document.createElement('div'); actions.className = 'session-actions';
+      const create = document.createElement('button'); create.textContent = '新建会话'; create.className = 'btn-primary';
+      create.onclick = async () => {
+        create.disabled = true;
+        try {
+          const session = await new MskClient(this.auth.token).createSession(signal);
+          if (!signal.aborted) await this.enterSession(session);
+        } catch (e) {
+          if (!signal.aborted) {
+            create.disabled = false;
+            const error = document.createElement('p'); error.className = 'auth-status'; error.textContent = this.error(e);
+            actions.querySelector('.auth-status')?.remove(); actions.append(error);
+          }
+        }
+      };
+      actions.append(create);
+      const manage = document.createElement('button'); manage.textContent = 'Misskey'; manage.className = 'ghost';
+      manage.onclick = () => { void openUrl(`${MSK_BASE}/chat`); }; actions.append(manage);
       const refresh = document.createElement('button'); refresh.textContent = '刷新'; refresh.className = 'ghost'; refresh.onclick = () => { void this.loadSessions(); }; actions.append(refresh);
       const logout = document.createElement('button'); logout.textContent = '退出账号'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
       this.content.append(actions);
@@ -558,7 +581,7 @@ export class ChatView {
     this.controlRequestActive = true;
     const seq = this.sequence;
     try {
-      if (!(platform === 'tauri' && request.action === 'navigate') && readControlRequest(this.storage)?.at === request.at) {
+      if (!((platform === 'tauri' || platform === 'android') && request.action === 'navigate') && readControlRequest(this.storage)?.at === request.at) {
         this.storage?.removeItem(CONTROL_REQUEST_KEY);
       }
       if (request.action === 'deleted') {
@@ -588,6 +611,7 @@ export class ChatView {
         await import('@tauri-apps/api/core').then(m => m.invoke('show_records'));
         return;
       }
+      if (platform === 'android') { shellAction('open-records'); return; }
       const messages = await new MskClient(this.auth.token).messagesAround(request.sessionId, request.messageId!, this.operation?.signal);
       if (seq !== this.sequence) return;
       this.setOpen(true); this.showHistory(); this.clearRendering(); this.content.replaceChildren();

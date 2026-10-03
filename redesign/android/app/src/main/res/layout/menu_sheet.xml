@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 主界面底部弹出菜单：设置 / 悬浮窗模式 / 关于 / 退出（浅色主题，可下拉关闭） -->
+<!-- Main pet navigation. -->
 <top.liminalselves.aliyapet.MenuSheetLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,6 +14,30 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginBottom="10dp"
         android:background="@drawable/sheet_handle" />
+
+    <TextView
+        android:id="@+id/menu_chat"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:gravity="center_vertical"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:foreground="?attr/selectableItemBackground"
+        android:text="@string/menu_chat"
+        android:textSize="16sp"
+        android:textColor="@color/pet_text" />
+
+    <TextView
+        android:id="@+id/menu_records"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:gravity="center_vertical"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:foreground="?attr/selectableItemBackground"
+        android:text="@string/menu_records"
+        android:textSize="16sp"
+        android:textColor="@color/pet_text" />
 
     <LinearLayout
         android:id="@+id/menu_settings"
@@ -38,7 +62,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:text="@string/menu_settings"
-            android:textColor="#342B34"
+            android:textColor="@color/pet_text"
             android:textSize="16sp"
             android:letterSpacing="0.01" />
     </LinearLayout>
@@ -66,7 +90,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:text="@string/menu_overlay"
-            android:textColor="#342B34"
+            android:textColor="@color/pet_text"
             android:textSize="16sp"
             android:letterSpacing="0.01" />
         <TextView
@@ -75,7 +99,7 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:text="@string/menu_overlay_sub"
-            android:textColor="#9A8C9A"
+            android:textColor="@color/pet_muted"
             android:textSize="12sp"
             android:gravity="end" />
     </LinearLayout>
@@ -103,7 +127,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:text="@string/menu_about"
-            android:textColor="#342B34"
+            android:textColor="@color/pet_text"
             android:textSize="16sp"
             android:letterSpacing="0.01" />
     </LinearLayout>

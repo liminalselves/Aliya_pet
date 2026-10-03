@@ -1,4 +1,4 @@
-import { openUrl, platform } from '../platform';
+import { openUrl, platform, shellAction } from '../platform';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from '../chat/msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from '../chat/msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MskClient, type MskSession, type MskTimelineMessage } from '../chat/msk/client';
@@ -398,6 +398,7 @@ class RecordsView {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('show_chat');
       }
+      if (platform === 'android') shellAction('open-chat');
       this.setStatus('已在对话框中重新播放。', 'info', true);
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : '重新播放失败，请重试。', 'error', true);
@@ -431,13 +432,14 @@ class RecordsView {
     const paragraph = document.createElement('p');
     paragraph.textContent = detail;
     empty.append(heading, paragraph);
-    if (platform === 'tauri') {
+    if (platform !== 'web') {
       const action = document.createElement('button');
       action.type = 'button';
       action.className = 'records-open-chat';
       action.textContent = '打开聊天窗口';
       action.onclick = () => {
-        void import('@tauri-apps/api/core').then(m => m.invoke('show_chat')).catch(() => {});
+        if (platform === 'android') shellAction('open-chat');
+        else void import('@tauri-apps/api/core').then(m => m.invoke('show_chat')).catch(() => {});
       };
       empty.append(action);
     }
@@ -452,6 +454,13 @@ class RecordsView {
 }
 
 const view = new RecordsView();
+if (platform === 'android') {
+  document.body.classList.add('android-records');
+  const back = document.createElement('button');
+  back.className = 'records-back'; back.textContent = '‹'; back.setAttribute('aria-label', '返回');
+  back.onclick = () => shellAction('back');
+  document.querySelector('.records-header')?.prepend(back);
+}
 if (platform === 'tauri') {
   const { listen } = await import('@tauri-apps/api/event');
   await listen('records-open', () => { void view.load('open'); });

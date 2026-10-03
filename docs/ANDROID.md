@@ -1,88 +1,91 @@
-# Android 壳设计
+# Android：主界面与悬浮桌宠
 
-Android 端是共享前端的薄壳：Kotlin 提供窗口/系统能力，功能全部跑在前端
-（同样的 `ui/src`，App 内与悬浮窗各一个 WebView 实例）。
+Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复用
+`ChatView`、消息渲染器、记录页和托管配置，不复制一套安卓业务实现。
 
-## 形态
+## 产品边界
 
-用户方案：**打开 App → App 内全屏互动桌宠；退出 App → 悬浮窗桌宠继续显示。**
+- **悬浮窗只做基础互动**：点击、头部抚摸、拖动、贴边、随机动作与台词；
+  不创建 ChatController/ChatView，不登录、不请求聊天接口，不弹软键盘。
+- **双击悬浮宠进入主界面**。原生按系统双击时间和距离判定；长按、抚摸、
+  拖动、多指与取消事件不计作双击。系统限制后台拉起时可从常驻通知进入。
+- **主界面就是完整桌宠**：角色居中，输入框在底部，回复以 GAL 面板向上展开；
+  授权、新建/选择会话、聊天、停止/重试、图片/贴纸、表演指令均复用 Windows 实现。
+- 「记录」打开全屏 `records.html`，支持刷新、最近 50 轮、消息定位和重新播放；
+  「配置」打开设置页的八个托管面板。菜单提供聊天、记录、设置、悬浮窗、关于、退出。
+- Windows 的系统托盘对应安卓菜单/通知；置顶对应系统悬浮窗。主界面自动适配
+  可用空间，不拖动全屏窗口；设置里的尺寸、贴边和位置重置用于悬浮窗。
 
-- `MainActivity`：全屏透明 WebView 桌宠 + 右上角 ⋮ 菜单
-  （设置 / 悬浮窗模式 / 关于 / 退出）。
-- `PetOverlayService`：前台服务 + `WindowManager.TYPE_APPLICATION_OVERLAY`
-  透明 WebView 悬浮窗 + 通知（打开 / 退出）。
-- 生命周期：`onStop`（退后台）→ 若开启且已授权 → 启动悬浮窗服务；
-  `onStart`（回前台）→ 停止悬浮窗服务。两容器互斥，避免双宠物。
-- `BootReceiver`：开机/应用更新后按设置自启悬浮窗。
+## 容器与生命周期
 
-## 关键实现点
+`MainActivity` 保留桌宠 WebView；设置/记录以独立 WebView 页面栈覆盖它，
+返回销毁当前辅助页，不重新加载模型。返回键依次处理键盘、配置抽屉、辅助页、
+回复面板、聊天、退后台。记录重播返回桌宠，不重复调用展开去清掉已开始的回复。
 
-### 资源加载（WebViewAssetLoader）
+- `onStart` 停止悬浮服务，`onResume` 恢复渲染并重新读取共享设置。
+- `onStop` 暂停主界面渲染、停止本地聊天等待；已发出的服务器生成不保证取消，
+  回来后可在记录刷新。不在 `onPause` 提前创建悬浮宠，避免权限弹窗等短暂失焦造成双宠。
+- 退后台仅在开启开关且授权时启动 `PetOverlayService`。手动选择悬浮模式会开启该开关；
+  从权限页返回授予权限后继续进入悬浮模式。
+- 主界面/通知的「退出」完全关闭，不触发退后台自启，也不杀整个应用进程。
+- 通知使用 Activity PendingIntent 直接打开主界面，不经过 Service 通知跳板。
+- `BootReceiver` 按开机自启开关和悬浮权限启动；系统/厂商后台策略可能限制执行。
 
-`file://` 下 fetch 会被 CORS 拦死，故用 `WebViewAssetLoader` 把
-`app/src/main/assets/pet/`（Gradle 从 `ui/dist` 自动拷贝）映射到
-`https://appassets.androidplatform.net/`，同源的 fetch/XHR 正常。
-同一 App 的多个 WebView 共享 localStorage。
+## WebView 与系统配套
 
-### 悬浮窗 WebGL 必须硬件加速
+- `WebViewAssetLoader` 将 `assets/pet/` 映射到
+  `https://appassets.androidplatform.net/`；Gradle 从 `ui/dist` 同步打包。
+- 同源 WebView 共享 localStorage，设置经 `notifySettings` 即时应用，动作/表情/
+  情绪经 `notifyPetAction` 转给桌宠。辅助页关闭时补发 focus 处理配置与重播请求。
+- 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
+  不用固定高度估算键盘。原生背景与菜单颜色映射共享 `styles/tokens.css`。
+- `WebChromeClient` 接系统文件选择器，托管配置可导入文件；document-start 脚本
+  在创建 Blob 的 frame 中截取下载，交给系统「另存为」。保存不需要存储全盘权限；
+  该导出通道要求 WebView 支持 `DOCUMENT_START_SCRIPT`，旧系统 WebView 需更新。
+- 普通 HTTP(S) 外链交给浏览器，音频可随互动播放。当前没有后台聊天通知功能。
 
-Service 里经 WindowManager 添加的悬浮窗默认软件渲染，WebGL 输出全空：
-`LayoutParams` 必须带 `FLAG_HARDWARE_ACCELERATED`，否则角色渲染白屏
-（真机验证过的坑）。
+### 授权回跳
 
-### JS 桥（ShellBridge，`window.AndroidShell`）
+`aliyapet://miauth` 由 `AuthRelayActivity` 写入 ShellPrefs 后**始终返回主界面**。
+主界面保留时继续等待授权；被系统回收后，前端从持久的 pending/callback 恢复。
+悬浮窗不消费授权。账号和会话按实例隔离，协议见 [CHAT.md](CHAT.md)。
 
-仅暴露壳能力，所有坐标为 **CSS px**（壳侧 × density 转物理像素）：
+### 悬浮窗口与桥
 
-```
-getMetrics()      → {density, screenW/H, winX/Y, winW/H}   (同步 JSON)
-moveWindowBy(dx,dy)   窗口增量移动（触摸拖动走这里）
-setWindowSize(w,h)    按前端计算的比例/缩放设置
-setWindowPos(x,y)     绝对定位（恢复位置/贴边/重置）
-setAutoStart / isAutoStart / setPref / getPref / openUrl
-shellAction(action)   open-main / open-settings / hide-overlay / exit
-setWindowFocusable(b) 悬浮窗临时可聚焦（聊天软键盘需要窗口焦点）
-notifySettings(json)  设置页全量设置 → 桌宠页实时应用
-notifyPetAction(json) 设置页动作（动作试放/表情/情绪）→ 桌宠页 onShellAction
-```
+窗口始终保持 `FLAG_NOT_FOCUSABLE`，WebGL 必须显式硬件加速。
+窗口尺寸仅包含角色、动作余量和顶部气泡带；缩放按屏幕限制并保持脚底锚点，
+旋转后刷新尺寸。位置以模型原点 CSS px 双写 localStorage 与 ShellPrefs 的 Float。
+透明格通过命中掩码暂时切换触摸能力；此机制不等于保证系统重投最初 DOWN，
+穿透手感需要真机确认。
 
-JS Interface 运行在 JavaBridge 线程，窗口操作内部回主线程。
-`openUrl`/`shellAction` 在 Service 上下文自动带 NEW_TASK。
+桥能力：窗口度量/矩形、命中掩码/手势仲裁、偏好与自启、外链、页面导航、设置/
+动作转发、文件另存为。JavaScript 接口的窗口操作回主线程，偏好读写同步；
+不再保留悬浮窗聊天的可聚焦/键盘避让接口。
 
-### 前端在 Android 上的行为
+## 验收表
 
-- `platform.ts` 检测到 `window.AndroidShell` → android 模式；触摸端
-  （`isTouchDevice`）启用**单指按头部抚摸**（桌面是右键）。
-- 缩放按屏幕钳制：`maxS = min(screenW/baseW, screenH/baseH)`；
-  悬浮窗尺寸由前端 `applySettings` → `setWindowSize` 驱动。
-- 位置持久化双向：前端存 `localStorage.posX/Y` + 壳侧
-  `SharedPreferences petX/petY`（服务重启恢复位置用，存 CSS px）。
-- 熄屏/亮屏由壳广播触发 `window.__pet.onShellEvent('screen-off/on')` →
-  `setPaused(true/false)`，暂停渲染循环省电；设置页「省电模式」把帧率降为
-  15fps。
-- **聊天双形态**（与 PC 对齐，详见 `CHAT.md`）：主界面 ChatView 默认展开；
-  悬浮窗默认收起、入口按钮常驻，聊天打开时窗口矩形按内容态向下扩展并
-  钳回屏内，软键盘经 `setWindowFocusable` 临时聚焦 + 头不出屏的避让上移。
-- **设置页**（App 内第二 WebView）经 `notifySettings` 实时下发设置、
-  `notifyPetAction` 转发动作试放/表情/情绪到桌宠页；桌宠页把情绪写入共享
-  localStorage `aliya_pet_mood`，设置页回前台时刷新高亮。
+| 场景 | 预期 |
+| --- | --- |
+| 首次启动、未授予悬浮权限 | 主界面能加载与聊天；手动悬浮模式引导授权，拒绝不闪退 |
+| 悬浮轻点/抚摸/拖动 | 有基础反馈，无聊天按钮/输入框；拖动不误触双击 |
+| 双击角色/点击通知 | 主界面出现、悬浮消失；来回切换只有一只可见宠物 |
+| 授权后回跳/授权期间被系统回收 | 返回主界面继续连接，不落在悬浮窗等待 |
+| 输入中文、换行、弹出/收起键盘、横竖屏 | 输入区可见，角色保持比例，回复可滚动与翻页 |
+| 聊天与媒体 | 发送、停止/重试、分段逐字、图片/贴纸、表情动作正常 |
+| 记录与配置 | 八面板可切换保存；消息/分界可定位；重播回主界面播放 |
+| 导入/导出 | 文件选择可取消后重试；JSON 导出可选路径保存，中文内容不损坏 |
+| 设置 | 镜像、省电、自动行为、动作/表情/情绪实时生效；悬浮尺寸/位置重置可恢复 |
+| 返回与退出 | 逐层返回；关闭退后台开关不自动悬浮；菜单/通知退出后不自行重启 |
+| 熄屏、亮屏与通知权限 | 渲染暂停/恢复；通知拒绝不影响主界面；厂商后台限制按实机记录 |
 
-### MiAuth 回跳中转
+## 本次验证（2026-10-03）
 
-deep link `aliyapet://miauth` 由 `AuthRelayActivity`（透明 noHistory）接住：
-写入 `ShellPrefs.miauth_callback` 后立即退出。悬浮窗运行中保持现状（前端
-500ms 轮询自取，授权原地完成，不会因为回前台拉起 MainActivity 而停掉
-悬浮窗）；悬浮窗未运行（App 内授权）则照旧拉起 MainActivity。
+- 前端 TypeScript + Vite 生产构建，现有 65 项快速回归，Android debug 与签名 release APK 构建通过。
+- Chrome + mock AndroidShell/API 验证：底部输入、回复播放、缩小视口后的键盘布局、
+  记录/配置导航、新建会话、记录重播请求、八面板入口、悬浮无聊天 DOM/无聊天网络请求、
+  快速拖动反应与取消收尾；
+  主界面、回复、键盘布局和记录页截图已检查。未向真实账号发送测试消息。
+- 未连接 adb 设备，**未完成真机验收**。上述系统权限、双击拉起、软键盘、MiAuth、
+  跨 WebView、文件导入导出和厂商后台行为仍须按表检查，不能以模拟测试代替。
 
-## 权限与真机注意
-
-- **SYSTEM_ALERT_WINDOW**：悬浮窗权限，必须用户系统设置开启；App 内切
-  「悬浮窗模式」时引导。重装 APK 会重置授权。
-- **POST_NOTIFICATIONS**（Android 13+）：前台服务通知可见性，运行时请求。
-- 前台服务类型 `specialUse`（Manifest 已声明 subtype）。
-- 多数验证可用 adb 完成；通知按钮等受 MIUI 限制无法用 adb 模拟时，手动测。
-
-## 调试
-
-见 `docs/BUILD.md`：`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
-后可用 `tools/cdp-eval-n.mjs` 同时检查 App 内页与悬浮窗页（两个 target）。
+构建、签名与安装命令见 [BUILD.md](BUILD.md)。

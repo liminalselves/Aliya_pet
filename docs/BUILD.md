@@ -62,6 +62,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像（dl.google.com 常不可达）。
 - 修改了 Kotlin 壳 → 只需 `assembleDebug`（但前端改动必须**先** `ui:build`）。
+- 调试与正式包可同时构建：`gradlew.bat assembleDebug assembleRelease`。真机验收表见 [ANDROID.md](ANDROID.md)。
 - 真机注意：MIUI/EMUI 的「USB 安装」与「悬浮窗权限」需到系统设置单独授权；
   重装 APK 会重置 appops 权限。
 

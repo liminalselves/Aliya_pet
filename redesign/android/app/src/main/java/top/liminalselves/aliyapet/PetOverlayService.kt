@@ -30,9 +30,8 @@ import kotlin.math.roundToInt
  * 没有量化跳格，手指永远压在窗口上（触摸流不被下层抢走）。
  * 点击/抚摸仍交给前端（DOWN 先放行，未超阈值的事件流完整留给 WebView）。
  *
- * 内容贴合窗口：前端逐帧下发包裹角色剪影的窗口矩形（setWindowRect），
- * 透明区域不属于任何窗口 → 触摸天然穿透到下层应用；
- * FLAG_LAYOUT_NO_LIMITS 允许角色半出屏（前端有 48px 防丢钳制）。
+ * Window bounds only change with scale and movement; alpha hit masks handle empty space.
+ * FLAG_LAYOUT_NO_LIMITS permits off-screen parking when edge snapping is disabled.
  */
 class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
@@ -40,22 +39,19 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         private const val CHANNEL_ID = "pet_overlay"
         private const val NOTIF_ID = 1001
         private const val ACTION_QUIT = "top.liminalselves.aliyapet.QUIT"
-        private const val ACTION_OPEN = "top.liminalselves.aliyapet.OPEN"
 
-        /** 前端窗口基准（CSS px）：高 796.5 = 675×1.18，宽 = 高×0.64（包围盒比例）。 */
-        private const val BASE_H_CSS = 796.5f
         private const val BASE_ASPECT = 0.64f
 
         /** 透明区穿透后恢复可触摸的延迟（ms）：覆盖一次点按/滑动手势时长。 */
         private const val PASS_THROUGH_MS = 350L
 
-        /** 服务存活标记（AuthRelayActivity 判断回跳是否要拉起主界面）。 */
-        @Volatile
-        var isRunning = false
-            private set
-
         fun start(ctx: Context) {
-            ContextCompat.startForegroundService(ctx, Intent(ctx, PetOverlayService::class.java))
+            if (MainActivity.exitRequested || MainActivity.isForeground || !Settings.canDrawOverlays(ctx)) return
+            try {
+                ContextCompat.startForegroundService(ctx, Intent(ctx, PetOverlayService::class.java))
+            } catch (_: IllegalStateException) {
+                android.widget.Toast.makeText(ctx, R.string.toast_overlay_start_failed, android.widget.Toast.LENGTH_LONG).show()
+            }
         }
 
         fun stop(ctx: Context) {
@@ -81,12 +77,21 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragStartParamX = 0
     private var dragStartParamY = 0
     private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
+    private var tapCandidate = false
+    private var lastTapAt = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var openingMain = false
+    private var dragLastAt = 0L
+    private var dragLastRawX = 0f
+    private var dragLastRawY = 0f
+    private var dragMaxSpeed = 0f
+    private var windowAttached = false
 
     // ---------- 像素掩码穿透 ----------
-    /** 前端上报的占用掩码（0/1，覆盖整个窗口）：DOWN 命中透明格 → 本手势穿透给下层。 */
-    @Volatile private var maskCols = 0
-    @Volatile private var maskRows = 0
-    @Volatile private var maskData: ByteArray? = null
+    private data class HitMask(val cols: Int, val rows: Int, val data: ByteArray)
+    // Publish dimensions and pixels together across the bridge and touch threads.
+    @Volatile private var hitMask: HitMask? = null
     /** 穿透期间忽略 DOWN 命中测试（窗口本就收不到，保险）。 */
     @Volatile private var passThrough = false
     /** 窗外触摸上报节流（视线跟随）。 */
@@ -112,11 +117,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     override fun onCreate() {
         super.onCreate()
         // 无悬浮窗权限直接退出：addView 会抛异常把服务打挂（BootReceiver 自启路径也会走到这里）
-        if (!Settings.canDrawOverlays(this)) {
+        if (!Settings.canDrawOverlays(this) || MainActivity.isForeground || MainActivity.exitRequested) {
             stopSelf()
             return
         }
         createChannel()
+        startForeground(NOTIF_ID, buildNotification())
 
         val screenW = screenPhysical().first
         val screenH = screenPhysical().second
@@ -127,7 +133,6 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         var h = (winHCss * density).roundToInt()
 
         web = PetWebViewFactory.create(this, ShellBridge(this))
-        isRunning = true
         attachNativeDrag()
         params = WindowManager.LayoutParams(
             w, h,
@@ -156,7 +161,13 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
         w = w.coerceAtMost(screenW); h = h.coerceAtMost(screenH)
         params.width = w; params.height = h
-        wm.addView(web, params)
+        try {
+            wm.addView(web, params)
+            windowAttached = true
+        } catch (_: SecurityException) {
+            stopSelf()
+            return
+        }
 
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -170,27 +181,21 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         when (intent?.action) {
             ACTION_QUIT -> {
                 stopSelf()
-                // 用户明确退出：清掉后台进程（Activity 可能还挂在最近任务）
-                android.os.Process.killProcess(android.os.Process.myPid())
+                MainActivity.exitRequested = true
+                (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).appTasks.forEach { it.finishAndRemoveTask() }
                 return START_NOT_STICKY
             }
-            ACTION_OPEN -> {
-                val i = Intent(this, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                try {
-                    startActivity(i)
-                } catch (_: Exception) {
-                }
-                stopSelf()
-                return START_NOT_STICKY
-            }
+        }
+        if (!::web.isInitialized || MainActivity.isForeground || MainActivity.exitRequested || !Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return START_NOT_STICKY
         }
         startForeground(NOTIF_ID, buildNotification())
         return START_STICKY
     }
 
     override fun onDestroy() {
-        isRunning = false
+        windowAttached = false
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {
@@ -199,7 +204,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             wm.removeView(web)
         } catch (_: Exception) {
         }
-        web.destroy()
+        if (::web.isInitialized) web.destroy()
         super.onDestroy()
     }
 
@@ -218,9 +223,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     private fun buildNotification(): Notification {
-        val openPi = PendingIntent.getService(
+        val openPi = PendingIntent.getActivity(
             this, 0,
-            Intent(this, PetOverlayService::class.java).setAction(ACTION_OPEN),
+            Intent(this, MainActivity::class.java).putExtra("openMain", true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val quitPi = PendingIntent.getService(
@@ -230,7 +235,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         )
         val contentPi = PendingIntent.getActivity(
             this, 2,
-            Intent(this, MainActivity::class.java),
+            Intent(this, MainActivity::class.java).putExtra("openMain", true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -263,7 +268,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         web.setOnTouchListener listener@{ _, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    tapCandidate = false
                     if (isTransparentAt(ev.x, ev.y)) {
+                        lastTapAt = 0L
                         // 角色透明区：本手势穿透到下层应用（延迟恢复可触摸）
                         passThrough = true
                         setTouchable(false)
@@ -273,12 +280,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         }, PASS_THROUGH_MS)
                         return@listener true
                     }
+                    tapCandidate = true
                     dragPointerId = ev.getPointerId(0)
                     dragStartRawX = ev.rawX
                     dragStartRawY = ev.rawY
                     dragStartParamX = params.x
                     dragStartParamY = params.y
                     nativeDragging = false
+                    dragLastAt = ev.eventTime
+                    dragLastRawX = ev.rawX
+                    dragLastRawY = ev.rawY
+                    dragMaxSpeed = 0f
                     false
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -287,6 +299,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     } else {
                         val dx = ev.rawX - dragStartRawX
                         val dy = ev.rawY - dragStartRawY
+                        if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                            tapCandidate = false
+                            lastTapAt = 0L
+                        }
                         if (!nativeDragging &&
                             !jsInteracting &&
                             dx * dx + dy * dy > touchSlop * touchSlop
@@ -302,6 +318,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                             nativeDragging = true
                             evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
                         }
+                        val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
+                        if (nativeDragging) dragMaxSpeed = maxOf(dragMaxSpeed,
+                            kotlin.math.hypot(ev.rawX - dragLastRawX, ev.rawY - dragLastRawY) * 1000f / elapsed)
+                        dragLastAt = ev.eventTime
+                        dragLastRawX = ev.rawX
+                        dragLastRawY = ev.rawY
                         if (nativeDragging) {
                             // 全域停靠：窗口可整个拖出屏幕（用户明确要求）；
                             // 钳到「完全出屏」域仅防 WM 参数溢出，找回走设置页重置位置
@@ -317,12 +339,34 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         }
                     }
                 }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    tapCandidate = false
+                    lastTapAt = 0L
+                    false
+                }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val tap = ev.actionMasked == MotionEvent.ACTION_UP && tapCandidate && !nativeDragging &&
+                        ev.eventTime - ev.downTime < ViewConfiguration.getLongPressTimeout() &&
+                        kotlin.math.hypot(ev.rawX - dragStartRawX, ev.rawY - dragStartRawY) <= touchSlop
+                    tapCandidate = false
+                    if (tap) {
+                        val slop = ViewConfiguration.get(this).scaledDoubleTapSlop
+                        if (lastTapAt > 0 && ev.eventTime - lastTapAt <= ViewConfiguration.getDoubleTapTimeout() &&
+                            kotlin.math.hypot(ev.rawX - lastTapX, ev.rawY - lastTapY) <= slop) {
+                            lastTapAt = 0L
+                            openMain()
+                        } else {
+                            lastTapAt = ev.eventTime
+                            lastTapX = ev.rawX
+                            lastTapY = ev.rawY
+                        }
+                    } else lastTapAt = 0L
                     if (nativeDragging) {
                         nativeDragging = false
                         val dxCss = (params.x - dragStartParamX) / density
                         val dyCss = (params.y - dragStartParamY) / density
-                        evalJs("window.__pet && window.__pet.onNativeDragEnd && window.__pet.onNativeDragEnd($dxCss, $dyCss);")
+                        val cancelled = ev.actionMasked == MotionEvent.ACTION_CANCEL
+                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled);")
                         true
                     } else {
                         false
@@ -347,21 +391,16 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     /** 事件坐标（窗口内物理 px）是否落在角色透明像素上。无掩码时保守视为不透明。 */
     private fun isTransparentAt(xPhys: Float, yPhys: Float): Boolean {
         if (passThrough) return false
-        val cols = maskCols
-        val rows = maskRows
-        val data = maskData
-        if (cols <= 0 || rows <= 0 || data == null ||
-            params.width <= 0 || params.height <= 0
-        ) {
-            return false
-        }
-        val gx = (xPhys / params.width * cols).toInt().coerceIn(0, cols - 1)
-        val gy = (yPhys / params.height * rows).toInt().coerceIn(0, rows - 1)
-        return data[gy * cols + gx].toInt() == 0
+        val mask = hitMask ?: return false
+        if (params.width <= 0 || params.height <= 0) return false
+        val gx = (xPhys / params.width * mask.cols).toInt().coerceIn(0, mask.cols - 1)
+        val gy = (yPhys / params.height * mask.rows).toInt().coerceIn(0, mask.rows - 1)
+        return mask.data[gy * mask.cols + gx].toInt() == 0
     }
 
     /** 切换窗口可触摸性（透明区穿透用）。 */
     private fun setTouchable(touchable: Boolean) {
+        if (!windowAttached) return
         val f = if (touchable) {
             params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         } else {
@@ -392,34 +431,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun getMode(): String = "overlay"
 
-    /**
-     * 聊天输入需要软键盘：悬浮窗默认 FLAG_NOT_FOCUSABLE（不抢下层焦点），
-     * 按下文本框时临时摘掉标志并把焦点交给 WebView；失焦时恢复标志并收起输入法。
-     * 键盘遮挡由前端自行避让（整体上移窗口，见 _overlayInputFocused）。
-     */
-    override fun setWindowFocusable(focusable: Boolean) {
-        val flag = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        val newFlags = if (focusable) params.flags and flag.inv() else params.flags or flag
-        if (newFlags != params.flags) {
-            params.flags = newFlags
-            try {
-                wm.updateViewLayout(web, params)
-            } catch (_: Exception) {
-            }
-        }
-        if (focusable) {
-            web.isFocusable = true
-            web.isFocusableInTouchMode = true
-            web.requestFocus()
-        } else {
-            web.isFocusableInTouchMode = false
-            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.hideSoftInputFromWindow(web.windowToken, 0)
-        }
-    }
-
     override fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {
-        if (nativeDragging) return // 原生拖动期间窗口由壳独占
+        if (!windowAttached || nativeDragging) return
         val w = (wCss * density).roundToInt().coerceAtLeast(8)
         val h = (hCss * density).roundToInt().coerceAtLeast(8)
         // 固定窗口架构：矩形由前端按静态包围盒一次算定，壳不再钳制——
@@ -435,24 +448,25 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     /** 前端上报像素占用掩码（0/1 字符串，cols×rows 覆盖整个窗口）。 */
     override fun setHitMask(cols: Int, rows: Int, data: String) {
         if (cols <= 0 || rows <= 0 || data.length != cols * rows) return
-        maskCols = cols
-        maskRows = rows
-        maskData = ByteArray(data.length) { if (data[it] == '1') 1 else 0 }
+        hitMask = HitMask(cols, rows, ByteArray(data.length) { if (data[it] == '1') 1 else 0 })
     }
 
     override fun moveWindowBy(dxCss: Float, dyCss: Float) {
+        if (!windowAttached) return
         params.x += (dxCss * density).roundToInt()
         params.y += (dyCss * density).roundToInt()
         wm.updateViewLayout(web, params)
     }
 
     override fun setWindowSize(wCss: Float, hCss: Float) {
+        if (!windowAttached) return
         params.width = (wCss * density).roundToInt().coerceAtLeast(8)
         params.height = (hCss * density).roundToInt().coerceAtLeast(8)
         wm.updateViewLayout(web, params)
     }
 
     override fun setWindowPos(xCss: Float, yCss: Float) {
+        if (!windowAttached) return
         params.x = (xCss * density).roundToInt()
         params.y = (yCss * density).roundToInt()
         wm.updateViewLayout(web, params)
@@ -467,23 +481,36 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun shellAction(action: String) {
         when (action) {
-            "open-main" -> {
-                val i = Intent(this, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                try {
-                    startActivity(i)
-                } catch (_: Exception) {
-                }
-                stopSelf()
-            }
+            "open-main" -> openMain()
             "hide-overlay", "exit" -> {
-                stopSelf()
                 if (action == "exit") {
-                    android.os.Process.killProcess(android.os.Process.myPid())
+                    MainActivity.exitRequested = true
+                    (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).appTasks.forEach { it.finishAndRemoveTask() }
                 }
+                stopSelf()
             }
             "open-overlay-settings" -> ShellBridgeHostDefaults.openOverlaySettings(this)
         }
+    }
+
+    private fun openMain() {
+        if (openingMain) return
+        openingMain = true
+        try {
+            startActivity(Intent(this, MainActivity::class.java)
+                .putExtra("openMain", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            // MainActivity.onStart owns the handoff; a blocked launch must not lose the pet.
+            web.postDelayed({ openingMain = false }, 1000)
+        } catch (_: Exception) {
+            openingMain = false
+            android.widget.Toast.makeText(this, R.string.toast_open_main, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::web.isInitialized) evalShellEvent("display-changed")
     }
 
     // ---------- 工具 ----------
@@ -509,6 +536,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     private fun evalJs(js: String) {
+        if (!windowAttached) return
         try {
             web.evaluateJavascript(js, null)
         } catch (_: Exception) {

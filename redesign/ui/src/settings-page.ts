@@ -85,8 +85,8 @@ let onMoodChanged: (cb: (mood: string) => void) => void = () => {};
 let invokeCmd: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) =
   () => Promise.resolve(null);
 
-// Tauri 环境探测（浏览器 dev 下降级为纯本地预览）
-try {
+// Only the desktop shell owns the Tauri event bus.
+if (platform === 'tauri') try {
   const ev = await import('@tauri-apps/api/event');
   const { invoke } = await import('@tauri-apps/api/core');
   emitToPet = (event, payload) => {
@@ -147,7 +147,7 @@ if (platform === 'android') {
   back.className = 'back';
   back.textContent = '‹';
   back.setAttribute('aria-label', '返回');
-  back.addEventListener('click', () => shellAction('open-main'));
+  back.addEventListener('click', () => shellAction('back'));
   const title = document.createElement('span');
   title.className = 'title';
   title.textContent = '设置';
@@ -415,8 +415,8 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
       if (m.screenW > 0 && m.screenH > 0) {
         scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
         scaleRangeMax = Math.max(
-          0.5,
-          Math.min(m.screenW / BASE_WINDOW_W, m.screenH / BASE_WINDOW_H)
+          scaleRangeMin,
+          Math.min(m.screenW / BASE_WINDOW_W, (m.screenH - 88) / BASE_WINDOW_H)
         );
         refreshControls();
       }
@@ -511,8 +511,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
           };
           const x = Math.round(m.screenW / 2);
           const y = Math.round(m.screenH * 0.45);
-          settings = { ...settings, posX: x, posY: y };
-          saveSettings(settings);
+          update({ posX: x, posY: y });
           shell.setPref('petX', String(x));
           shell.setPref('petY', String(y));
         } catch {
@@ -575,8 +574,8 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
 
     refs.overlayOnExit = switchRow(
       box,
-      '退出 App 后显示悬浮窗',
-      'App 切到后台时，宠物以悬浮窗形式继续待在桌面上',
+      '退到后台后显示悬浮窗',
+      '悬浮窗支持点击、抚摸和拖动；双击回到主界面聊天，菜单退出会完全关闭',
       () => shell?.getPref('overlayOnExit') !== '0',
       (v) => shell?.setPref('overlayOnExit', v ? '1' : '0')
     );
@@ -641,14 +640,14 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     if (platform === 'tauri') {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('show_records');
-    } else if (platform === 'android') shellAction('open-main');
+    } else if (platform === 'android') shellAction('open-records');
     else window.location.assign('/chat.html');
   };
   if (platform === 'android') {
     const openChat = document.createElement('button');
     openChat.className = 'act wide';
     openChat.textContent = '打开聊天';
-    openChat.addEventListener('click', () => shellAction('open-main'));
+    openChat.addEventListener('click', () => shellAction('open-chat'));
     box.appendChild(openChat);
   }
   const agentControls = mountAgentControls(box, openRecords, refreshChatInfo);
@@ -666,7 +665,8 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
       await listen<{ target?: string }>('settings-open', event => openTarget(event.payload?.target ?? ''));
     } catch { /* Browser preview has no Tauri event bus. */ }
   }
-  if (location.hash === '#about') openTarget('about');
+  window.addEventListener('hashchange', () => openTarget(location.hash.slice(1)));
+  if (location.hash) openTarget(location.hash.slice(1));
 }
 
 // ---- 关于 ----
@@ -675,7 +675,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const div = document.createElement('div');
   div.className = 'about';
   div.innerHTML =
-    '<b>Aliya Pet</b> v0.2.0（Tauri 重写版）<br>' +
+    `<b>Aliya Pet</b> v0.2.0（${platform === 'android' ? 'Android' : 'Windows'}）<br>` +
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);

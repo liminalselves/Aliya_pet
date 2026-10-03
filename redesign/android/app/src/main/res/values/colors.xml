@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#2D2A3A</color>
+    <!-- Native shell equivalents of ui/src/styles/tokens.css. -->
+    <color name="pet_background">#0B1210</color>
+    <color name="pet_surface">#121B17</color>
+    <color name="pet_text">#E6FFF7</color>
+    <color name="pet_muted">#8FA9A0</color>
+    <color name="pet_accent">#63E6BE</color>
+    <color name="pet_line">#1FE6FFF7</color>
 </resources>
