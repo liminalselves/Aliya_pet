@@ -102,6 +102,7 @@ export class PetApp {
   private _keyboardShift = 0;
   /** 吸附归位动画令牌：新拖动/新吸附自增打断旧动画。 */
   private _snapAnimToken = 0;
+  private _snapAnimation: Animation | null = null;
   private _snapHintTimer: ReturnType<typeof setTimeout> | null = null;
   private _globalMouse: { x: number; y: number } | null = null;
   private _dpr = 1;
@@ -140,6 +141,9 @@ export class PetApp {
 
   /** 拖动判定阈值（CSS px）。 */
   private static readonly _dragThresholdPx = 5;
+
+  /** 松手贴边感应带（CSS px）。 */
+  private static readonly _snapZonePx = 48;
 
   /**
    * 渲染动作余量：模型渲染尺寸 = 视口 / 1.22。
@@ -521,6 +525,7 @@ export class PetApp {
    * 窗口操作需要 Tauri 环境，浏览器 dev 下静默跳过。
    */
   public applySettings(s: PetSettings, restoreWindow = false): void {
+    this._cancelSnapAnimation();
     this._settings = s;
     const revision = ++this._windowSettingsRevision;
     saveSettings(s);
@@ -768,6 +773,7 @@ export class PetApp {
 
   /** 位置重置：移回主屏幕中央。 */
   public resetPosition(): void {
+    this._cancelSnapAnimation();
     if (platform === 'android') {
       const shell = androidShell();
       if (!shell) return;
@@ -837,7 +843,20 @@ export class PetApp {
     }, 650);
   }
 
-  /** 拖动结束：窗口始终允许越界；开启贴边时仅在边缘感应带内吸附，然后保存位置。 */
+  private static _snapAxis(
+    pos: number, min: number, max: number, zone: number,
+  ): { v: number; edge: 'min' | 'max' | null } {
+    max = Math.max(min, max);
+    const nearMin = pos <= min + zone;
+    const nearMax = pos >= max - zone;
+    if (nearMin && (!nearMax || Math.abs(pos - min) <= Math.abs(pos - max))) {
+      return { v: min, edge: 'min' };
+    }
+    if (nearMax) return { v: max, edge: 'max' };
+    return { v: pos, edge: null };
+  }
+
+  /** 松手后才贴边；Windows 由系统选择所在显示器，完全出屏时选择最近显示器。 */
   private _onDragFinished(): void {
     if (platform === 'android') {
       this._onDragFinishedAndroid();
@@ -845,48 +864,109 @@ export class PetApp {
     }
     const win = this._tauriWindow;
     if (!win) return;
-    const token = ++this._snapAnimToken;
+    this._cancelSnapAnimation();
+    const token = this._snapAnimToken;
     const pendingMove = this._windowMoveTask;
     import('@tauri-apps/api/window')
       .then(async (m) => {
         await pendingMove;
         if (token !== this._snapAnimToken) return;
-        {
-          const mon = await m.currentMonitor();
-          if (mon && this._settings.snapEdges) {
-            const size = await win.outerSize();
-            const threshold = Math.round(32 * mon.scaleFactor);
-            if (token !== this._snapAnimToken) return;
-            let x = this._winPhysX;
-            let y = this._winPhysY;
+        const pos = await win.outerPosition();
+        if (token !== this._snapAnimToken) return;
+        this._winPhysX = pos.x;
+        this._winPhysY = pos.y;
+        if (this._settings.snapEdges) {
+          const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
+          if (token !== this._snapAnimToken) return;
+          if (mon) {
+            const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
             const left = mon.workArea.position.x;
             const top = mon.workArea.position.y;
             const right = left + mon.workArea.size.width - size.width;
             const bottom = top + mon.workArea.size.height - size.height;
+            const sx = PetApp._snapAxis(pos.x, left, right, zone);
+            const sy = PetApp._snapAxis(pos.y, top, bottom, zone);
             const edges: string[] = [];
-            // 允许越界：只比较对应窗口边与屏幕边的距离，不做最后 clamp。
-            if (Math.abs(x - left) <= threshold) { x = left; edges.push('left'); }
-            else if (Math.abs(x - right) <= threshold) { x = right; edges.push('right'); }
-            if (Math.abs(y - top) <= threshold) { y = top; edges.push('top'); }
-            else if (Math.abs(y - bottom) <= threshold) { y = bottom; edges.push('bottom'); }
-            if (x !== this._winPhysX || y !== this._winPhysY) {
-              await win.setPosition(new m.PhysicalPosition(x, y));
-              this._winPhysX = x;
-              this._winPhysY = y;
-              this._showSnapHint(edges);
+            if (sx.edge) edges.push(sx.edge === 'min' ? 'left' : 'right');
+            if (sy.edge) edges.push(sy.edge === 'min' ? 'top' : 'bottom');
+            if (sx.v !== pos.x || sy.v !== pos.y) {
+              await this._animateWindowToPhys(sx.v, sy.v);
+              if (token !== this._snapAnimToken) return;
             }
+            this._showSnapHint(edges);
           }
         }
-        this._settings.posX = this._winPhysX;
-        this._settings.posY = this._winPhysY;
-        saveSettings(this._settings);
+        this._persistDesktopPos();
       })
       .catch(() => {});
   }
 
+  /** 持久化桌面窗口位置（物理 px）。 */
+  private _persistDesktopPos(): void {
+    this._settings.posX = this._winPhysX;
+    this._settings.posY = this._winPhysY;
+    saveSettings(this._settings);
+  }
+
+  private _cancelSnapAnimation(): void {
+    this._snapAnimToken++;
+    this._snapAnimation?.cancel();
+    this._snapAnimation = null;
+    if (this._snapHintTimer) clearTimeout(this._snapHintTimer);
+    this._snapHintTimer = null;
+    document.body.classList.remove('snap-confirm');
+    delete document.body.dataset.snapEdge;
+  }
+
+  /** 原生动画引擎负责时间线和缓动；窗口不是 DOM 元素，逐帧仅桥接位置。 */
+  private async _animateSnap(
+    update: (progress: number) => void | Promise<void>, durMs = 220,
+  ): Promise<boolean> {
+    const token = this._snapAnimToken;
+    const style = getComputedStyle(document.documentElement);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await update(1);
+      return token === this._snapAnimToken;
+    }
+    const effect = new KeyframeEffect(null, null, {
+      duration: durMs,
+      easing: style.getPropertyValue('--al-ease').trim(),
+      fill: 'both',
+    });
+    const animation = new Animation(effect, document.timeline);
+    this._snapAnimation = animation;
+    animation.play();
+    try {
+      while (token === this._snapAnimToken) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (token !== this._snapAnimToken) return false;
+        const progress = effect.getComputedTiming().progress ?? 0;
+        // 等待这一帧实际提交，避免 IPC 积压把动画合并成一次瞬移。
+        await update(progress);
+        if (progress === 1) return token === this._snapAnimToken;
+      }
+      return false;
+    } finally {
+      animation.cancel();
+      if (this._snapAnimation === animation) this._snapAnimation = null;
+    }
+  }
+
+  private async _animateWindowToPhys(tx: number, ty: number): Promise<void> {
+    const sx = this._winPhysX;
+    const sy = this._winPhysY;
+    const completed = await this._animateSnap(async progress => {
+      this._winPhysX = Math.round(sx + (tx - sx) * progress);
+      this._winPhysY = Math.round(sy + (ty - sy) * progress);
+      await this._submitWindowPos();
+    });
+    if (completed) this._syncChatAnchor();
+  }
+
   /**
    * Android 拖动结束：贴边吸附（缓动归位）+ 位置持久化。
-   * 不做防丢钳制：用户明确要求可以整个拖出屏幕（找不回时走设置页「重置位置」）。
+   * 开启贴边时越界必归位（越界即近边的延伸）；关闭时可整个拖出屏幕
+   * （找不回时走设置页「重置位置」）。
    */
   private _onDragFinishedAndroid(): void {
     const shell = androidShell();
@@ -900,17 +980,18 @@ export class PetApp {
       const b = this._model?.getStaticBounds() ?? null;
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
-        const th = 32;
+        const zone = PetApp._snapZonePx;
         let tx = this._originCssX;
         let ty = this._originCssY;
         const charL = tx + b.minX * s;
         const charR = tx + b.maxX * s;
         const charT = ty - b.maxY * s;
         const charB = ty - b.minY * s;
-        if (Math.abs(charL) < th) tx -= charL;
-        else if (Math.abs(charR - m.screenW) < th) tx += m.screenW - charR;
-        if (Math.abs(charT) < th) ty -= charT;
-        else if (Math.abs(charB - m.screenH) < th) ty += m.screenH - charB;
+        // 统一规则：角色边越界或在感应带内 → 贴到对应屏边
+        if (charL <= zone) tx -= charL;
+        else if (charR >= m.screenW - zone) tx += m.screenW - charR;
+        if (charT <= zone) ty -= charT;
+        else if (charB >= m.screenH - zone) ty += m.screenH - charB;
         if (tx !== this._originCssX || ty !== this._originCssY) {
           this._animateOriginTo(tx, ty);
           return; // 动画末帧持久化
@@ -930,27 +1011,17 @@ export class PetApp {
     shell?.setPref('petY', String(Math.round(this._originCssY)));
   }
 
-  /**
-   * 吸附归位动画：easeOutCubic 缓动 ~220ms。
-   * 逐帧只平移窗口（尺寸不变 → 无表面重排），滑动观感而非抽搐。
-   * 新拖动/新吸附经 _snapAnimToken 自增打断。
-   */
   private _animateOriginTo(tx: number, ty: number, durMs = 220): void {
-    const token = ++this._snapAnimToken;
+    this._cancelSnapAnimation();
     const sx = this._originCssX;
     const sy = this._originCssY;
-    const t0 = performance.now();
-    const step = (): void => {
-      if (token !== this._snapAnimToken) return;
-      const k = Math.min(1, (performance.now() - t0) / durMs);
-      const e = 1 - Math.pow(1 - k, 3);
-      this._originCssX = sx + (tx - sx) * e;
-      this._originCssY = sy + (ty - sy) * e;
-      this._rectDirty = true; // 驱动 _syncWrapWindow 逐帧平移跟随
-      if (k < 1) requestAnimationFrame(step);
-      else this._persistWrapOrigin();
-    };
-    requestAnimationFrame(step);
+    void this._animateSnap(progress => {
+      this._originCssX = sx + (tx - sx) * progress;
+      this._originCssY = sy + (ty - sy) * progress;
+      this._rectDirty = true;
+    }, durMs).then(completed => {
+      if (completed) this._persistWrapOrigin();
+    }).catch(() => {});
   }
 
   // ---------- 台词 ----------
@@ -1043,7 +1114,6 @@ export class PetApp {
     canvas.addEventListener('pointerdown', (e) => {
       if (!e.isPrimary || (e.button !== 0 && e.button !== 2)) return;
       this._coordination.activity();
-      this._snapAnimToken++;
       // 透明像素兜底：壳穿透生效前的竞态，落在透明区的事件不触发互动
       if (
         platform === 'tauri' &&
@@ -1052,6 +1122,7 @@ export class PetApp {
       ) {
         return;
       }
+      this._cancelSnapAnimation();
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
@@ -1218,23 +1289,22 @@ export class PetApp {
     this._coordination.activity();
   }
 
-  /** 拉取窗口物理位置与 DPI 缩放（拖动增量换算用）。 */
+  /** 拉取窗口物理位置与 DPI 缩放；旧查询不得覆盖正在提交或播放动画的位置。 */
   private _syncWindowMetrics(): void {
     const win = this._tauriWindow;
     if (!win) return;
+    const token = this._snapAnimToken;
     Promise.all([win.outerPosition(), win.scaleFactor()])
       .then(([pos, sf]) => {
         this._scaleFactor = sf;
         this._metricsSynced = true;
-        if (!this._dragging && !this._windowMoveTask) {
+        if (token === this._snapAnimToken && !this._dragging && !this._windowMoveTask && !this._snapAnimation) {
           this._winPhysX = pos.x;
           this._winPhysY = pos.y;
           this._syncChatAnchor();
         }
       })
-      .catch(() => {
-        // 忽略：保持上次值
-      });
+      .catch(() => {});
   }
 
   /**
@@ -1267,7 +1337,7 @@ export class PetApp {
       .catch(() => {});
   }
 
-  /** 按 CSS 像素增量移动窗口（内部换算物理像素）。 */
+  /** 拖动只跟随指针，不在移动过程中吸附或限制位置。 */
   private _moveWindowBy(deltaCssX: number, deltaCssY: number): void {
     if (platform === 'android') {
       // 壳侧同步应用增量（乘 density），无缓存竞态问题
@@ -1276,26 +1346,29 @@ export class PetApp {
     }
     const win = this._tauriWindow;
     if (!win || !this._metricsSynced) return;
-    this._winPhysX += Math.round(deltaCssX * this._scaleFactor);
-    this._winPhysY += Math.round(deltaCssY * this._scaleFactor);
-    if (this._windowMoveTask) return;
+    this._winPhysX += deltaCssX * this._scaleFactor;
+    this._winPhysY += deltaCssY * this._scaleFactor;
+    void this._submitWindowPos().catch(() => this._syncWindowMetrics());
+  }
+
+  /** 串行提交窗口位置；拖动合并目标，动画等待实际提交后再采样下一帧。 */
+  private _submitWindowPos(): Promise<void> {
+    const win = this._tauriWindow;
+    if (!win) return Promise.resolve();
+    if (this._windowMoveTask) return this._windowMoveTask;
     this._windowMoveTask = import('@tauri-apps/api/window')
       .then(async (m) => {
-        // 串行提交并合并期间新增的位移，防止 IPC 回包乱序把窗口拉回旧位置。
         let x: number, y: number;
         do {
-          x = this._winPhysX;
-          y = this._winPhysY;
+          x = Math.round(this._winPhysX);
+          y = Math.round(this._winPhysY);
           await win.setPosition(new m.PhysicalPosition(x, y));
-        } while (x !== this._winPhysX || y !== this._winPhysY);
-      })
-      .catch(() => {
-        this._windowMoveTask = null;
-        this._syncWindowMetrics();
+        } while (x !== Math.round(this._winPhysX) || y !== Math.round(this._winPhysY));
       })
       .finally(() => {
         this._windowMoveTask = null;
       });
+    return this._windowMoveTask;
   }
 
   // ---------- 渲染循环 ----------
@@ -1406,7 +1479,7 @@ export class PetApp {
    */
   public onNativeDragStart(): void {
     this._nativeDragging = true;
-    this._snapAnimToken++; // 新拖动打断吸附归位动画
+    this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
     this._dragging = false;
@@ -1425,7 +1498,7 @@ export class PetApp {
   public onNativeDragEnd(dxCss: number, dyCss: number): void {
     this._coordination.activity();
     this._nativeDragging = false;
-    this._snapAnimToken++; // 打断进行中的吸附动画
+    this._cancelSnapAnimation();
     this._originCssX += dxCss;
     this._originCssY += dyCss;
     this._appliedRectX += dxCss;

@@ -126,19 +126,81 @@ test('镜像画布使用可见坐标而非已被CSS反转的offsetX',()=>{
  const {PetApp}=load('pet-app');const app=Object.create(PetApp.prototype);app._wrapWindow=false;app._canvas={getBoundingClientRect:()=>({left:100,top:50,width:200,height:400})};
  const p=app._eventNorm({clientX:260,clientY:150,offsetX:40,offsetY:100});assert.equal(p.nx,.8);assert.equal(p.ny,.25);
 });
-test('窗口允许越界；开启贴边时仅感应带内吸附（支持副屏负坐标与 DPI）',async()=>{
- for(const [pos,snap,wantMove] of [
-  [[-2050,950],false,null],             // 关闭贴边：越界位置原样保留
-  [[-1650,12],true,[-1650,0]],         // 顶边 12px：吸附到副屏工作区顶
-  [[-2050,950],true,null],              // 开启贴边但远离感应带：仍允许越界
-  [[-320,620],true,[-300,640]],         // 右/底边同时吸附（DPI 阈值 48px）
- ]){
-  let moved;let saved;const api={currentMonitor:async()=>({scaleFactor:1.5,workArea:{position:{x:-1920,y:0},size:{width:1920,height:1040}}}),PhysicalPosition:class{constructor(x,y){this.x=x;this.y=y}}};
-  const {PetApp}=load('pet-app',{'@tauri-apps/api/window':api,'./settings':{saveSettings:s=>{saved={...s}}}});const app=Object.create(PetApp.prototype);
-  Object.assign(app,{_tauriWindow:{outerSize:async()=>({width:300,height:400}),setPosition:async p=>{moved=p}},_snapAnimToken:0,_snapHintTimer:null,_windowMoveTask:null,_settings:{snapEdges:snap},_winPhysX:pos[0],_winPhysY:pos[1],_showSnapHint(){}});
-  app._onDragFinished();await new Promise(r=>setImmediate(r));
-  assert.deepEqual(moved?[moved.x,moved.y]:null,wantMove);assert.deepEqual([saved.posX,saved.posY],wantMove??pos);
+const settleWindow=()=>new Promise(r=>setImmediate(r));
+function snapHarness(pos=[40,300],snap=true) {
+ let now=0,rafQ=[],reduced=false;
+ const positions=[],saved=[],animations=[];
+ const mon={scaleFactor:1.5,workArea:{position:{x:-1920,y:0},size:{width:1920,height:1040}}};
+ const body={dataset:{},classList:{remove(){},add(){}},offsetWidth:1};
+ class KeyframeEffect {
+  constructor(target,keyframes,options){this.options=options}
+  getComputedTiming(){return {progress:Math.min(1,(now-this.started)/this.options.duration)}}
  }
+ class Animation {
+  constructor(effect){this.effect=effect;animations.push(this)}
+  play(){this.effect.started=now}
+  cancel(){this.cancelled=true}
+ }
+ const api={currentMonitor:async()=>mon,PhysicalPosition:class{constructor(x,y){this.x=x;this.y=y}}};
+ const {PetApp}=load('pet-app',{'@tauri-apps/api/window':api,'./settings':{saveSettings:s=>saved.push({...s})}},{
+  KeyframeEffect,Animation,document:{body,documentElement:{},timeline:{}},
+  window:{matchMedia:()=>({matches:reduced})},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
+  requestAnimationFrame:fn=>rafQ.push(fn),
+ });
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_tauriWindow:{outerPosition:async()=>({x:pos[0],y:pos[1]}),scaleFactor:async()=>1.5,
+  outerSize:async()=>({width:300,height:400}),setPosition:async p=>{pos[0]=p.x;pos[1]=p.y;positions.push([...pos])}},
+  _snapAnimToken:0,_snapAnimation:null,_snapHintTimer:null,_windowMoveTask:null,_settings:{snapEdges:snap},
+  _winPhysX:pos[0],_winPhysY:pos[1],_scaleFactor:1.5,_metricsSynced:true,_syncChatAnchor(){},_showSnapHint(){}});
+ return {app,positions,saved,animations,pos,mon,PetApp,
+  reduce(){reduced=true},
+  async frame(ms=16){now+=ms;const q=rafQ;rafQ=[];for(const fn of q)fn(now);await settleWindow()},
+  async finish(){for(let guard=0;rafQ.length&&guard<30;guard++)await this.frame(32);assert.equal(rafQ.length,0)},
+ };
+}
+test('松手贴边：副屏负坐标、DPI、越界归位与关闭贴边',async()=>{
+ for(const [pos,snap,want] of [
+  [[-2050,950],false,[-2050,950]],
+  [[-1650,12],true,[-1650,0]],
+  [[-5000,950],true,[-1920,640]],
+  [[-1000,300],true,[-1000,300]],
+  [[-320,620],true,[-300,640]],
+  [[-1848,300],true,[-1920,300]], // 48 CSS px = 72 physical px
+  [[-1847,300],true,[-1847,300]],
+ ]){
+  const h=snapHarness([...pos],snap);h.app._onDragFinished();await settleWindow();await h.finish();
+  assert.deepEqual([h.saved.at(-1).posX,h.saved.at(-1).posY],want,`pos=${pos} snap=${snap}`);
+  if(want.join()!==pos.join()) assert.deepEqual(h.positions.at(-1),want);
+ }
+});
+test('贴边开启时拖动仍完全跟手：从边缘拉开无阻力，越界不钳制，小数位移不丢失',async()=>{
+ const h=snapHarness([-1920,300]);
+ h.app._moveWindowBy(1,0);await settleWindow();assert.deepEqual(h.pos,[-1918,300]);
+ h.app._moveWindowBy(1,0);await settleWindow();assert.deepEqual(h.pos,[-1917,300]);
+ h.app._moveWindowBy(-200,10);await settleWindow();assert.deepEqual(h.pos,[-2217,315]);
+ assert.equal(h.animations.length,0);assert.equal(h.saved.length,0);
+});
+test('归位执行多帧位置过渡，末帧真正提交前不保存目标位置',async()=>{
+ const h=snapHarness([-1880,300]);h.app._onDragFinished();await settleWindow();
+ assert.equal(h.positions.length,0);assert.equal(h.saved.length,0);
+ await h.frame(60);assert.ok(h.pos[0]<-1880&&h.pos[0]>-1920);assert.equal(h.saved.length,0);
+ const realSet=h.app._tauriWindow.setPosition;let release;
+ h.app._tauriWindow.setPosition=p=>new Promise(resolve=>{release=async()=>{await realSet(p);resolve()}});
+ await h.frame(220);assert.equal(h.saved.length,0);
+ await release();await settleWindow();assert.deepEqual(h.pos,[-1920,300]);assert.equal(h.saved.at(-1).posX,-1920);
+ assert.ok(h.positions.length>1);
+});
+test('再次抓取可立即中断旧动画，少动态效果下直接归位',async()=>{
+ const h=snapHarness([-1880,300]);h.app._onDragFinished();await settleWindow();await h.frame(60);
+ h.app._cancelSnapAnimation();const before=h.pos[0];h.app._moveWindowBy(10,0);await settleWindow();await h.finish();
+ assert.equal(h.pos[0],Math.round(before+15));assert.equal(h.saved.length,0);assert.equal(h.animations[0].cancelled,true);
+ const reduced=snapHarness([-1880,300]);reduced.reduce();reduced.app._onDragFinished();await settleWindow();
+ assert.deepEqual(reduced.pos,[-1920,300]);assert.equal(reduced.animations.length,0);assert.equal(reduced.saved.length,1);
+});
+test('窄屏感应带重叠时选最近边，窗口大于工作区时不产生反向边界',()=>{
+ const {PetApp}=load('pet-app');
+ assert.equal(PetApp._snapAxis(70,0,80,48).v,80);
+ assert.equal(PetApp._snapAxis(100,0,-40,48).v,0);
 });
 
 test('半闭眼收小瞳孔行程，完全闭眼回中',()=>{
@@ -288,7 +350,7 @@ function pointerHarness(touch=false) {
  Object.assign(app,{_canvas:{addEventListener:(name,fn)=>canvasEvents[name]=fn,setPointerCapture(){},getBoundingClientRect:()=>({left:0,top:0,width:800,height:800}),width:800},
   _interaction:h.service,_hitAreas:h.service.hitAreas,_coordination:{activity(){}},_behavior:{updateLookTarget(){},clearLookTarget(){},isDragging:false},
   _snapAnimToken:0,_scaleFactor:1,_wrapWindow:false,_leftDown:false,_touchPetting:false,_dragCandidate:false,_dragging:false,
-  _syncWindowMetrics(){},_moveWindowBy(){},_onDragFinished(){},_bubble:{cancel(){}}});
+  _syncWindowMetrics(){},_moveWindowBy(){},_onDragFinished(){},_cancelSnapAnimation(){this._snapAnimToken++},_bubble:{cancel(){}}});
  app._wirePointerEvents();
  const event=(overrides={})=>({isPrimary:true,button:touch?0:2,buttons:touch?1:2,clientX:400,clientY:200,screenX:400,screenY:200,pointerType:touch?'touch':'mouse',...overrides});
  return {...h,app,canvasEvents,windowEvents,event};

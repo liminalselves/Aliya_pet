@@ -491,7 +491,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refs.snapEdges = switchRow(
     box,
     '屏幕贴边',
-    '靠近边缘时柔和吸附；关闭后窗口可自由停在桌面外',
+    '拖动自由跟手，松开后平滑靠边；拖出屏幕也会归位，关闭后可停在屏幕外',
     () => settings.snapEdges,
     (v) => update({ snapEdges: v })
   );

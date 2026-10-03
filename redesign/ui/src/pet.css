@@ -4,7 +4,7 @@
  */
 @import './styles/tokens.css';
 
-/* 贴边确认：只在吸附完成后短暂亮对应边，不拦截点击。 */
+/* 贴边完成后短暂提示，不改变拖动中的视觉与命中区域。 */
 body::after {
   content: "";
   position: fixed;
