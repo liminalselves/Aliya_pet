@@ -137,6 +137,11 @@ export class MskClient {
       }));
   }
 
+  /** POST /api/agents/sessions/read：清除服务端未读标记（服务端只认这个调用，播放/拉取都不会自动已读）。 */
+  async markSessionRead(sessionId: string, signal?: AbortSignal): Promise<void> {
+    await this.post('/agents/sessions/read', { sessionId }, signal);
+  }
+
   /** 创建 Aliya 会话：先确保固定文风可用（不可用则订阅后再验）。 */
   async createSession(signal?: AbortSignal): Promise<MskSession> {
     const styles = await this.post<Array<{ id?: string }>>('/agents/styles/list-usable', {}, signal);

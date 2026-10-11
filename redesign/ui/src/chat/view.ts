@@ -469,7 +469,7 @@ export class ChatView {
         this.cueTimer = null;
         if (!this.replyActive || this.pageIndex !== index) return;
         if (index + 1 < this.segments.length) this.showPage(index + 1, true);
-        else this.hideReply();
+        else this.completeReply();
       }, CUE_PAGE_MS);
       this.updateHint();
       return;
@@ -512,7 +512,7 @@ export class ChatView {
     this.content.ownerDocument.getSelection()?.removeAllRanges();
     if (this.typewriter?.typing) { this.typewriter.finish(); return; }
     if (this.pageIndex < this.segments.length - 1) this.showPage(this.pageIndex + 1, true);
-    else this.hideReply();
+    else this.completeReply();
   }
   private updateHint(): void {
     const footer = this.get('.gal-footer');
@@ -534,6 +534,17 @@ export class ChatView {
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;
     this.clearCueTimer();
+  }
+  /** 末页消费完毕才走这里：收起并上报已读。中途 Esc/返回/× 收起不算读完，不上报。 */
+  private completeReply(): void {
+    this.markSessionRead();
+    this.hideReply();
+  }
+  /** 失败静默：未读点只是提示态，下次拉会话列表会还原真实状态。 */
+  private markSessionRead(): void {
+    const sessionId = this.activeSession?.id;
+    if (!sessionId || !this.auth.token) return;
+    void new MskClient(this.auth.token).markSessionRead(sessionId).catch(() => {});
   }
   private hideReply(): void {
     if (this.screen !== 'ready') return;

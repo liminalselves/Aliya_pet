@@ -142,6 +142,9 @@ Aliya_web 相同。
 - 列表来自 `agents/sessions/list-mine`，只保留 Aliya 角色
   （`characterId == akqruskge8w6003j`）。
 - 列表按最近活跃排序，每行显示名称、最后消息预览+相对时间、未读点。
+- 未读是服务端 Redis 标记（回复生成即置位，含 `messages/send` 同步回复），
+  只被 `agents/sessions/read` 清除；桌宠在回复播放到末页收起时上报已读，
+  中途 Esc/收起不算读完；上报失败静默，下次列表还原真实状态。
 - 「新建会话」复用 `MskClient.createSession`，确认固定文风可用后创建 Aliya 社区会话；
   失败显示原因，可重试。「Misskey」打开浏览器管理会话。
 - 选中的会话按用户存 `aliya_session:{userId}`（JSON `{id,name}`，名称供
