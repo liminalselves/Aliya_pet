@@ -1,86 +1,89 @@
 /**
  * Aliya 设计规范（唯一权威来源）：
- * Jade Terminal 深色主题；所有 Web 表面（pet/聊天/设置/记录/托管抽屉）从这里取 token。
+ * 纸感手账浅色主题；所有 Web 表面（pet/聊天/设置/记录/托管抽屉）从这里取 token。
  * 新表面只引用变量，不再自造色值、圆角、阴影与动效参数。
+ *
+ * 主题约束：不用渐变光晕、玻璃模糊、发光阴影与回弹动效；
+ * 标题与台词用衬线（思源宋体可变字重，完整字库打包在 /fonts）。
  */
+
+/* 完整思源宋体（Noto Serif SC 可变字重 100-900，OFL 许可见 /fonts/OFL.txt） */
+@font-face {
+  font-family: 'Aliya Serif';
+  src: url('/fonts/NotoSerifSC-var.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* 字体 */
+  /* 字体：正文/控件用黑体，标题/台词/日期用宋体 */
   --al-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  --al-font-serif: "Aliya Serif", "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
 
-  /* Jade Terminal 核心色 */
-  --color-primary: #63e6be;
-  --color-accent: #2fcf9c;
-  --color-bg: #0b1210;
-  --color-surface: #121b17;
-  --color-text: #e6fff7;
-  --color-text-secondary: #8fa9a0;
-  --color-success: #4ddba9;
-  --color-warning: #e0c56d;
-  --color-error: #e26c79;
+  /* 纸：暖米白，自底向亮 */
+  --al-bg-0: #f0ede4; /* 窗口底 / 页面底 */
+  --al-bg-1: #f4f1e9; /* 页面内底层 */
+  --al-bg-2: #faf7ef; /* 卡片 / 面板 */
+  --al-bg-3: #ece7d9; /* 控件 */
+  --al-bg-4: #e3ddcc; /* 控件悬停 */
+  --al-surface-header: rgba(250, 247, 239, 0.97);
+  --al-surface-page: rgba(240, 237, 228, 0.96);
+  --al-surface-card: rgba(250, 247, 239, 0.96);
+  --al-surface-card-strong: rgba(251, 248, 241, 0.98);
+  --al-surface-card-focus: #fcfaf4;
+  --al-surface-code: rgba(54, 51, 43, 0.055);
+  --al-overlay-chip: rgba(250, 247, 239, 0.92);
+  --al-overlay-chip-hover: #fcf9f3;
+  --al-backdrop: rgba(43, 40, 34, 0.42);
 
-  /* 深色阶（自底向亮） */
-  --al-bg-0: var(--color-bg); /* 窗口底 / 页面底 */
-  --al-bg-1: #0e1713; /* 页面内底层 */
-  --al-bg-2: var(--color-surface); /* 卡片 / 面板 */
-  --al-bg-3: #15201b; /* 控件 */
-  --al-bg-4: #18241f; /* 控件悬停 */
-  --al-surface-header: rgba(18, 27, 23, 0.96);
-  --al-surface-page: rgba(11, 18, 16, 0.94);
-  --al-surface-card: rgba(18, 27, 23, 0.94);
-  --al-surface-card-strong: rgba(21, 32, 27, 0.97);
-  --al-surface-card-focus: rgba(24, 36, 31, 0.98);
-  --al-surface-code: rgba(7, 13, 11, 0.86);
-  --al-overlay-chip: rgba(11, 18, 16, 0.72);
-  --al-overlay-chip-hover: rgba(24, 36, 31, 0.92);
-  --al-backdrop: rgba(4, 10, 7, 0.72);
+  /* 墨：暖黑 */
+  --al-text-1: #36332b;
+  --al-text-2: #6f695b;
+  --al-text-3: #a09a89;
 
-  /* 描边与交互叠层 */
-  --al-line: rgba(230, 255, 247, 0.08);
-  --al-line-strong: rgba(230, 255, 247, 0.12);
-  --al-hover-fill: rgba(230, 255, 247, 0.06);
-  --al-active-fill: rgba(99, 230, 190, 0.12);
-  --al-selection: rgba(99, 230, 190, 0.28);
-  --al-scrollbar: rgba(143, 169, 160, 0.42);
+  /* 苔绿：低饱和，文字场景用 strong/deep */
+  --al-accent: #667a52;
+  --al-accent-strong: #566a44;
+  --al-accent-soft: rgba(102, 122, 82, 0.15);
+  --al-accent-deep: #46573a;
+  --al-accent-emphasis: rgba(86, 106, 68, 0.95);
+  --al-on-accent: #f7f5ec;
+  --al-on-accent-muted: rgba(247, 245, 236, 0.72);
+  --al-on-accent-hover: rgba(247, 245, 236, 0.14);
 
-  /* 文字 */
-  --al-text-1: var(--color-text);
-  --al-text-2: var(--color-text-secondary);
-  --al-text-3: #6f877f;
+  /* 描边与交互叠层：墨色透明 */
+  --al-line: rgba(54, 51, 43, 0.14);
+  --al-line-strong: rgba(54, 51, 43, 0.24);
+  --al-hover-fill: rgba(54, 51, 43, 0.05);
+  --al-active-fill: var(--al-accent-soft);
+  --al-selection: rgba(102, 122, 82, 0.28);
+  --al-scrollbar: rgba(111, 105, 91, 0.45);
 
-  /* 主题玉石绿；保留既有变量名，避免各窗口重复定义 */
-  --al-accent: var(--color-primary);
-  --al-accent-strong: var(--color-accent);
-  --al-accent-soft: var(--al-active-fill);
-  --al-accent-deep: #1fae83;
-  --al-accent-emphasis: rgba(99, 230, 190, 0.9);
-  --al-on-accent: #08130f;
-  --al-on-accent-muted: rgba(8, 19, 15, 0.68);
-  --al-on-accent-hover: rgba(8, 19, 15, 0.12);
+  /* 状态：低饱和，与纸面协调 */
+  --al-success: #5f7a4a;
+  --al-warning: #9a7b2d;
+  --al-danger: #ae5033;
 
-  /* 状态 */
-  --al-success: var(--color-success);
-  --al-warning: var(--color-warning);
-  --al-danger: var(--color-error);
-
-  /* 圆角 */
-  --al-r-s: 8px;
-  --al-r-m: 10px;
-  --al-r-l: 12px;
+  /* 圆角：手账小圆角 */
+  --al-r-s: 6px;
+  --al-r-m: 8px;
+  --al-r-l: 10px;
   --al-r-pill: 999px;
 
-  /* 阴影：只提供轻微层级，不做发光 */
-  --al-shadow-1: 0 2px 8px rgba(0, 0, 0, 0.22);
-  --al-shadow-2: 0 10px 28px rgba(0, 0, 0, 0.28);
-  --al-shadow-accent: 0 4px 14px rgba(47, 207, 156, 0.16);
+  /* 阴影：轻微层级，暖墨色，不发光 */
+  --al-shadow-1: 0 1px 3px rgba(54, 51, 43, 0.09);
+  --al-shadow-2: 0 8px 24px rgba(54, 51, 43, 0.14);
+  --al-shadow-accent: 0 1px 2px rgba(70, 87, 58, 0.18);
 
-  /* 动效：统一缓动，快档用于悬停/按下，中档用于面板进出 */
-  --al-ease: cubic-bezier(0.22, 0.8, 0.32, 1);
-  --al-ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  /* 动效：干脆的 ease-out，spring 仅留一丝回弹给气泡/开关 */
+  --al-ease: cubic-bezier(0.25, 0.8, 0.35, 1);
+  --al-ease-spring: cubic-bezier(0.32, 1.1, 0.45, 1);
   --al-t-fast: 0.14s;
   --al-t-med: 0.22s;
 
   /* 焦点环（仅 :focus-visible 使用） */
-  --al-focus-ring: 0 0 0 3px rgba(99, 230, 190, 0.35);
+  --al-focus-ring: 0 0 0 2px rgba(102, 122, 82, 0.45);
 }

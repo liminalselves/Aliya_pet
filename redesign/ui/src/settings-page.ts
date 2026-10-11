@@ -651,19 +651,31 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     box.appendChild(openChat);
   }
   const agentControls = mountAgentControls(box, openRecords, refreshChatInfo);
+  /** 入场动画（settings.css .enter）：重放前先移除再强制 reflow，连续打开也能重新触发。 */
+  const playEnter = () => {
+    app.classList.remove('enter');
+    void app.offsetWidth;
+    app.classList.add('enter');
+  };
   const openTarget = (target: string) => {
     if (target === 'session-control') {
+      playEnter();
       requestAnimationFrame(() => agentControls.open());
       return;
     }
     agentControls.close();
-    requestAnimationFrame(() => { app.scrollTop = target === 'about' ? app.scrollHeight : 0; });
+    playEnter();
+    requestAnimationFrame(() => {
+      app.scrollTo({ top: target === 'about' ? app.scrollHeight : 0, behavior: 'smooth' });
+    });
   };
   if (platform === 'tauri') {
     try {
       const { listen } = await import('@tauri-apps/api/event');
       await listen<{ target?: string }>('settings-open', event => openTarget(event.payload?.target ?? ''));
     } catch { /* Browser preview has no Tauri event bus. */ }
+  } else {
+    playEnter();
   }
   window.addEventListener('hashchange', () => openTarget(location.hash.slice(1)));
   if (location.hash) openTarget(location.hash.slice(1));

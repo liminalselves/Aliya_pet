@@ -60,6 +60,10 @@ export class PetApp {
   private _ai: PetAI = null;
   private _remoteChat = { open: false, busy: false, typing: false };
   private _chatLauncher: HTMLElement | null = null;
+  /** 聊天入口当前 bottom 缓存（CSS px）：逐帧校正，值不变不写 style。 */
+  private _launcherBottomCss = 0;
+  /** 聊天入口当前缩放系数缓存（写入 --launcher-k）。 */
+  private _launcherScaleK = 1;
   private _chat: ChatController | null = null;
   private _chatView: ChatView | null = null;
   private _chatPerformance: ChatPerformance | null = null;
@@ -149,6 +153,8 @@ export class PetApp {
    * 垂直 1.023，1.22 = 最差 1.156 × 1.05 安全余量（测量方法见 docs/ACTIONS.md）。
    */
   private static readonly _renderMarginRatio = 1.22;
+  /** 聊天入口与脚底的固定间隙（CSS px）。 */
+  private static readonly _launcherGapCss = 6;
 
   /** 窗口尺寸余量：窗口 = 675×scale × 1.18（对齐 Flutter ComputeTargetPixelSize）。 */
   private static readonly _windowMarginRatio = 1.18;
@@ -574,6 +580,9 @@ export class PetApp {
             this._winPhysX = target.x; this._winPhysY = target.y;
             this._settings.posX = target.x; this._settings.posY = target.y;
             saveSettings(this._settings);
+            // 缩放落定立刻用已知几何重报锚点：等 onMoved→_syncWindowMetrics 的
+            // 异步往返，chat 会在旧锚点上多停好几帧（大档位切换时肉眼可见）。
+            this._syncChatAnchor({ cssW: width, cssH: height, physX: target.x, physY: target.y });
           }
         })
         .catch(() => {});
@@ -1300,29 +1309,35 @@ export class PetApp {
   }
 
   /**
-   * 向壳上报 Live2D 实际可见矩形（物理像素），不是包含大量透明留白的 pet 外窗。
-   * 非贴合模式与渲染矩阵同口径：包围盒按画布容纳后居中；chat 据此贴到模型下半部。
+   * 向壳上报模型可见矩形（物理像素）：底边 = 脚底，横向沿用画布宽
+   * （chat 宽 = 锚宽 × 1.18 的既有观感不变）。锚点不能取含渲染余量的
+   * 整个画布——余量随窗口线性放大，用画布当锚点，缩放越大 chat 离脚越远。
+   * known 传入缩放落定时的已知几何（applySettings 路径），省去 DOM 与
+   * 位置查询的异步往返；缺省按画布实测 + 窗口位置缓存。
    */
-  private _syncChatAnchor(): void {
+  private _syncChatAnchor(known?: { cssW: number; cssH: number; physX: number; physY: number }): void {
     if (platform !== 'tauri' || !this._metricsSynced) return;
-    const rect = this._canvas.getBoundingClientRect();
+    const rect = known
+      ? { left: 0, top: 0, width: known.cssW, height: known.cssH }
+      : this._canvas.getBoundingClientRect();
+    const baseX = known ? known.physX : this._winPhysX;
+    const baseY = known ? known.physY : this._winPhysY;
     let left = rect.left;
     let top = rect.top;
     let w = rect.width || window.innerWidth;
     let h = rect.height || window.innerHeight;
-    if (this._model?.isReady() && w > 0 && h > 0) {
-      const fitH = Math.min(h, w / this._model.boundsAspect);
-      const fitW = fitH * this._model.boundsAspect;
-      left += (w - fitW) / 2;
-      top += (h - fitH) / 2;
-      w = fitW;
-      h = fitH;
+    const b = this._model?.isReady() ? this._model.getStaticBounds() : null;
+    if (b && w > 0 && h > 0) {
+      // 与 _render 非贴合路径同一套数学：原点 = 视口中心，s = 高/余量/包围盒高。
+      const s = h / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
+      top += h / 2 - b.maxY * s;
+      h = (b.maxY - b.minY) * s;
     }
     const sf = this._scaleFactor;
     void import('@tauri-apps/api/core')
       .then(m => m.invoke('sync_chat_anchor', {
-        x: Math.round(this._winPhysX + left * sf),
-        y: Math.round(this._winPhysY + top * sf),
+        x: Math.round(baseX + left * sf),
+        y: Math.round(baseY + top * sf),
         w: Math.round(w * sf),
         h: Math.round(h * sf),
       }))
@@ -1547,6 +1562,7 @@ export class PetApp {
     if (this._wrapWindow) this._syncWrapWindow();
     this._render();
     this._positionBubble();
+    this._positionChatLauncher();
     // 壳命中层：低频上报像素占用掩码（透明区域触摸穿透）
     this._maybeSendHitMask();
 
@@ -1613,6 +1629,34 @@ export class PetApp {
     }
     const top = Math.max(4, headTopCss - this._bubbleScaledH - 6);
     el.style.top = `${Math.round(top)}px`;
+  }
+
+  /**
+   * 聊天入口逐帧钉在脚底：bottom = 窗口高 − 脚底高 + 固定间隙，
+   * 数学与 _render 非贴合路径同源（原点=视口中心，s=高/余量/包围盒）。
+   * 旧实现把按钮钉在窗口底（bottom:8px），窗口含 1.22 渲染余量，缩放越大
+   * 按钮离脚越远。大小随缩放档位等比（--launcher-k，夹 0.7–1.6），
+   * 与 chat 窗宽 = 模型宽 × 1.18 同一套「UI 随模型缩放」语言。
+   */
+  private _positionChatLauncher(): void {
+    const launcher = this._chatLauncher;
+    if (!launcher || launcher.hidden || this._wrapWindow) return;
+    const b = this._model?.getStaticBounds();
+    if (!b) return;
+    const rect = this._canvas.getBoundingClientRect();
+    if (!rect.height) return;
+    const s = rect.height / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
+    const feetCss = rect.height / 2 - b.minY * s;
+    const bottom = Math.max(4, Math.round(rect.height - feetCss + PetApp._launcherGapCss));
+    if (bottom !== this._launcherBottomCss) {
+      this._launcherBottomCss = bottom;
+      launcher.style.bottom = `${bottom}px`;
+    }
+    const k = Math.round(Math.min(1.6, Math.max(0.7, rect.height / (675 * PetApp._windowMarginRatio))) * 1000) / 1000;
+    if (k !== this._launcherScaleK) {
+      this._launcherScaleK = k;
+      launcher.style.setProperty('--launcher-k', String(k));
+    }
   }
 
   private _update(dt: number): void {

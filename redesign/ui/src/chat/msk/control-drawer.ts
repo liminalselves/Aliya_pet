@@ -29,6 +29,23 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
   let userId = '';
   let credential = '';
   let revision = 0;
+  let closeTimer = 0;
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** 统一出口：先播退出动画（control.css .closing）再真正 close，重开/重按幂等。 */
+  const closeDrawer = () => {
+    if (!drawer.open || drawer.classList.contains('closing')) return;
+    if (reducedMotion()) { drawer.close(); return; }
+    drawer.classList.add('closing');
+    closeTimer = window.setTimeout(() => {
+      closeTimer = 0;
+      drawer.classList.remove('closing');
+      drawer.close();
+    }, 160);
+  };
+  const cancelClose = () => {
+    if (closeTimer) { window.clearTimeout(closeTimer); closeTimer = 0; }
+    drawer.classList.remove('closing');
+  };
   const saved = () => {
     try {
       const token = localStorage.getItem(MSK_TOKEN_KEY) ?? '';
@@ -49,7 +66,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     button.disabled = !current.token || !current.id;
     button.title = button.disabled ? '请先在聊天中连接账号并选择会话' : '';
     if (!drawer.open) return;
-    if (current.id !== sessionId || current.userId !== userId || !current.token) { drawer.close(); return; }
+    if (current.id !== sessionId || current.userId !== userId || !current.token) { closeDrawer(); return; }
     if (credential !== current.token) { credential = current.token; frame?.setToken(credential); }
   };
   const publish = async (action: ControlRequest['action'], message?: ControlEvent) => {
@@ -97,15 +114,21 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
         void publish('deleted').catch(() => {});
         localStorage.removeItem(mskSessionKey(userId));
       }
-      drawer.close(); refreshSummary(); sync();
+      closeDrawer(); refreshSummary(); sync();
     }
   };
   const activate = () => {
     nav.querySelectorAll<HTMLButtonElement>('button').forEach(tab => tab.setAttribute('aria-pressed', String(tab.dataset.panel === panel)));
   };
+  /** 内容区淡入重触发（control.css .swap）：切页签/重载共用。 */
+  const swapBody = () => {
+    body.classList.remove('swap');
+    void body.offsetWidth;
+    body.classList.add('swap');
+  };
   const load = () => {
     frame?.destroy(); frame = null; status.textContent = '正在连接配置页…'; retry.hidden = true;
-    activate();
+    activate(); swapBody();
     frame = new AgentControlFrame(body, sessionId, panel, () => saved().token, onEvent);
   };
   for (const [id, label] of Object.entries(CONTROL_PANELS)) {
@@ -113,15 +136,18 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     tab.onclick = () => {
       if (panel === id) return;
       panel = id as ControlPanel;
-      if (frame?.setPanel(panel)) activate(); else load();
+      if (frame?.setPanel(panel)) { activate(); swapBody(); } else load();
     };
     nav.append(tab);
   }
   retry.onclick = load;
-  drawer.querySelector<HTMLButtonElement>('.control-close')!.onclick = () => drawer.close();
-  drawer.addEventListener('close', () => { ++revision; frame?.destroy(); frame = null; button.focus(); });
+  drawer.querySelector<HTMLButtonElement>('.control-close')!.onclick = () => closeDrawer();
+  // Esc 触发 cancel：拦下默认立即 close，走退出动画。
+  drawer.addEventListener('cancel', e => { e.preventDefault(); closeDrawer(); });
+  drawer.addEventListener('close', () => { cancelClose(); ++revision; frame?.destroy(); frame = null; button.focus(); });
   const open = () => {
     const current = saved(); if (!current.token || !current.id) { sync(); button.focus(); return; }
+    cancelClose();
     sessionId = current.id; userId = current.userId; credential = current.token;
     drawer.querySelector('.control-session')!.textContent = current.name;
     if (!drawer.open) drawer.showModal();
@@ -132,5 +158,5 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
   window.addEventListener('focus', sync);
   window.addEventListener('pagehide', () => frame?.destroy());
   sync();
-  return { open, close: () => { if (drawer.open) drawer.close(); }, sync };
+  return { open, close: closeDrawer, sync };
 }

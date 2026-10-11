@@ -50,6 +50,9 @@ const SEGMENTS = [
 
 function enter() {
   view.screen = 'ready';
+  // 绕过 enterSession 直连 ready：输入框的启用态/占位符由 enterSession 恢复，这里手动补齐。
+  const input = view.root.querySelector('textarea');
+  input.disabled = false; input.placeholder = '对 Aliya 说……';
   view.setOpen(true);
   view.replyActive = true;
   view.playing = true;

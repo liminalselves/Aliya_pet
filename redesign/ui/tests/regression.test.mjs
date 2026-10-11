@@ -332,7 +332,7 @@ test('闲聊不抽取抚摸/点击反应或其他时段的台词',()=>{
 });
 
 test('气泡取消立即释放说话状态，旧异步回调不影响新会话',async()=>{
- const waits=[];const element={id:'',style:{},textContent:''};
+ const waits=[];const element={id:'',style:{},textContent:'',classList:{add(){},remove(){}}};
  const {DialogueBubble}=load('dialogue/bubble',{}, {document:{createElement:()=>element},setTimeout:fn=>{waits.push(fn);return waits.length}});
  const b=new DialogueBubble({appendChild(){}});
  const first=b.play({pages:[{text:'第一句'}]});assert.equal(b.isActive,true);

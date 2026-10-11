@@ -42,8 +42,9 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   border: 1px solid var(--al-line-strong);
   background: var(--al-surface-card-strong);
   color: var(--al-text-1);
-  font-family: var(--al-font);
+  font-family: var(--al-font-serif);
   font-size: 14px;
+  font-weight: 500;
   line-height: 1.55;
   text-align: center;
   letter-spacing: 0.02em;
@@ -74,6 +75,14 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
 /* scale 走独立属性，不碰 transform（overlay-wrap 的 translateZ 合成层提示不被覆盖） */
 @keyframes bubble-pop {
   from { opacity: 0; scale: 0.92; translate: 0 4px; }
+}
+
+/* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切 */
+#dialogue-bubble.closing {
+  opacity: 0;
+  scale: 0.95;
+  translate: 0 3px;
+  transition: opacity 0.15s var(--al-ease), scale 0.15s var(--al-ease), translate 0.15s var(--al-ease);
 }
 
 /* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），

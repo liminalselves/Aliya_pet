@@ -78,6 +78,12 @@ export class ChatView {
   private pageIndex = 0;
   private typewriter: Typewriter | null = null;
   private cueTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 面板收起动画计时器：动画结束才补 hidden；重新展示前必须取消。 */
+  private leaveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 整体入场一次性 class 的摘除计时器（关→开跳变时由 playEnter 挂上）。 */
+  private enterTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 整体退出动画计时器：播完才真正 setOpen(false)/关窗；重开前必须取消。 */
+  private exitTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly panel: HTMLElement;
   private readonly content: HTMLElement;
   private readonly composer: HTMLFormElement;
@@ -93,7 +99,7 @@ export class ChatView {
         <section class="gal-panel" aria-label="Aliya 对话" hidden>
           <button class="close-panel" aria-label="关闭对话框">×</button>
           <div class="gal-content" tabindex="0"></div>
-          <footer class="gal-footer" hidden><span class="page-hint"></span></footer>
+          <footer class="gal-footer"><span class="page-hint"></span></footer>
         </section>
         <form class="chat-composer" hidden>
           <textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea>
@@ -161,22 +167,51 @@ export class ChatView {
   get typing(): boolean { return document.activeElement === this.input; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
   setOpen(open: boolean): void {
+    this.cancelLeave();
+    if (open) this.cancelExit();
+    const wasOpen = this.isOpen;
     if (!open) {
       this.clearPlayback();
       this.clearRendering();
       this.replyActive = false;
       this.historyVisible = false;
+      this.cancelShellEnter();
       (document.activeElement as HTMLElement | null)?.blur();
     }
     this.isOpen = open;
     this.get('.chat-launcher').hidden = open;
-    this.composer.hidden = !open || this.screen !== 'ready';
+    // 输入框是常驻锚点：切屏（连接/会话）只禁用不隐藏——显隐切换会让卡片
+    // 在过渡帧撕裂（面板方角底边悬空），是用户视频的闪烁源之一。
+    this.composer.hidden = !open;
     this.panel.hidden = !open || (this.screen === 'ready' && !this.historyVisible);
     // 独立窗口打开即聚焦，点完「聊天」按钮直接可以打字；内嵌模式不抢软键盘。
     if (open && this.screen === 'ready' && platform === 'tauri') this.input.focus();
     document.body.classList.toggle('chat-open', open);
+    if (open && !wasOpen) this.playEnter();
     this.updateLayoutMode();
     this.onOpen(open); this.notify();
+  }
+  /**
+   * 聊天整体入场动画（chat.css .shell-enter）：挂一次性 class，播完摘除。
+   * 两条入口：setOpen 关→开跳变；窗口重现（window.ts 的 chat-state 补播，
+   * 彼时 isOpen 已是 true，走不到 setOpen 的跳变分支）。
+   */
+  playEnter(): void {
+    if (!this.isOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const shell = this.get('.chat-shell');
+    shell.classList.remove('shell-enter');
+    void shell.offsetWidth;
+    shell.classList.add('shell-enter');
+    if (this.enterTimer) clearTimeout(this.enterTimer);
+    this.enterTimer = setTimeout(() => { this.enterTimer = null; shell.classList.remove('shell-enter'); }, 320);
+  }
+  private cancelShellEnter(): void {
+    if (this.enterTimer) { clearTimeout(this.enterTimer); this.enterTimer = null; }
+    this.get('.chat-shell').classList.remove('shell-enter');
+  }
+  private cancelExit(): void {
+    if (this.exitTimer) { clearTimeout(this.exitTimer); this.exitTimer = null; }
+    this.get('.chat-shell').classList.remove('shell-exit');
   }
   handleBack(): boolean {
     if (!this.isOpen) return false;
@@ -184,7 +219,26 @@ export class ChatView {
     else this.close();
     return true;
   }
+  /**
+   * 关闭先播 150ms 整体退出动画（chat.css .shell-exit），再真正收窗/关态：
+   * WebView2 上窗口级补间不可行（分步 resize 残影），DOM 淡出是关闭仅有的平滑手段。
+   * 动画期间重开（pet 按钮/启动器）由 setOpen(true) 的 cancelExit 拦截。
+   */
   private close(): void {
+    if (this.exitTimer) return;
+    const shell = this.get('.chat-shell');
+    if (this.isOpen && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.cancelShellEnter();
+      this.cancelLeave();
+      shell.classList.add('shell-exit');
+      this.exitTimer = setTimeout(() => {
+        this.exitTimer = null;
+        shell.classList.remove('shell-exit');
+        this.setOpen(false);
+        if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
+      }, 150);
+      return;
+    }
     this.setOpen(false);
     if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
   }
@@ -199,9 +253,44 @@ export class ChatView {
   }
   private clearRendering(): void { for (const task of this.rendered) task.cancel(); this.rendered = []; }
   private showPanel(_title = ''): void {
+    this.cancelLeave();
     this.panel.hidden = !this.isOpen;
-    this.get('.gal-footer').hidden = true;
+    this.get('.gal-footer').classList.remove('show');
     this.updateLayoutMode();
+  }
+  /** 取消未播完的收起动画：面板重新展示前必须撤销 leaving 态与补 hidden 的计时器。 */
+  private cancelLeave(): void {
+    if (this.leaveTimer) { clearTimeout(this.leaveTimer); this.leaveTimer = null; }
+    this.panel.classList.remove('leaving');
+  }
+  /**
+   * 内容区入场：stagger 让子项依次浮现（会话行/记录条目/连接屏分块），
+   * fade 用于单行加载占位。class 留在容器上由 CSS 驱动，再次调用先强制重排重触发。
+   */
+  private animateContent(mode: 'fade' | 'stagger'): void {
+    this.clearContentAnimation();
+    void this.content.offsetWidth;
+    this.content.classList.add(mode === 'fade' ? 'fade-in' : 'stagger-in');
+  }
+  /** 回复流（打字点/分页播放）不参与错落动画：分段显隐已各有专用动效。 */
+  private clearContentAnimation(): void {
+    this.content.classList.remove('fade-in', 'stagger-in');
+  }
+  /**
+   * 面板收起分两步：先播退出动画（chat.css .leaving），此间窗口保持原高
+   * （外窗单步 resize 与淡出同时进行会把面板挤碎——webview 位图跟不上）；
+   * 动画结束补 hidden 并切换布局态，窗口随之单步收缩。
+   */
+  private hidePanelAnimated(): void {
+    if (this.panel.hidden || this.panel.classList.contains('leaving')) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.panel.hidden = true; return; }
+    this.panel.classList.add('leaving');
+    this.leaveTimer = setTimeout(() => {
+      this.leaveTimer = null;
+      this.panel.classList.remove('leaving');
+      this.panel.hidden = true;
+      this.updateLayoutMode();
+    }, 150);
   }
   /** 根据面板/输入框可见性切换紧凑布局：只有输入框时贴脚显示，有面板时上下连成一张卡片。 */
   private updateLayoutMode(): void {
@@ -210,6 +299,8 @@ export class ChatView {
     const composerVisible = this.isOpen && !this.composer.hidden;
     shell.classList.toggle('with-panel', panelVisible);
     shell.classList.toggle('composer-only', composerVisible && !panelVisible);
+    // 发送键跟随屏态：非 ready 屏输入框已禁用，发送键同步置灰（changed 只维护 busy）。
+    this.get<HTMLButtonElement>('.send').disabled = this.screen !== 'ready' || this.controller.busy;
     document.body.dataset.chatLayout = !this.isOpen ? 'closed'
       : composerVisible && !panelVisible ? 'composer'
         // Android/web 的内嵌记录/上下文定位与连接/会话屏同属整页内容，按 setup 全高；
@@ -233,6 +324,9 @@ export class ChatView {
         .catch(() => {});
     };
     if (measuredHeight !== undefined) { send(measuredHeight); return; }
+    // setup 高与内容无关（壳侧钳 default≥300）：同步直发省一帧——等 rAF 会让
+    // 内容先换、窗口后到，矮窗把刚展开的面板压成细条（切屏闪烁源）。
+    if (mode === 'setup') { send(0); return; }
     requestAnimationFrame(() => {
       // 逐字播放中文本是收起的，量到的是塌陷高度；播放路径已在翻页时同步量好。
       if (this.typewriter?.typing) return;
@@ -250,7 +344,8 @@ export class ChatView {
     return Math.ceil(shell.getBoundingClientRect().height + overflow + 6);
   }
   private showConnect(message = ''): void {
-    this.screen = 'connect'; this.composer.hidden = true; this.clearRendering();
+    this.screen = 'connect'; this.clearRendering();
+    this.input.disabled = true; this.input.placeholder = '先连接 Misskey……';
     this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
     this.get('.auth-status').textContent = message;
     this.get('.authorize').onclick = () => { void this.login(); };
@@ -259,6 +354,7 @@ export class ChatView {
     this.get('.cancel-auth').onclick = () => { this.operation?.abort(); this.showConnect('已取消。'); };
     this.get<HTMLFormElement>('.manual').onsubmit = e => { e.preventDefault(); void this.login(this.get<HTMLInputElement>('.manual input').value); };
     this.showPanel('连接');
+    this.animateContent('stagger');
   }
   private async bootstrap(): Promise<void> {
     const signal = this.reset();
@@ -279,8 +375,10 @@ export class ChatView {
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private async loadSessions(restore = false): Promise<void> {
-    const signal = this.reset(); this.screen = 'sessions'; this.composer.hidden = true;
-    this.content.textContent = '正在读取会话……'; this.showPanel('选择会话');
+    const signal = this.reset(); this.screen = 'sessions';
+    this.input.disabled = true; this.input.placeholder = '先选择会话……';
+    this.content.innerHTML = '<p class="muted-note">正在读取会话……</p>'; this.showPanel('选择会话');
+    this.animateContent('fade');
     try {
       const list = await new MskClient(this.auth.token).listAliyaSessions(signal);
       if (signal.aborted) return;
@@ -293,7 +391,11 @@ export class ChatView {
       const selected = restore ? list.find(s => s.id === savedId) : null;
       if (selected) { await this.enterSession(selected); return; }
       this.content.replaceChildren();
-      if (!list.length) this.content.textContent = '还没有与 Aliya 的会话。可以创建会话，或打开 Misskey 管理现有会话。';
+      if (!list.length) {
+        const empty = document.createElement('p'); empty.className = 'muted-note';
+        empty.textContent = '还没有与 Aliya 的会话。可以创建会话，或打开 Misskey 管理现有会话。';
+        this.content.append(empty);
+      }
       // 最近活跃的会话排前面，省去翻找。
       list.sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''));
       for (const session of list) {
@@ -326,11 +428,13 @@ export class ChatView {
       const refresh = document.createElement('button'); refresh.textContent = '刷新'; refresh.className = 'ghost'; refresh.onclick = () => { void this.loadSessions(); }; actions.append(refresh);
       const logout = document.createElement('button'); logout.textContent = '退出账号'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
       this.content.append(actions);
+      this.animateContent('stagger');
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private sessionKey(): string { return mskSessionKey(this.auth.savedUser()?.id ?? 'current'); }
   private async enterSession(session: MskSession): Promise<void> {
-    const signal = this.reset(); this.content.textContent = '正在打开会话……';
+    const signal = this.reset();
+    this.content.innerHTML = '<p class="muted-note">正在打开会话……</p>'; this.animateContent('fade');
     const client = new MskClient(this.auth.token);
     const api: MskApiCaller = (endpoint, body, s) => client.post('/' + endpoint, body, s);
     try {
@@ -348,8 +452,12 @@ export class ChatView {
       this.controller.useProvider(new MskChatProvider(client, session.id));
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.lastAnswer = this.controller.latest?.id ?? '';
-      this.screen = 'ready'; this.historyVisible = false; this.panel.hidden = true; this.composer.hidden = !this.isOpen;
-      this.input.disabled = false; this.status.textContent = ''; this.updateLayoutMode();
+      this.screen = 'ready'; this.historyVisible = false;
+      this.input.disabled = false; this.input.placeholder = '对 Aliya 说……'; this.status.textContent = '';
+      // 会话面板两步退出（同 hideReply）：淡出期间窗口保持原高，播完单步收缩；
+      // 直接 hidden 会让「正在打开会话……」凭空消失一帧（用户视频的闪烁帧）。
+      this.hidePanelAnimated();
+      this.updateLayoutMode();
       // 存 id+名称：名称供设置主菜单「当前会话」展示。
       try {
         this.storage?.setItem(this.sessionKey(), JSON.stringify({
@@ -374,7 +482,7 @@ export class ChatView {
   }
   private changed(): void {
     const c = this.controller;
-    this.get<HTMLButtonElement>('.send').disabled = c.busy;
+    this.get<HTMLButtonElement>('.send').disabled = c.busy || this.screen !== 'ready';
     this.get('.stop').hidden = !c.busy;
     this.status.textContent = c.busy ? '等待回应…' : c.error ? '回复未完成' : '';
     if (this.screen === 'ready' && this.lastBusy && !c.busy) {
@@ -383,7 +491,7 @@ export class ChatView {
       } else if (c.error) {
         this.clearPlayback(); this.clearRendering(); this.content.textContent = c.error;
         const retry = document.createElement('button'); retry.textContent = '重试'; retry.onclick = () => { void c.retry(); };
-        this.content.append(retry); this.showPanel('未完成');
+        this.content.append(retry); this.showPanel('未完成'); this.animateContent('fade');
       } else {
         // 用户停止等待：收起「正在输入」占位。
         this.hideReply();
@@ -403,10 +511,14 @@ export class ChatView {
   private showPending(): void {
     if (this.screen !== 'ready') return;
     this.historyVisible = false; this.clearPlayback(); this.clearRendering();
+    this.clearContentAnimation();
     this.content.replaceChildren(); this.content.scrollTop = 0;
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
     this.content.append(dots); this.showPanel('');
+    // 同步量高直发，不等 updateLayoutMode 的 rAF：晚一帧窗口才把面板顶起来，
+    // 这一帧里矮窗会把「正在输入」压成细条（切换闪烁源）。
+    this.reportLayout(this.measureContentHeight());
   }
   /**
    * 回复按 MSK 展示分段逐页播放：每页一句，逐字冒出；
@@ -416,6 +528,7 @@ export class ChatView {
    */
   private showReply(message: ChatMessage): void {
     this.historyVisible = false; this.clearPlayback(); this.clearRendering();
+    this.clearContentAnimation();
     this.content.replaceChildren(); this.content.scrollTop = 0;
     this.replyActive = true;
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
@@ -433,7 +546,8 @@ export class ChatView {
     if (!task) { this.replyActive = false; this.updateHint(); return; }
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
-      dots.remove(); text.style.visibility = '';
+      // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接。
+      dots.remove(); text.style.visibility = ''; text.classList.add('gal-text-in');
       this.playing = true;
       this.resyncPages();
     });
@@ -518,8 +632,9 @@ export class ChatView {
     const footer = this.get('.gal-footer');
     const hint = this.get('.page-hint');
     this.panel.classList.toggle('replying', this.screen === 'ready' && this.replyActive);
-    footer.hidden = !(this.screen === 'ready' && this.replyActive);
-    if (footer.hidden) return;
+    const showFooter = this.screen === 'ready' && this.replyActive;
+    footer.classList.toggle('show', showFooter);
+    if (!showFooter) return;
     // 页脚计数只计文本页：指令页不展示，数进去会让「2/5」跳到看不见的页
     const total = this.segments.filter(s => !s.classList.contains('msk-cue')).length;
     const page = this.segments.slice(0, this.pageIndex + 1).filter(s => !s.classList.contains('msk-cue')).length;
@@ -548,8 +663,10 @@ export class ChatView {
   }
   private hideReply(): void {
     if (this.screen !== 'ready') return;
-    this.panel.hidden = true; this.historyVisible = false;
-    this.clearPlayback(); this.clearRendering(); this.updateLayoutMode();
+    this.historyVisible = false;
+    this.clearPlayback(); this.clearRendering();
+    this.hidePanelAnimated();
+    this.updateLayoutMode();
   }
   private showHistory(): void {
     if (this.screen !== 'ready') return;
@@ -571,6 +688,7 @@ export class ChatView {
       const article = document.createElement('article'); const label = document.createElement('small'); label.className = message.role === 'user' ? 'who-user' : 'who-aliya'; label.textContent = message.role === 'user' ? '你' : 'Aliya';
       const text = document.createElement('div'); text.className = 'message-text'; article.append(label, text); this.content.append(article); this.bindMessage(message, text);
     }
+    this.animateContent('stagger');
     // 记录按时间正序追加，打开即停在最底部的最新消息。
     requestAnimationFrame(() => { this.content.scrollTop = this.content.scrollHeight; });
   }
@@ -640,6 +758,7 @@ export class ChatView {
         else this.bindMessage({ id: message.id, messageId: message.id, role: message.role, text: message.content, file: message.file, status: 'complete' }, text);
         if (message.id === request.messageId) { target = article; article.classList.add('history-target'); article.tabIndex = -1; }
       }
+      this.animateContent('stagger');
       if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
       else this.status.textContent = '目标消息已删除或不在可见记录中。';
     } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }

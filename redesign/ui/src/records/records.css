@@ -1,26 +1,25 @@
 @import '../styles/tokens.css';
 
-:root { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; }
 body { margin: 0; overflow: hidden; background: var(--al-bg-0); color: var(--al-text-1); font: 13.5px/1.7 var(--al-font); }
 button { font: inherit; }
 
-/* 壳：深色底 + 两团极淡的玉石光晕，避免整窗一块死色 */
-.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background:
-  radial-gradient(880px 300px at 88% -70px, color-mix(in srgb, var(--al-accent) 9%, transparent), transparent 72%),
-  radial-gradient(720px 420px at -12% 112%, color-mix(in srgb, var(--al-accent) 5%, transparent), transparent 70%),
-  var(--al-bg-0); }
+/* 壳：平铺纸色，层次靠发线与留白 */
+.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: var(--al-bg-0); }
+/* 窗口/页面进入：整壳轻微上浮淡入，预创建窗 show 出来的硬切不再生硬 */
+.records-shell.enter { animation: records-enter .22s var(--al-ease); }
+@keyframes records-enter { from { opacity: 0; transform: translateY(8px); } }
 
 /* ---------- 头部：紧凑工具条 ---------- */
-.records-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px 11px 18px; border-bottom: 1px solid var(--al-line); background: color-mix(in srgb, var(--al-bg-1) 84%, transparent); backdrop-filter: blur(10px); }
+.records-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px 11px 18px; border-bottom: 1px solid var(--al-line); background: var(--al-bg-1); }
 .records-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .records-logo { display: grid; place-items: center; width: 33px; height: 33px; flex: none; border-radius: 11px; color: var(--al-accent); background: color-mix(in srgb, var(--al-accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--al-accent) 26%, transparent); }
 .records-kicker { display: block; color: var(--al-text-3); font-size: 9px; font-weight: 700; letter-spacing: .26em; }
-.records-heading h1 { margin: 1px 0 0; font-size: 16px; line-height: 1.25; font-weight: 650; letter-spacing: .02em; }
+.records-heading h1 { margin: 1px 0 0; font-family: var(--al-font-serif); font-size: 16px; line-height: 1.25; font-weight: 600; letter-spacing: .02em; }
 .records-side { display: flex; align-items: center; gap: 12px; flex: none; }
 .records-session { min-width: 0; text-align: right; }
-.records-title { display: block; max-width: 230px; overflow: hidden; color: var(--al-accent-strong); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.records-title { display: block; max-width: 230px; overflow: hidden; color: var(--al-accent-strong); font-family: var(--al-font-serif); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .records-title:empty { display: none; }
 .records-meta { display: block; color: var(--al-text-3); font-size: 10.5px; letter-spacing: .03em; }
 .records-meta:empty { display: none; }
@@ -44,28 +43,36 @@ button { font: inherit; }
 .records-list::-webkit-scrollbar-thumb:hover { background: var(--al-text-3); background-clip: content-box; border: 2px solid transparent; }
 
 /* 日期分隔：细线夹标签 */
-.record-day { display: flex; align-items: center; gap: 14px; margin: 22px 0 12px; color: var(--al-text-3); font-size: 10.5px; letter-spacing: .1em; user-select: none; }
+.record-day { display: flex; align-items: center; gap: 14px; margin: 22px 0 12px; color: var(--al-text-3); font-family: var(--al-font-serif); font-size: 11px; letter-spacing: .1em; user-select: none; }
 .record-day:first-child { margin-top: 2px; }
-.record-day::before, .record-day::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--al-line-strong)); }
-.record-day::after { transform: scaleX(-1); }
+.record-day::before, .record-day::after { content: ''; flex: 1; height: 1px; background: var(--al-line); }
 
 /* ---------- 消息气泡 ---------- */
-.record-message { position: relative; width: fit-content; max-width: min(76%, 620px); margin: 7px 0; padding: 9px 13px 10px; overflow-wrap: anywhere; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
-.records-list:not(.no-anim) .record-message { animation: record-in .22s var(--al-ease) both; }
+.record-message { position: relative; width: fit-content; max-width: min(76%, 620px); margin: 7px 0; padding: 9px 13px 10px; overflow-wrap: anywhere; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); font-family: var(--al-font-serif); transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
+/* 消息与日期分隔统一入场：首批加载错落浮现；第 9 项起共用最大延迟，长记录不拖尾。 */
+.records-list:not(.no-anim) .record-message, .records-list:not(.no-anim) .record-day { animation: record-in .22s var(--al-ease) both; }
+.records-list:not(.no-anim) > *:nth-child(2) { animation-delay: .03s; }
+.records-list:not(.no-anim) > *:nth-child(3) { animation-delay: .06s; }
+.records-list:not(.no-anim) > *:nth-child(4) { animation-delay: .09s; }
+.records-list:not(.no-anim) > *:nth-child(5) { animation-delay: .12s; }
+.records-list:not(.no-anim) > *:nth-child(6) { animation-delay: .15s; }
+.records-list:not(.no-anim) > *:nth-child(7) { animation-delay: .18s; }
+.records-list:not(.no-anim) > *:nth-child(8) { animation-delay: .21s; }
+.records-list:not(.no-anim) > *:nth-child(n+9) { animation-delay: .24s; }
 @keyframes record-in { from { opacity: 0; transform: translateY(6px); } }
 .record-message:hover { border-color: var(--al-line-strong); }
-.record-message header { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
+.record-message header { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; font-family: var(--al-font); }
 .record-message header strong { color: var(--al-accent-strong); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; }
 .record-message header time { color: var(--al-text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
 
 /* 重播：平时收起，悬停/聚焦气泡时浮现 */
-.record-replay { margin-left: auto; padding: 1px 9px; border: 1px solid transparent; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-size: 10px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.record-replay { margin-left: auto; padding: 1px 9px; border: 1px solid transparent; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 10px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
 .record-message:hover .record-replay, .record-message:focus-within .record-replay { opacity: 1; }
 .record-replay:hover { color: var(--al-accent-strong); background: var(--al-accent-soft); border-color: var(--al-line); }
 .record-replay:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 .record-replay:disabled { opacity: .45; cursor: default; }
 
-.record-user { margin-left: auto; border-color: color-mix(in srgb, var(--al-accent) 26%, transparent); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: linear-gradient(160deg, color-mix(in srgb, var(--al-accent) 16%, var(--al-bg-2)), color-mix(in srgb, var(--al-accent) 8%, var(--al-bg-2))); }
+.record-user { margin-left: auto; border-color: color-mix(in srgb, var(--al-accent) 30%, transparent); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: color-mix(in srgb, var(--al-accent) 9%, var(--al-bg-2)); }
 .record-user:hover { border-color: color-mix(in srgb, var(--al-accent) 40%, transparent); }
 .record-user header strong { color: var(--al-accent-emphasis); }
 
@@ -90,7 +97,7 @@ button { font: inherit; }
 /* ---------- 空态 ---------- */
 .records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 5px; color: var(--al-text-3); text-align: center; }
 .records-empty svg { margin-bottom: 7px; color: color-mix(in srgb, var(--al-accent) 52%, transparent); }
-.records-empty h2 { margin: 0; color: var(--al-text-2); font-size: 15px; font-weight: 600; }
+.records-empty h2 { margin: 0; color: var(--al-text-2); font-family: var(--al-font-serif); font-size: 15px; font-weight: 600; }
 .records-empty p { margin: 0 0 11px; font-size: 12px; }
 .records-open-chat { padding: 7px 19px; border: 1px solid color-mix(in srgb, var(--al-accent) 40%, transparent); border-radius: var(--al-r-pill); background: color-mix(in srgb, var(--al-accent) 13%, transparent); color: var(--al-accent); font-size: 12px; cursor: pointer; transition: background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
 .records-open-chat:hover { background: color-mix(in srgb, var(--al-accent) 20%, transparent); border-color: color-mix(in srgb, var(--al-accent) 60%, transparent); }
@@ -98,7 +105,7 @@ button { font: inherit; }
 .records-open-chat:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 
 /* ---------- 回到底部悬浮钮 ---------- */
-.records-tobottom { position: absolute; right: 22px; bottom: 20px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-overlay-chip); backdrop-filter: blur(8px); color: var(--al-text-2); cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease), color var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.records-tobottom { position: absolute; right: 22px; bottom: 20px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-2); cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease), color var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
 .records-tobottom.show { opacity: 1; pointer-events: auto; transform: none; }
 .records-tobottom:hover { color: var(--al-accent); border-color: color-mix(in srgb, var(--al-accent) 50%, transparent); }
 .records-tobottom:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
@@ -135,7 +142,7 @@ button { font: inherit; }
 .message-text .msk-draw-btn:hover { border-color: var(--al-accent); }
 .message-text .msk-draw-btn[disabled] { cursor: wait; opacity: .5; }
 .message-text .msk-draw-card:has(img) .msk-draw-foot { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 0; }
-.message-text .msk-draw-card:has(img) .msk-draw-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--al-overlay-chip); backdrop-filter: blur(8px); color: var(--al-text-1); font-size: 0; opacity: 0; }
+.message-text .msk-draw-card:has(img) .msk-draw-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-1); font-size: 0; opacity: 0; }
 .message-text .msk-draw-card:has(img) .msk-draw-btn::after { content: '↻'; font-size: 16px; line-height: 1; }
 .message-text .msk-draw-card:has(img):hover .msk-draw-btn, .message-text .msk-draw-card:has(img) .msk-draw-btn:focus-visible { opacity: 1; }
 .message-text .msk-draw-card:has(img) .msk-draw-btn:hover { background: var(--al-overlay-chip-hover); }

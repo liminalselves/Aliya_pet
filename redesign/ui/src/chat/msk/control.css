@@ -1,15 +1,21 @@
 /**
- * MSK 托管配置抽屉：与设置页同源的 Jade Terminal 风格（token 见 ../../styles/tokens.css）。
+ * MSK 托管配置抽屉：与设置页同源的纸感手账风格（token 见 ../../styles/tokens.css）。
  */
 @import '../../styles/tokens.css';
 
 .agent-control-drawer { box-sizing:border-box; position:fixed; inset:0; width:100%; max-width:960px; height:100%; max-height:100%; margin:auto; padding:0; border:0; background:var(--al-bg-0); color:var(--al-text-1); font:13px/1.5 var(--al-font); }
-.agent-control-drawer[open] { display:flex; flex-direction:column; }
-.agent-control-drawer::backdrop { background:var(--al-backdrop); backdrop-filter:blur(2px); }
+.agent-control-drawer[open] { display:flex; flex-direction:column; animation:drawer-in var(--al-t-med) var(--al-ease); }
+.agent-control-drawer.closing { animation:drawer-out .16s var(--al-ease) forwards; }
+.agent-control-drawer::backdrop { background:var(--al-backdrop); animation:backdrop-in var(--al-t-med) var(--al-ease); }
+.agent-control-drawer.closing::backdrop { opacity:0; transition:opacity .16s var(--al-ease); }
+@keyframes drawer-in { from { opacity:0; transform:translateY(16px) scale(.995); } }
+@keyframes drawer-out { to { opacity:0; transform:translateY(10px); } }
+@keyframes backdrop-in { from { opacity:0; } }
+@media(prefers-reduced-motion:reduce) { .agent-control-drawer[open],.agent-control-drawer.closing,.agent-control-drawer::backdrop { animation:none!important; transition:none!important; } }
 
 .agent-control-drawer header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 20px 14px; }
 .agent-control-drawer header small { color:var(--al-accent); font-size:10px; font-weight:600; letter-spacing:.24em; }
-.agent-control-drawer h2 { margin:3px 0 0; font-size:19px; font-weight:600; color:inherit; letter-spacing:.02em; }
+.agent-control-drawer h2 { margin:3px 0 0; font-family:var(--al-font-serif); font-size:19px; font-weight:600; color:inherit; letter-spacing:.02em; }
 .agent-control-drawer .control-session { margin:4px 0 0; color:var(--al-text-2); font-size:12px; overflow-wrap:anywhere; }
 
 .agent-control-drawer button { color:inherit; font:inherit; cursor:pointer; transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease); }
@@ -31,6 +37,11 @@
 .agent-control-drawer .control-retry:hover { background:var(--al-bg-4); border-color:var(--al-accent-strong); }
 
 .agent-control-drawer .control-body { flex:1; min-height:0; border-top:1px solid var(--al-line); }
+/* 面板切换/重载时内容区整体淡入：iframe 内容是远端异步替换的，淡入盖住硬切。 */
+.agent-control-drawer .control-body.swap { animation:control-swap .18s var(--al-ease); }
+@keyframes control-swap { from { opacity:0; } }
+/* 状态行出现/变更时短淡入。 */
+.agent-control-drawer .control-status:not(:empty) { animation:control-swap .16s var(--al-ease); }
 .agent-control-frame { display:block; width:100%; height:100%; border:0; }
 
 @media(min-width:700px) { .agent-control-drawer nav { grid-template-columns:repeat(8,minmax(0,1fr)); } }

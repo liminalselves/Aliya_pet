@@ -27,30 +27,58 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
 `visible:false`；命令线程里 build() 第二个 WebView2 在 Windows 实测
 死锁，故不做按需创建）。几何与跟随逻辑在 `src-tauri/src/chat_window.rs`：
 
-- pet 前端上报 Live2D 实际可见矩形（按与渲染矩阵相同的 aspect-fit 计算），
-  不用含透明留白的 pet 外窗。chat 水平居中并覆盖该矩形下半部：composer
-  压住脚线，回复/连接面板向上覆盖腿部，形态对齐萝莉斯而非模型下挂网页。
+- pet 前端上报模型可见矩形（静态包围盒 × 渲染矩阵同一套数学：原点=视口
+  中心、s=高/渲染余量/包围盒高），底边 = 脚底；横向沿用画布宽（chat 宽观感
+  不变）。锚点不取含渲染余量的画布/外窗——余量随窗口线性放大，取画布会让
+  缩放越大 chat 离脚越远。缩放落定（applySettings 完成路径）立即用已知几何
+  重报，不等 onMoved→位置查询的异步往返；壳侧 pet Resized 事件只按现有
+  锚点重排，绝不用窗口外接矩形覆盖锚点。
+- 窗口底边恒定 = 脚底 + 56 CSS px（脚线），与内容态无关：面板出现、
+  收起、换页只伸缩顶边，输入框纹丝不动。宽高变化一律单步即时落定——
+  WebView2 外窗分步 resize 会让 webview 位图滞后于窗框，残影/黑块/抽搐
+  （实测），窗口级补间不可行；平滑感由 DOM 内 CSS 动画承担（面板
+  gal-in/gal-out，收起=先淡出 150ms 再隐藏并单步收缩）。前端 chat-shell
+  同为底锚布局：面板/输入框贴窗口底，透明余量留在顶部。
+  输入框是常驻锚点：`hidden` 只由 setOpen 管（开=显），切连接/会话屏
+  只禁用不隐藏（占位符提示下一步，发送键随屏态置灰）——显隐切换会让
+  卡片在过渡帧撕裂（面板方角底边悬空 + 矮窗把面板压条），是闪烁根因；
+  会话就绪面板也走 hidePanelAnimated 两步退出，不直接 hidden。
+  聊天整体进出场也是 DOM 动画：关→开跳变挂一次性 `shell-enter`（输入框
+  gal-in；面板自身显隐已有 gal-in），×/返回先播 150ms `shell-exit` 下沉
+  淡出再真正 setOpen(false)/hide_chat，重开由 cancelExit 拦截。独立窗口
+  重现时 isOpen 已是 true，window.ts 按 chat-state 的 open 跳变去重后调
+  view.playEnter() 补播（busy/typing 重播不重复触发）。内容区整屏替换
+  （连接/会话/记录/加载占位）统一 content-in 淡入，列表类子项错落
+  （stagger-in，第 8 项起共用最大延迟）；回复流（打字点/分页）不参与
+  错落，打点落定后正文以 gal-text-in 淡入衔接。
 - chat 宽按可见模型宽 × 1.18（钳 260–560 CSS px）；外窗高度由前端
   `set_chat_layout(mode,contentHeight)` 按内容态动态调整：composer 62–88、
-  reply 150–默认比例、setup 至少 300 CSS px。连接/会话屏按 setup 全高；
+  reply 118–默认比例、setup 至少 300 CSS px。连接/会话屏按 setup 全高；
   Windows 的记录与上下文定位已迁入独立 `records` 窗口，不再撑大贴附桌宠的
-  GAL 面板。
+  GAL 面板。壳侧重排幂等：outer 几何未变就不调 set_size/set_position——
+  每次调用都触发 webview 重合成，布局上报/锚点同步/打字大多几何未变，
+  照单全收就是「刷新状态就闪」。setup 高与内容无关，前端不同步等 rAF
+  测量，直接同步直发；「正在输入」占位同样同步量高直发——晚一帧窗口才
+  顶起面板，矮窗会把刚展开的面板压成细条。
 - chat 不提供独立拖动；pet 移动/缩放时 chat 严格跟随。水平方向 pet 中心
   在屏内时 chat 钳回工作区（chat 比 pet 宽，纯居中会在贴边时把发送按钮
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
   chat 打开后隐藏 pet 脚下的入口按钮（pet 侧 `.chat-launcher[hidden]`
   需 `display:none!important` 压过自身的 `display:flex`），关闭后恢复。
-- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（Jade Terminal
-  深色阶、玉石绿主色、低对比边框、圆角、阴影、动效、焦点环），pet/聊天/
-  设置/记录/托管抽屉只引用变量，不自造色值。页面底色 `#0B1210`，卡片与面板
-  `#121B17`，主操作 `#63E6BE`，链接与悬停强调 `#2FCF9C`；不使用装饰渐变或
-  强发光。透明窗口内的面板/输入框保留半透明（透出桌面与模型，backdrop 10px
-  模糊），字号随窗口宽度自适应（`.chat-shell` container-type + cqw clamp
+- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（纸感手账
+  浅色主题：暖米白纸色阶、墨色文字、苔绿主色、小圆角、克制阴影、干脆
+  ease-out、焦点环），pet/聊天/设置/记录/托管抽屉只引用变量，不自造色值。
+  页面底色 `#F0EDE4`，卡片与面板 `#FAF7EF`，主操作 `#667A52`，文字强调
+  `#566A44`；不用渐变光晕、玻璃模糊（backdrop-filter）、发光阴影与回弹动效。
+  标题/台词/日期用衬线 `--al-font-serif`（思源宋体可变字重完整打包在
+  `ui/assets/fonts/`，OFL 许可同目录），正文与控件用黑体 `--al-font`。
+  透明窗口内的面板/输入框保留纸色微透（透出桌面与模型），字号随窗口宽度
+  自适应（`.chat-shell` container-type + cqw clamp
   11.5–13px）；名牌条 25px 高，工具栏保留记录/会话/会话配置/发送/×（退出账号
-  在会话屏内）。按钮分级：主操作 `.btn-primary` 玉绿色药丸（与发送一致），
+  在会话屏内）。按钮分级：主操作 `.btn-primary` 苔绿药丸（与发送一致），
   次要 `.ghost` 淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，
   border/radius 需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌
-  不抢软键盘），composer 有 `:focus-within` 玉绿色聚焦环；历史角色标签
+  不抢软键盘），composer 有 `:focus-within` 苔绿聚焦环；历史角色标签
   who-user/who-aliya 双色区分。
 - 锚点由 pet 前端 `sync_chat_anchor(x,y,w,h)` 上报（物理像素，与
   `update_hit_mask` 的 win_* 同源）；未上报回退原生查询。

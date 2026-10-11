@@ -54,7 +54,7 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:ready' } });
   assert.equal(posts[0].origin, config.MSK_BASE);
   assert.equal(posts[0].message.token, 'secret');
-  assert.equal(posts[0].message.appearance.colorScheme, 'dark');
+  assert.equal(posts[0].message.appearance.colorScheme, 'light');
   control.setToken('rotated'); assert.equal(posts[1].message.type, 'misskey:agent-control:update-token');
   assert.equal(control.setPanel('worldbook'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:authenticated' } });

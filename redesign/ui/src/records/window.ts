@@ -454,6 +454,14 @@ class RecordsView {
 }
 
 const view = new RecordsView();
+/** 入场动画（records.css .enter）：重放前先移除再强制 reflow，连续打开也能重新触发。 */
+function playEnter(): void {
+  const shell = document.querySelector('.records-shell');
+  if (!shell) return;
+  shell.classList.remove('enter');
+  void (shell as HTMLElement).offsetWidth;
+  shell.classList.add('enter');
+}
 if (platform === 'android') {
   document.body.classList.add('android-records');
   const back = document.createElement('button');
@@ -463,7 +471,8 @@ if (platform === 'android') {
 }
 if (platform === 'tauri') {
   const { listen } = await import('@tauri-apps/api/event');
-  await listen('records-open', () => { void view.load('open'); });
+  await listen('records-open', () => { playEnter(); void view.load('open'); });
 } else {
+  playEnter();
   void view.load('open');
 }

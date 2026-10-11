@@ -16,8 +16,14 @@ if (platform === 'tauri') {
   const { emitTo, listen } = await import('@tauri-apps/api/event');
   // 原生窗口开关是权威状态：× 会让 ChatView 进入关闭态，下一次原生 show
   // 必须同步恢复，否则只会露出内嵌模式的备用小按钮。
+  // chat-state 会随 busy/typing 变化全量重播，只在 open 跳变时动作；
+  // 窗口重现时视图本就在打开态（boot 已 setOpen(true)），走 playEnter 补入场动画。
+  let windowOpen = false;
   await listen<{ open: boolean }>('chat-state', e => {
+    if (e.payload.open === windowOpen) return;
+    windowOpen = e.payload.open;
     if (view.isOpen !== e.payload.open) view.setOpen(e.payload.open);
+    else if (e.payload.open) view.playEnter();
   });
   // 表演提示经壳广播（chat-cue 全局事件），保证 pet 即使未聚焦也能收到。
   controller.onCue = cue => { void invoke('send_chat_cue', { cue }).catch(() => {}); };

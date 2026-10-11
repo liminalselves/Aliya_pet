@@ -10,6 +10,8 @@ export class DialogueBubble {
   private _el: HTMLDivElement;
   private _sessionToken = 0;
   private _active = false;
+  /** 淡出计时器：动画结束才 display:none；重新展示前必须取消。 */
+  private _hideTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(container: HTMLElement) {
     this._el = document.createElement('div');
@@ -68,16 +70,31 @@ export class DialogueBubble {
   cancel(): void {
     this._sessionToken++;
     this._active = false;
-    this._hide();
+    this._hide(true);
   }
 
   private _show(text: string): void {
+    if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+    this._el.classList.remove('closing');
     this._el.textContent = text;
     this._el.style.display = 'block';
   }
 
-  private _hide(): void {
-    this._el.style.display = 'none';
+  /** immediate=true 立即消失；否则先播 .closing 淡出再隐藏。 */
+  private _hide(immediate = false): void {
+    if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (immediate || reduced || this._el.style.display === 'none') {
+      this._el.classList.remove('closing');
+      this._el.style.display = 'none';
+      return;
+    }
+    this._el.classList.add('closing');
+    this._hideTimer = setTimeout(() => {
+      this._hideTimer = null;
+      this._el.classList.remove('closing');
+      this._el.style.display = 'none';
+    }, 150);
   }
 
   private _sleep(ms: number): Promise<void> {
