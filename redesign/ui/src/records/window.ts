@@ -314,6 +314,12 @@ class RecordsView {
     }
     this.list.classList.toggle('no-anim', !options.animate);
     this.list.replaceChildren(frag);
+    // 非错落的内容交换（静默/手动刷新、上下文定位）补纯淡入：替换帧不再硬切。
+    if (!options.animate) {
+      this.list.classList.remove('swap-in');
+      void this.list.offsetWidth;
+      this.list.classList.add('swap-in');
+    }
     if (!target && options.targetId) this.setStatus('目标消息已删除或不在可见记录中。', 'error', true);
     return count;
   }

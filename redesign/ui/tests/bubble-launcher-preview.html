@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>bubble + launcher preview fixture</title>
+<link rel="stylesheet" href="/src/pet.css">
+<link rel="stylesheet" href="/src/chat/chat.css">
+<style>
+  html, body { margin: 0; background: #14161b; }
+  /* 双联舞台：左气泡、右启动器，一次截图自审两个 pet 侧表面 */
+  .stage { position: relative; float: left; width: 420px; height: 240px; }
+</style>
+</head>
+<body>
+<div class="stage" id="s1"></div>
+<div class="stage" id="s2"><div id="chat-ui"></div></div>
+<script type="module">
+// 台词气泡：结构与 bubble.ts 一致（id 选择器 + 文本节点）
+const bubble = document.createElement('div');
+bubble.id = 'dialogue-bubble';
+bubble.textContent = '晚上好呀。今天的茶是桂花乌龙，要一起喝一杯吗？';
+document.getElementById('s1').append(bubble);
+
+// 启动器：结构与 view.ts 一致（chat-launcher 按钮挂在 #chat-ui 下）
+const ui = document.getElementById('chat-ui');
+ui.style.pointerEvents = 'auto';
+const launcher = document.createElement('button');
+launcher.className = 'chat-launcher';
+launcher.setAttribute('aria-label', '和 Aliya 聊天');
+launcher.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9.4L4 21.6V18H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>聊天</span>';
+ui.append(launcher);
+window.__ready = true;
+</script>
+</body>
+</html>

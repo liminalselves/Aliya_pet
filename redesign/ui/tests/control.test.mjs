@@ -37,7 +37,7 @@ test('HTTP client and authorization use the configured local instance', async ()
 test('control protocol verifies both origin and frame, rotates tokens and destroys resources', () => {
   const config = loadMskConfig('http://127.0.0.1:3000');
   const listeners = new Set(); const posts = []; const events = []; const timers = new Set();
-  const iframe = { contentWindow: { postMessage: (message, origin) => posts.push({ message, origin }) }, remove() { this.removed = true; } };
+  const iframe = { contentWindow: { postMessage: (message, origin) => posts.push({ message, origin }) }, remove() { this.removed = true; }, classList: { add(c) { (this.classes ??= new Set()).add(c); }, contains(c) { return this.classes?.has(c) ?? false; } } };
   const { AgentControlFrame, CONTROL_PANELS } = load('control', config, {
     document: { createElement: () => iframe },
     window: { addEventListener: (_, cb) => listeners.add(cb), removeEventListener: (_, cb) => listeners.delete(cb) },
@@ -54,11 +54,15 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:ready' } });
   assert.equal(posts[0].origin, config.MSK_BASE);
   assert.equal(posts[0].message.token, 'secret');
-  assert.equal(posts[0].message.appearance.colorScheme, 'light');
+  // 外观契约钉死当前「茶夜」暗色主题：改主题须同步更新这里与 control.ts
+  assert.equal(posts[0].message.appearance.colorScheme, 'dark');
+  assert.equal(posts[0].message.appearance.accent, '#e29ba3');
   control.setToken('rotated'); assert.equal(posts[1].message.type, 'misskey:agent-control:update-token');
   assert.equal(control.setPanel('worldbook'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:authenticated' } });
   assert.equal(timers.size, 0);
+  // 认证后 iframe 挂 ready 淡入（未认证保持隐藏，错误态不露白帧）
+  assert.ok(iframe.classList.contains('ready'));
   assert.equal(control.setPanel('worldbook'), true);
   assert.equal(posts[2].origin, config.MSK_BASE);
   assert.equal(posts[2].message.type, 'misskey:agent-control:set-panel');

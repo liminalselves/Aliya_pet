@@ -36,21 +36,25 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
 - 窗口底边恒定 = 脚底 + 56 CSS px（脚线），与内容态无关：面板出现、
   收起、换页只伸缩顶边，输入框纹丝不动。宽高变化一律单步即时落定——
   WebView2 外窗分步 resize 会让 webview 位图滞后于窗框，残影/黑块/抽搐
-  （实测），窗口级补间不可行；平滑感由 DOM 内 CSS 动画承担（面板
-  gal-in/gal-out，收起=先淡出 150ms 再隐藏并单步收缩）。前端 chat-shell
+  （实测），窗口级补间不可行；平滑感由 DOM 内 CSS 动画承担（面板出入场
+  走共享动效库 al-rise-in/al-sink-out，收起=先播出场帧再隐藏并单步收缩）。前端 chat-shell
   同为底锚布局：面板/输入框贴窗口底，透明余量留在顶部。
   输入框是常驻锚点：`hidden` 只由 setOpen 管（开=显），切连接/会话屏
   只禁用不隐藏（占位符提示下一步，发送键随屏态置灰）——显隐切换会让
   卡片在过渡帧撕裂（面板方角底边悬空 + 矮窗把面板压条），是闪烁根因；
   会话就绪面板也走 hidePanelAnimated 两步退出，不直接 hidden。
   聊天整体进出场也是 DOM 动画：关→开跳变挂一次性 `shell-enter`（输入框
-  gal-in；面板自身显隐已有 gal-in），×/返回先播 150ms `shell-exit` 下沉
+  补播入场；面板自身显隐已带入场），×/返回先播 `shell-exit` 下沉
   淡出再真正 setOpen(false)/hide_chat，重开由 cancelExit 拦截。独立窗口
   重现时 isOpen 已是 true，window.ts 按 chat-state 的 open 跳变去重后调
-  view.playEnter() 补播（busy/typing 重播不重复触发）。内容区整屏替换
-  （连接/会话/记录/加载占位）统一 content-in 淡入，列表类子项错落
-  （stagger-in，第 8 项起共用最大延迟）；回复流（打字点/分页）不参与
-  错落，打点落定后正文以 gal-text-in 淡入衔接。
+  view.playEnter() 补播（busy/typing 重播不重复触发）。全应用动效唯一来源
+  是 tokens.css 共享动效库（al-rise-in 上浮入场 / al-sink-out 加速出场 /
+  al-fade-in 纯淡入 / al-pulse-ring 注意环；时长分 fast/med/out 三档，
+  出场≈入场六成，减速入场、加速出场，只动 transform/opacity），各表面只挂
+  class 不自造关键帧。内容区整屏替换（连接/会话/记录/加载占位）统一
+  fade-in 上浮淡入，列表类子项错落（stagger-in，30-50ms 阶梯，第 8 项起
+  共用最大延迟）；回复流（打字点/分页）不参与错落，打点落定后正文以
+  gal-text-in 淡入衔接。
 - chat 宽按可见模型宽 × 1.18（钳 260–560 CSS px）；外窗高度由前端
   `set_chat_layout(mode,contentHeight)` 按内容态动态调整：composer 62–88、
   reply 118–默认比例、setup 至少 300 CSS px。连接/会话屏按 setup 全高；
@@ -65,21 +69,23 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
   chat 打开后隐藏 pet 脚下的入口按钮（pet 侧 `.chat-launcher[hidden]`
   需 `display:none!important` 压过自身的 `display:flex`），关闭后恢复。
-- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（纸感手账
-  浅色主题：暖米白纸色阶、墨色文字、苔绿主色、小圆角、克制阴影、干脆
-  ease-out、焦点环），pet/聊天/设置/记录/托管抽屉只引用变量，不自造色值。
-  页面底色 `#F0EDE4`，卡片与面板 `#FAF7EF`，主操作 `#667A52`，文字强调
-  `#566A44`；不用渐变光晕、玻璃模糊（backdrop-filter）、发光阴影与回弹动效。
-  标题/台词/日期用衬线 `--al-font-serif`（思源宋体可变字重完整打包在
-  `ui/assets/fonts/`，OFL 许可同目录），正文与控件用黑体 `--al-font`。
-  透明窗口内的面板/输入框保留纸色微透（透出桌面与模型），字号随窗口宽度
+- 视觉：全应用设计 token 统一在 `ui/src/styles/tokens.css`（「茶夜」暖暗
+  主题：色板取自角色本身——可可夜底色阶、奶白文字、腮红主色、瞳紫
+  次色、发饰金标记、小圆角、克制阴影、干脆 ease-out、焦点环），pet/聊天/
+  设置/记录/托管抽屉只引用变量，不自造色值。页面底色 `#1B1412`，卡片与
+  面板 `#2A201B`，主操作 `#E29BA3`（其上文字用深可可 `#35191F`），文字
+  强调 `#EEB1B9`；不用渐变光晕、玻璃模糊（backdrop-filter）、发光阴影与
+  回弹动效。标题/台词/日期用衬线 `--al-font-serif`（思源宋体可变字重完整
+  打包在 `ui/assets/fonts/`，OFL 许可同目录），正文与控件用黑体
+  `--al-font`。分区组题用衬线 + 腮红小菱标，不用宽字距灰色小标。
+  透明窗口内的面板/输入框保留微透（透出桌面与模型），字号随窗口宽度
   自适应（`.chat-shell` container-type + cqw clamp
   11.5–13px）；名牌条 25px 高，工具栏保留记录/会话/会话配置/发送/×（退出账号
-  在会话屏内）。按钮分级：主操作 `.btn-primary` 苔绿药丸（与发送一致），
+  在会话屏内）。按钮分级：主操作 `.btn-primary` 腮红药丸（与发送一致），
   次要 `.ghost` 淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，
   border/radius 需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌
-  不抢软键盘），composer 有 `:focus-within` 苔绿聚焦环；历史角色标签
-  who-user/who-aliya 双色区分。
+  不抢软键盘），composer 有 `:focus-within` 腮红聚焦环；历史角色标签
+  who-aliya 腮红 / who-user 瞳紫双色区分；回复面板顶边一线腮红包边。
 - 锚点由 pet 前端 `sync_chat_anchor(x,y,w,h)` 上报（物理像素，与
   `update_hit_mask` 的 win_* 同源）；未上报回退原生查询。
 - 壳命令：`show_chat`/`hide_chat`/`sync_chat_anchor`/
@@ -189,7 +195,7 @@ Aliya_web 相同。
   退避重试两次；仍失败才显示中文提示。其他已知错误码（余额不足、回复
   pending、审核拦截等）也翻译成中文，不向界面泄漏服务器英文原文。
 - 回复为单个 segment（不再按句切分），带 `messageId`；发送后 GAL 面板
-  立即弹出显示「正在输入」三点动画（gal-in 出场动效），回复到达后原位
+  立即弹出显示「正在输入」三点脉冲动画，回复到达后原位
   替换；停止等待则收起了占位。可 Esc/× 关闭。
 - 回复播放是萝莉斯式逐页对话（`view.ts` + `typewriter.ts`）：assistant
   回复按 MSK 展示分段机制（`rendering/segments.ts`，逐行移植 misskey
@@ -225,7 +231,10 @@ Aliya_web 相同。
   （用户靠右、Aliya 靠左，阅读栏居中限宽）、跨天插日期分隔条、
   顶部会话摘要与条数、显式刷新；拉取分打开/手动/静默（focus 30s 节流
   与 storage）三档，时间线签名（会话+条数+末条 id）未变就不重渲染、
-  DOM 原样保留；打开与手动刷新滚到底部并用 rAF 钉住直到生图卡片与
+  DOM 原样保留；窗口入场整壳纯淡入不带位移（列表错落与钉底已承担
+  动效，壳级平移=双重位移，是「开记录抽一下」的根因），非错落的
+  内容交换（刷新/定位替换）由 records-list.swap-in 纯淡入过渡；
+  打开与手动刷新滚到底部并用 rAF 钉住直到生图卡片与
   图片落定（instant 滚动，用户滚动即取消钉底），静默刷新贴底保持吸底、
   否则保留阅读位置，首次加载用骨架屏，另有回到底部浮钮；重播与图片
   重生成按钮悬停气泡才浮现。重播经 CONTROL_REQUEST_KEY 跨窗请求 chat

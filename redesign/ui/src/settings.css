@@ -27,27 +27,38 @@ html, body {
 #app::-webkit-scrollbar { width: 6px; }
 #app::-webkit-scrollbar-thumb { background: var(--al-bg-4); border-radius: 3px; }
 
-/* 窗口/页面进入：各分区依次上浮淡入（级联），预创建窗 show 出来的硬切不再生硬。
+/* 窗口/页面进入：各分区依次上浮淡入（级联 30-50ms 阶梯），预创建窗 show 出来的硬切不再生硬。
    级联挂在子项而非整页：整页平移 + 子项平移叠加会双重位移。 */
-#app.enter > * { animation: settings-in 0.22s var(--al-ease) both; }
-#app.enter > *:nth-child(2) { animation-delay: .03s; }
-#app.enter > *:nth-child(3) { animation-delay: .06s; }
-#app.enter > *:nth-child(4) { animation-delay: .09s; }
-#app.enter > *:nth-child(5) { animation-delay: .12s; }
-#app.enter > *:nth-child(6) { animation-delay: .15s; }
-#app.enter > *:nth-child(7) { animation-delay: .18s; }
-#app.enter > *:nth-child(8) { animation-delay: .21s; }
-#app.enter > *:nth-child(n+9) { animation-delay: .24s; }
-@keyframes settings-in { from { opacity: 0; transform: translateY(8px); } }
+#app.enter > * { animation: al-rise-in var(--al-t-med) var(--al-ease) both; }
+#app.enter > *:nth-child(2) { animation-delay: .035s; }
+#app.enter > *:nth-child(3) { animation-delay: .07s; }
+#app.enter > *:nth-child(4) { animation-delay: .105s; }
+#app.enter > *:nth-child(5) { animation-delay: .14s; }
+#app.enter > *:nth-child(6) { animation-delay: .175s; }
+#app.enter > *:nth-child(7) { animation-delay: .21s; }
+#app.enter > *:nth-child(8) { animation-delay: .245s; }
+#app.enter > *:nth-child(n+9) { animation-delay: .28s; }
 @media (prefers-reduced-motion: reduce) { #app.enter > * { animation: none; } }
 
 /* ---- 分组 ---- */
+/* 组题用衬线 + 腮红小菱标，弃宽字距灰字小标（AI 模板感来源）。 */
 h2 {
-  font-size: 11px;
-  color: var(--al-text-3);
-  margin: 22px 6px 8px;
+  font-family: var(--al-font-serif);
+  font-size: 13px;
+  color: var(--al-text-2);
+  margin: 24px 6px 9px;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.08em;
+}
+h2::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 8px 1px 0;
+  background: var(--al-accent);
+  transform: rotate(45deg);
+  border-radius: 1.5px;
 }
 h2:first-child { margin-top: 6px; }
 

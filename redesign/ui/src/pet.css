@@ -77,12 +77,12 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   from { opacity: 0; scale: 0.92; translate: 0 4px; }
 }
 
-/* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切 */
+/* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切；出场加速。 */
 #dialogue-bubble.closing {
   opacity: 0;
   scale: 0.95;
   translate: 0 3px;
-  transition: opacity 0.15s var(--al-ease), scale 0.15s var(--al-ease), translate 0.15s var(--al-ease);
+  transition: opacity var(--al-t-out) var(--al-ease-in), scale var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
 /* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），

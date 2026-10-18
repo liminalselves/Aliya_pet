@@ -7,16 +7,18 @@ button { font: inherit; }
 
 /* 壳：平铺纸色，层次靠发线与留白 */
 .records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: var(--al-bg-0); }
-/* 窗口/页面进入：整壳轻微上浮淡入，预创建窗 show 出来的硬切不再生硬 */
-.records-shell.enter { animation: records-enter .22s var(--al-ease); }
-@keyframes records-enter { from { opacity: 0; transform: translateY(8px); } }
+/* 窗口/页面进入：整壳纯淡入（不带位移）。记录列表自身有错落入场/钉底滚动，
+   壳级再平移就是双重位移——用户看到的「开记录窗口抽一下」。 */
+.records-shell.enter { animation:al-fade-in var(--al-t-med) var(--al-ease); }
 
 /* ---------- 头部：紧凑工具条 ---------- */
 .records-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px 11px 18px; border-bottom: 1px solid var(--al-line); background: var(--al-bg-1); }
 .records-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .records-logo { display: grid; place-items: center; width: 33px; height: 33px; flex: none; border-radius: 11px; color: var(--al-accent); background: color-mix(in srgb, var(--al-accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--al-accent) 26%, transparent); }
-.records-kicker { display: block; color: var(--al-text-3); font-size: 9px; font-weight: 700; letter-spacing: .26em; }
+/* 拉丁小标不再以宽字距灰字呈现（AI 模板感来源）；视觉重心交给衬线标题与腮红菱标。 */
+.records-kicker { display: none; }
 .records-heading h1 { margin: 1px 0 0; font-family: var(--al-font-serif); font-size: 16px; line-height: 1.25; font-weight: 600; letter-spacing: .02em; }
+.records-heading h1::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 9px 1px 1px; background: var(--al-accent); transform: rotate(45deg); border-radius: 1.5px; }
 .records-side { display: flex; align-items: center; gap: 12px; flex: none; }
 .records-session { min-width: 0; text-align: right; }
 .records-title { display: block; max-width: 230px; overflow: hidden; color: var(--al-accent-strong); font-family: var(--al-font-serif); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -38,6 +40,8 @@ button { font: inherit; }
 
 /* ---------- 消息列：居中阅读栏，宽窗不再半边空 ---------- */
 .records-list { min-height: 0; padding: 16px max(22px, calc((100% - 860px) / 2)) 42px; overflow-x: hidden; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--al-scrollbar) transparent; }
+/* 非错落的内容交换（静默/手动刷新、上下文定位后的替换）纯淡入盖住替换帧，不再硬切。 */
+.records-list.swap-in { animation: al-fade-in var(--al-t-fast) var(--al-ease); }
 .records-list::-webkit-scrollbar { width: 8px; }
 .records-list::-webkit-scrollbar-thumb { background: var(--al-scrollbar); border: 2px solid transparent; border-radius: var(--al-r-pill); background-clip: content-box; }
 .records-list::-webkit-scrollbar-thumb:hover { background: var(--al-text-3); background-clip: content-box; border: 2px solid transparent; }
@@ -49,32 +53,33 @@ button { font: inherit; }
 
 /* ---------- 消息气泡 ---------- */
 .record-message { position: relative; width: fit-content; max-width: min(76%, 620px); margin: 7px 0; padding: 9px 13px 10px; overflow-wrap: anywhere; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); font-family: var(--al-font-serif); transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
-/* 消息与日期分隔统一入场：首批加载错落浮现；第 9 项起共用最大延迟，长记录不拖尾。 */
-.records-list:not(.no-anim) .record-message, .records-list:not(.no-anim) .record-day { animation: record-in .22s var(--al-ease) both; }
-.records-list:not(.no-anim) > *:nth-child(2) { animation-delay: .03s; }
-.records-list:not(.no-anim) > *:nth-child(3) { animation-delay: .06s; }
-.records-list:not(.no-anim) > *:nth-child(4) { animation-delay: .09s; }
-.records-list:not(.no-anim) > *:nth-child(5) { animation-delay: .12s; }
-.records-list:not(.no-anim) > *:nth-child(6) { animation-delay: .15s; }
-.records-list:not(.no-anim) > *:nth-child(7) { animation-delay: .18s; }
-.records-list:not(.no-anim) > *:nth-child(8) { animation-delay: .21s; }
-.records-list:not(.no-anim) > *:nth-child(n+9) { animation-delay: .24s; }
-@keyframes record-in { from { opacity: 0; transform: translateY(6px); } }
+/* 消息与日期分隔统一入场：首批加载错落浮现（30-50ms 阶梯）；第 9 项起共用最大延迟，长记录不拖尾。 */
+.records-list:not(.no-anim) .record-message, .records-list:not(.no-anim) .record-day { animation:al-rise-in var(--al-t-med) var(--al-ease) both; }
+.records-list:not(.no-anim) > *:nth-child(2) { animation-delay: .035s; }
+.records-list:not(.no-anim) > *:nth-child(3) { animation-delay: .07s; }
+.records-list:not(.no-anim) > *:nth-child(4) { animation-delay: .105s; }
+.records-list:not(.no-anim) > *:nth-child(5) { animation-delay: .14s; }
+.records-list:not(.no-anim) > *:nth-child(6) { animation-delay: .175s; }
+.records-list:not(.no-anim) > *:nth-child(7) { animation-delay: .21s; }
+.records-list:not(.no-anim) > *:nth-child(8) { animation-delay: .245s; }
+.records-list:not(.no-anim) > *:nth-child(n+9) { animation-delay: .28s; }
 .record-message:hover { border-color: var(--al-line-strong); }
 .record-message header { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; font-family: var(--al-font); }
-.record-message header strong { color: var(--al-accent-strong); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; }
+.record-message header strong { color: var(--al-accent-emphasis); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; }
 .record-message header time { color: var(--al-text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
 
 /* 重播：平时收起，悬停/聚焦气泡时浮现 */
 .record-replay { margin-left: auto; padding: 1px 9px; border: 1px solid transparent; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 10px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
 .record-message:hover .record-replay, .record-message:focus-within .record-replay { opacity: 1; }
 .record-replay:hover { color: var(--al-accent-strong); background: var(--al-accent-soft); border-color: var(--al-line); }
+.record-replay:active { transform: scale(.94); }
 .record-replay:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 .record-replay:disabled { opacity: .45; cursor: default; }
 
-.record-user { margin-left: auto; border-color: color-mix(in srgb, var(--al-accent) 30%, transparent); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: color-mix(in srgb, var(--al-accent) 9%, var(--al-bg-2)); }
-.record-user:hover { border-color: color-mix(in srgb, var(--al-accent) 40%, transparent); }
-.record-user header strong { color: var(--al-accent-emphasis); }
+/* 用户侧：瞳紫淡染，与 Aliya 的腮红名字相对。 */
+.record-user { margin-left: auto; border-color: color-mix(in srgb, var(--al-accent-2) 28%, transparent); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: color-mix(in srgb, var(--al-accent-2) 8%, var(--al-bg-2)); }
+.record-user:hover { border-color: color-mix(in srgb, var(--al-accent-2) 40%, transparent); }
+.record-user header strong { color: var(--al-accent-2-strong); }
 
 /* 上下文分界：胶囊虚线 */
 .record-system { width: fit-content; margin: 16px auto; padding: 4px 15px; border-style: dashed; border-color: var(--al-line-strong); border-radius: var(--al-r-pill); background: color-mix(in srgb, var(--al-bg-2) 62%, transparent); box-shadow: none; color: var(--al-text-3); font-size: 11px; text-align: center; }
@@ -108,6 +113,7 @@ button { font: inherit; }
 .records-tobottom { position: absolute; right: 22px; bottom: 20px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-2); cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease), color var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
 .records-tobottom.show { opacity: 1; pointer-events: auto; transform: none; }
 .records-tobottom:hover { color: var(--al-accent); border-color: color-mix(in srgb, var(--al-accent) 50%, transparent); }
+.records-tobottom:active { transform: scale(.92); }
 .records-tobottom:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 
 /* ---------- 正文渲染 ---------- */

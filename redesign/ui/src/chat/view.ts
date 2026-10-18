@@ -345,7 +345,7 @@ export class ChatView {
   }
   private showConnect(message = ''): void {
     this.screen = 'connect'; this.clearRendering();
-    this.input.disabled = true; this.input.placeholder = '先连接 Misskey……';
+    this.input.disabled = true; this.input.placeholder = '先连接 Misskey…';
     this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
     this.get('.auth-status').textContent = message;
     this.get('.authorize').onclick = () => { void this.login(); };
@@ -376,9 +376,10 @@ export class ChatView {
   }
   private async loadSessions(restore = false): Promise<void> {
     const signal = this.reset(); this.screen = 'sessions';
-    this.input.disabled = true; this.input.placeholder = '先选择会话……';
-    this.content.innerHTML = '<p class="muted-note">正在读取会话……</p>'; this.showPanel('选择会话');
-    this.animateContent('fade');
+    this.input.disabled = true; this.input.placeholder = '先选择会话…';
+    // 加载占位也走 stagger 槽位：占位行就是列表的第 0 项，列表落地同位替换，布局不跳。
+    this.content.innerHTML = '<p class="muted-note loading-note">正在读取会话</p>'; this.showPanel('选择会话');
+    this.animateContent('stagger');
     try {
       const list = await new MskClient(this.auth.token).listAliyaSessions(signal);
       if (signal.aborted) return;
@@ -428,13 +429,14 @@ export class ChatView {
       const refresh = document.createElement('button'); refresh.textContent = '刷新'; refresh.className = 'ghost'; refresh.onclick = () => { void this.loadSessions(); }; actions.append(refresh);
       const logout = document.createElement('button'); logout.textContent = '退出账号'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
       this.content.append(actions);
+      // 加载占位→列表一次性成型：不换屏只换内容，纯淡入盖住替换帧，不重放面板入场。
       this.animateContent('stagger');
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private sessionKey(): string { return mskSessionKey(this.auth.savedUser()?.id ?? 'current'); }
   private async enterSession(session: MskSession): Promise<void> {
     const signal = this.reset();
-    this.content.innerHTML = '<p class="muted-note">正在打开会话……</p>'; this.animateContent('fade');
+    this.content.innerHTML = '<p class="muted-note loading-note">正在打开会话</p>'; this.animateContent('fade');
     const client = new MskClient(this.auth.token);
     const api: MskApiCaller = (endpoint, body, s) => client.post('/' + endpoint, body, s);
     try {

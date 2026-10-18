@@ -8,8 +8,8 @@ export type ControlPanel = keyof typeof CONTROL_PANELS;
 export interface ControlEvent { type: string; messageId?: string; url?: string; endpoint?: string; reason?: string; code?: string }
 
 export const CONTROL_APPEARANCE = {
-  colorScheme: 'light', accent: '#667a52', background: '#f0ede4', panel: '#faf7ef',
-  foreground: '#36332b', muted: '#6f695b', divider: 'rgba(54,51,43,0.14)', radius: '8px',
+  colorScheme: 'dark', accent: '#e29ba3', background: '#1b1412', panel: '#2a201b',
+  foreground: '#f1e7db', muted: '#c6b5a5', divider: 'rgba(241,231,219,0.10)', radius: '10px',
   fontFamily: '"Microsoft YaHei", system-ui, sans-serif', fontSize: '13px',
   contentMaxWidth: '860px', spacing: '12px',
 };
@@ -38,7 +38,7 @@ export class AgentControlFrame {
       if (!token) { this.onEvent({ type: 'misskey:agent-control:error', code: 'AUTHENTICATION_FAILED' }); return; }
       this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:configure', token, appearance: CONTROL_APPEARANCE }, MSK_BASE);
     }
-    if (message.type === 'misskey:agent-control:authenticated') { this.authenticated = true; clearTimeout(this.timer); }
+    if (message.type === 'misskey:agent-control:authenticated') { this.authenticated = true; clearTimeout(this.timer); this.iframe.classList.add('ready'); }
     if (message.type === 'misskey:agent-control:error') { this.authenticated = false; clearTimeout(this.timer); }
     this.onEvent(message);
   };
