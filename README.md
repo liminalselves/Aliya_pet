@@ -64,7 +64,7 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 
 | 组件 | 版本 / 说明 |
 | --- | --- |
-| Node.js | ≥ 18（前端构建，Vite） |
+| Node.js | Vite 8 要求 `^20.19.0 || >=22.12.0`；推荐 Node.js 24 LTS |
 | Rust + cargo | Windows 壳（Tauri） |
 | Android SDK | platform 36 + JDK 17/21（构建 APK） |
 | Live2D Cubism Web SDK | 5-r.5，需手动准备，见下 |
@@ -75,7 +75,10 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 
 ```bash
 cd redesign
-npm install                # 首次
+npm ci                     # 安装 Tauri CLI（首次克隆或依赖更新后）
+cd ui
+npm ci                     # 安装 Vite、TypeScript 等前端依赖（必需）
+cd ..
 
 # 开发运行；不传参数时连接默认远程 Misskey：
 npm run dev
@@ -92,8 +95,10 @@ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
 ### Android
 
 ```bash
-# 1. 构建共享前端（产物进入 redesign/ui/dist，Gradle 自动打包进 assets）
-cd redesign/ui && npm run build
+# 1. 安装前端依赖并构建共享前端（产物进入 redesign/ui/dist）
+cd redesign/ui
+npm ci
+npm run build
 
 # 2. 构建 APK
 cd ../android
@@ -214,7 +219,7 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 
 | Component | Version / Notes |
 | --- | --- |
-| Node.js | ≥ 18 (frontend build, Vite) |
+| Node.js | Vite 8 requires `^20.19.0 || >=22.12.0`; Node.js 24 LTS recommended |
 | Rust + cargo | Windows shell (Tauri) |
 | Android SDK | platform 36 + JDK 17/21 (APK build) |
 | Live2D Cubism Web SDK | 5-r.5, prepare manually (see below) |
@@ -225,7 +230,10 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 
 ```bash
 cd redesign
-npm install                # first time
+npm ci                     # Install the Tauri CLI (first clone or dependency update)
+cd ui
+npm ci                     # Install Vite/TypeScript frontend dependencies (required)
+cd ..
 
 # Dev run; without arguments it connects to the default remote Misskey:
 npm run dev
@@ -241,8 +249,10 @@ Artifact: `redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_*.exe`.
 #### Android
 
 ```bash
-# 1. Build the shared frontend (output goes to redesign/ui/dist, Gradle bundles it into assets)
-cd redesign/ui && npm run build
+# 1. Install frontend dependencies and build the shared UI
+cd redesign/ui
+npm ci
+npm run build
 
 # 2. Build the APK
 cd ../android
