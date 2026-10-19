@@ -4,7 +4,7 @@
 
 | 组件 | 用途 | 说明 |
 | ---- | ---- | ---- |
-| Node.js ≥ 18 | 前端构建（Vite） | UI 源码在 `redesign/ui/` |
+| Node.js `^20.19.0 || >=22.12.0` | 前端构建（Vite 8）；推荐 24 LTS | UI 源码在 `redesign/ui/` |
 | Rust + cargo | Tauri 壳 | `redesign/src-tauri/` |
 | Android SDK（platform 36）+ JDK 17/21 | Android 构建 | 本地 `gradle wrapper` 自动下载 Gradle 8.11.1 + AGP 8.9 |
 | **Live2D Cubism SDK** | 第三方法/Web 组件 | 见下节 |
@@ -24,7 +24,10 @@ Cubism Web SDK（官方包，只保留 Framework + Core，约 1.3MB）位于
 
 ```bash
 cd redesign
-npm install
+npm ci                      # Tauri CLI 依赖
+cd ui
+npm ci                      # 前端 Vite / TypeScript 依赖（必需）
+cd ..
 
 # 开发运行：省略参数连接默认远程实例
 npm run dev
@@ -41,6 +44,8 @@ npm run build
 
 ### 常见问题
 
+- Tauri 报 `beforeDevCommand terminated with a non-zero status code`：先在 `redesign/ui/` 执行 `npm ci`，再运行 `npm run dev -- --host 127.0.0.1` 单独查看 Vite 的具体错误；确认 Node.js 版本满足 Vite 8 要求，并检查 5175 端口是否被占用。
+- `vite` 命令找不到：通常是仅在 `redesign/` 安装了依赖，遗漏了 `redesign/ui/` 的 `npm ci`。
 - `cargo-tauri` 未安装：用局部 CLI（`npx tauri ...`）即可，无需全局安装。
 - dev 进程偶尔自行退出打印 `Failed to unregister class Chrome_WidgetWin_0`：
   已知无害，重跑 dev 即可。
@@ -49,8 +54,10 @@ npm run build
 ## Android
 
 ```bash
-# 1. 构建共享前端（产物进 redesign/ui/dist，Gradle 自动打包进 assets）
-cd redesign/ui && npm run build
+# 1. 安装依赖并构建共享前端（产物进 redesign/ui/dist，Gradle 自动打包进 assets）
+cd redesign/ui
+npm ci
+npm run build
 
 # 2. 构建 APK
 cd ../android
