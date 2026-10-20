@@ -25,7 +25,9 @@
 
 use serde_json::json;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent};
+#[cfg(not(windows))]
+use tauri::PhysicalSize;
 
 /// 模型可见矩形（屏幕物理像素），由前端显式上报。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +85,10 @@ impl ChatRuntime {
         match self.layout {
             ChatLayout::Composer => self.composer_content_height
                 .map(f64::from).unwrap_or(default_height).clamp(62.0, 88.0),
-            // 回复页按当前页内容量高，不为未来页预留空白。
+            // 回复按当前页量高；窄窗也需容纳完整等待框/独立表情，宽度不再限制内容高。
+            // 仍沿用聊天窗口原有 330 CSS px 上限，长文留在内容区滚动。
             ChatLayout::Reply => self.reply_content_height
-                .map(f64::from).unwrap_or(default_height).clamp(118.0, default_height),
+                .map(f64::from).unwrap_or(default_height).clamp(118.0, 330.0),
             // 授权/会话页给足高度，不采用尚未完成布局的一次测量。
             ChatLayout::Setup => default_height.max(300.0),
         }
@@ -371,12 +374,25 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
         .outer_position()
         .map(|p| p.x != x || p.y != y)
         .unwrap_or(true);
-    // 单步落定：webview 位图与窗框同步切换，不产生分步 resize 的残影。
-    if need_size {
-        let _ = chat.set_size(PhysicalSize::new(w as u32, h as u32));
+    if !need_size && !need_pos { return; }
+    // 同一次调用提交大小和位置；先 resize 后 move 会短暂沿旧顶边扩张、遮住角色。
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER};
+        match chat.hwnd() {
+            Ok(hwnd) => unsafe {
+                if SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w, h,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER) == 0 {
+                    eprintln!("[chat] set bounds failed: {}", std::io::Error::last_os_error());
+                }
+            },
+            Err(error) => eprintln!("[chat] get window handle failed: {error}"),
+        }
     }
-    if need_pos {
-        let _ = chat.set_position(PhysicalPosition::new(x, y));
+    #[cfg(not(windows))]
+    {
+        if need_size { let _ = chat.set_size(PhysicalSize::new(w as u32, h as u32)); }
+        if need_pos { let _ = chat.set_position(PhysicalPosition::new(x, y)); }
     }
 }
 
@@ -495,11 +511,13 @@ mod tests {
     }
 
     #[test]
-    fn remembered_heights_still_respect_current_pet_size_and_layout_limits() {
+    fn remembered_heights_respect_layout_limits_without_clipping_narrow_replies() {
         let mut runtime = ChatRuntime::default();
         runtime.set_layout(ChatLayout::Reply, Some(400));
         assert_eq!(runtime.height_css(330.0), 330.0);
-        assert_eq!(runtime.height_css(170.0), 170.0);
+        assert_eq!(runtime.height_css(170.0), 330.0);
+        runtime.set_layout(ChatLayout::Reply, Some(224));
+        assert_eq!(runtime.height_css(170.0), 224.0);
         runtime.set_layout(ChatLayout::Reply, Some(1));
         assert_eq!(runtime.height_css(330.0), 118.0);
         runtime.set_layout(ChatLayout::Composer, Some(70));

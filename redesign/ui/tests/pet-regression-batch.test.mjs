@@ -216,6 +216,105 @@ test('启动恢复尊重保存位置；失败不伪造位置成功，也不会�
   assert.equal(h.anchors.length, 2);
 });
 
+test('聊天只测自然页高，不累计旧窗口高度或滚动填充；测量后恢复约束', () => {
+  const { ChatView } = load('chat/view');
+  const view = Object.create(ChatView.prototype);
+  let measuring = false, naturalHeight = 96;
+  view.root = { classList: { add() { measuring = true; }, remove() { measuring = false; } } };
+  view.panel = { hidden: false, getBoundingClientRect() { assert.equal(measuring, true); return { height: naturalHeight }; } };
+  view.composer = { hidden: false, getBoundingClientRect: () => ({ height: 64 }) };
+  view.content = { get scrollHeight() { throw new Error('不能叠加视口滚动高度'); } };
+  assert.equal(view.measureContentHeight(), 166);
+  assert.equal(measuring, false);
+  naturalHeight = 202;
+  assert.equal(view.measureContentHeight(), 272);
+  assert.equal(measuring, false);
+  view.panel.hidden = true;
+  assert.equal(view.measureContentHeight(), 70);
+  view.composer.hidden = true;
+  assert.equal(view.measureContentHeight(), 6);
+});
+
+test('整条回复在异步渲染期间脱离布局，settled 后才按页显示与量高', async () => {
+  const { ChatView } = load('chat/view', {}, { document: { createElement: () => ({ style: {},
+    classList: { add() {} }, setAttribute() {}, append() {}, remove() {} }) } });
+  const view = Object.create(ChatView.prototype), task = deferred(), children = [];
+  let update, syncs = 0, measures = 0;
+  Object.assign(view, { playing: false, clearPlayback() { this.playing = false; }, clearRendering() {},
+    clearContentAnimation() {}, showPanel() {}, updateHint() {},
+    content: { replaceChildren() {}, append(...nodes) { children.push(...nodes); } },
+    bindMessage(_message, _target, _segmented, onUpdate) { update = onUpdate; return { settled: task.promise }; },
+    resyncPages() { syncs++; }, reportLayout() { measures++; } });
+  view.showReply({ id: 'multi-page', role: 'assistant' });
+  assert.equal(children[1].hidden, true);
+  update(); update();
+  assert.equal(syncs, 0); assert.equal(measures, 0);
+  task.resolve(); await task.promise; await new Promise(setImmediate);
+  assert.equal(children[1].hidden, false); assert.equal(view.playing, true); assert.equal(syncs, 1);
+});
+
+function layoutReportHarness() {
+  const frames = new Map(), calls = [], gates = [], styles = new Map();
+  let id = 0;
+  const body = { dataset: { chatLayout: 'reply' }, style: { setProperty() {} } };
+  const { ChatView } = load('chat/view', { '../platform': { platform: 'tauri' },
+    '@tauri-apps/api/core': { invoke: async (_command, payload) => { calls.push(payload); const gate = gates.shift(); if (gate) await gate.promise; } },
+  }, { document: { body }, requestAnimationFrame(fn) { frames.set(++id, fn); return id; },
+    cancelAnimationFrame(id) { frames.delete(id); } });
+  const view = Object.create(ChatView.prototype);
+  Object.assign(view, { layoutFrame: null, layoutRevision: 0, layoutTask: Promise.resolve(), lastLayoutKey: '',
+    composer: { hidden: false, getBoundingClientRect: () => ({ height: 64 }) },
+    panel: { style: { setProperty(k, v) { styles.set(k, v); }, removeProperty(k) { styles.delete(k); } } },
+    measureContentHeight: () => 180, typewriter: null });
+  return { view, body, frames, calls, gates, styles };
+}
+
+test('布局上报合并同帧请求，丢弃旧模式并去重；关闭不再误撑成 setup', async () => {
+  const h = layoutReportHarness();
+  h.view.reportLayout(); h.view.reportLayout(); h.view.reportLayout();
+  assert.equal(h.frames.size, 1);
+  const stale = [...h.frames.values()][0];
+  h.body.dataset.chatLayout = 'composer'; h.view.reportLayout(70);
+  stale(); await h.view.layoutTask;
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls)), [{ mode: 'composer', contentHeight: 70 }]);
+  h.view.reportLayout(70); await h.view.layoutTask;
+  assert.equal(h.calls.length, 1);
+  h.body.dataset.chatLayout = 'reply'; h.view.reportLayout(500);
+  h.body.dataset.chatLayout = 'closed'; h.view.reportLayout();
+  await h.view.layoutTask;
+  assert.equal(h.calls.length, 1);
+});
+
+test('原生布局请求串行且仅保留最新目标，逐字播放不取消整页目标', async () => {
+  const h = layoutReportHarness(), gate = deferred(); h.gates.push(gate);
+  h.view.reportLayout(240); await new Promise(setImmediate);
+  assert.equal(h.calls.length, 1);
+  h.body.dataset.chatLayout = 'setup'; h.view.reportLayout();
+  h.body.dataset.chatLayout = 'composer'; h.view.reportLayout(70);
+  gate.resolve(); await h.view.layoutTask;
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls)), [{ mode: 'reply', contentHeight: 240 }, { mode: 'composer', contentHeight: 70 }]);
+  h.body.dataset.chatLayout = 'reply'; h.view.reportLayout(220);
+  h.view.typewriter = { typing: true }; h.view.reportLayout();
+  await h.view.layoutTask;
+  assert.equal(h.calls.at(-1).contentHeight, 220);
+  assert.equal(h.styles.get('--chat-panel-height'), '150px');
+  h.view.typewriter = null; h.view.reportLayout(9999); await h.view.layoutTask;
+  assert.equal(h.calls.at(-1).contentHeight, 330);
+});
+
+test('忙碌状态提示和停止按钮显隐后重新上报聊天高度', () => {
+  const { ChatView } = load('chat/view');
+  const view = Object.create(ChatView.prototype), elements = new Map(), measured = [];
+  Object.assign(view, { screen: 'connect', lastBusy: false, status: { textContent: '' },
+    controller: { busy: true }, notify() {}, applyControlRequest() {},
+    get(selector) { if (!elements.has(selector)) elements.set(selector, {}); return elements.get(selector); },
+    reportLayout() { measured.push([this.status.textContent, this.get('.stop').hidden]); } });
+  view.changed();
+  view.controller.busy = false;
+  view.changed();
+  assert.deepEqual(measured, [['等待回应…', false], ['', true]]);
+});
+
 function playbackHarness() {
   let expression = null, cancellations = 0, reads = 0;
   const timers = new Map();
@@ -293,3 +392,28 @@ test('挥手图层在各帧率连续淡入淡出；打断放下也不跳变', ()
     assert.ok(fadingIn && fadingOut); assert.equal(samples.at(-1), 0);
   }
 });
+
+for (const platform of ['tauri', 'android', 'web']) {
+  test(`聊天设置入口与会话配置分流且不提交消息（${platform}）`, async () => {
+    const calls = [], elements = new Map();
+    const root = { innerHTML: '', querySelector(selector) {
+      if (!elements.has(selector)) elements.set(selector, { hidden: false, addEventListener() {} });
+      return elements.get(selector);
+    } };
+    const { ChatView } = load('chat/view', {
+      './msk/config': loadMskConfig(),
+      '../platform': { platform, shellAction: action => calls.push(action) },
+      '@tauri-apps/api/core': { invoke: (command, args) => { calls.push([command, args.target]); return Promise.resolve(); } },
+    }, { document: { createElement: () => root, body: { append() {} } }, window: { addEventListener() {} } });
+    ChatView.prototype.bootstrap = async () => {}; // 只隔离网络初始化，使用真实构造器与按钮处理器。
+    const view = new ChatView({}, {}, () => {});
+    const config = view.get('.session-config'), settings = view.get('.app-settings');
+    assert.match(root.innerHTML, /class="session-config"[^>]*>配置<\/button><button type="button" class="app-settings"[^>]*>设置<\/button>/);
+    assert.equal(settings.hidden, platform === 'web');
+    assert.equal(config.hidden, platform === 'web');
+    settings.onclick(); config.onclick();
+    await new Promise(resolve => setImmediate(resolve));
+    if (platform === 'tauri') assert.deepEqual(calls, [['show_settings', 'main'], ['show_settings', 'session-control']]);
+    else assert.deepEqual(calls, platform === 'android' ? ['open-settings', 'open-session-control'] : []);
+  });
+}

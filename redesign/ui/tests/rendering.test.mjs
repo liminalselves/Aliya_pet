@@ -59,6 +59,18 @@ const { scanAgentTokens } = tokens;
 const { composeMessage } = composeMod;
 const { MskMessageRenderer } = rendererMod;
 
+test('分页独立表情与贴纸标记为大图页；记录中的行内表情不放大', () => {
+  const options = { role: 'assistant', stickersEnabled: true,
+    resolveEmoji: () => ({ url: 'https://files.example/smile.png' }),
+    resolveSticker: () => ({ url: 'https://files.example/wave.png', type: 'image/png' }) };
+  for (const token of [':smile:', '[[agent_sticker key=wave]]']) {
+    const paged = composeMessage(token, { ...options, segmented: true }).html;
+    assert.match(paged, /class="msk-segment msk-segment-media"><img/);
+    assert.doesNotMatch(composeMessage(`早安 ${token}，你好`, options).html, /msk-segment-media/);
+  }
+  assert.doesNotMatch(composeMessage('普通文字', { ...options, segmented: true }).html, /msk-segment-media/);
+});
+
 test('正则显示规则：按角色与 hide 效果过滤、按数组顺序串行、非法规则跳过', () => {
   const rules = normalizeRegexRules([
     { id: 'a', pattern: '\\[内心[^\\]]*\\]', targets: ['assistant'], effects: ['hide', 'aiInvisible'] },
