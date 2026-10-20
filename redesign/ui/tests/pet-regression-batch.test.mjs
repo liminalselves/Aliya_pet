@@ -57,3 +57,26 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   await assert.rejects(pet.loadFromSetting(new ArrayBuffer(0), 0, '/', { gl }), error => error === stopAfterBinding);
   assert.equal(bound, true);
 });
+
+test('挥手图层在各帧率连续淡入淡出；打断放下也不跳变', () => {
+  const { HandRaiseChannel } = load('overlay');
+  for (const fps of [15, 30, 60]) for (const interrupt of [false, true]) {
+    const channel = new HandRaiseChannel([], { enabled: 'enabled', forearm: 'forearm', hand: 'hand' });
+    const samples = []; const model = { setParameterValueById: (id, v) => { if (id === 'enabled') samples.push(v); } };
+    channel.trigger();
+    let previous = 0, fadingIn = false, fadingOut = false;
+    for (let i = 0; i < fps * 6; i++) {
+      if (interrupt && i === fps) channel.release();
+      channel.apply(model, 1 / fps);
+      const current = samples.at(-1);
+      assert.ok(current >= 0 && current <= 1);
+      // 打断沿现有 120ms 时间常数回落，比正常放下包络更快，但仍不能跳到端点。
+      assert.ok(Math.abs(current - previous) <= (interrupt ? 8 : 4) / fps + 0.002, `${fps}fps: ${previous} -> ${current}`);
+      if (current > 0.05 && current < 0.95) {
+        if (current > previous) fadingIn = true; else fadingOut = true;
+      }
+      previous = current;
+    }
+    assert.ok(fadingIn && fadingOut); assert.equal(samples.at(-1), 0);
+  }
+});

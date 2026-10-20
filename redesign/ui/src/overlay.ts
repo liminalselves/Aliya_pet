@@ -147,10 +147,10 @@ export class HandRaiseChannel implements OverlayChannel {
     if (this._raise <= 0.001) this._raise = 0;
 
     if (this.nativeWave) {
-      // Param30 同时切换手臂图层，使用端点避免两套手臂交叉透明。
+      // Param30 驱动模型内普通手臂与挥手图层的交叉渐变，保留连续包络。
       // 两段摆动随包络回落；每帧显式复位，防止物理或旧动作残留。
       const active = this._raise > 0;
-      model.setParameterValueById(this.nativeWave.enabled, active ? 1 : 0);
+      model.setParameterValueById(this.nativeWave.enabled, this._raise);
       model.setParameterValueById(
         this.nativeWave.forearm,
         active ? Math.sin(this._phase * 10) * 0.65 * this._raise : 0

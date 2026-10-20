@@ -37,7 +37,7 @@ test('新版挥手在15/30/60fps均产生摆动并完整复位，不写旧手链
   const h=waveHarness();h.channel.trigger();let min=0,max=0;
   for(let i=0;i<fps*6;i++){
    h.step(1/fps);const v=h.values.get('Param31');min=Math.min(min,v);max=Math.max(max,v);
-   assert.ok([0,1].includes(h.values.get('Param30')));
+   assert.ok(h.values.get('Param30')>=0&&h.values.get('Param30')<=1);
    for(const [id,value] of h.values){assert.ok(['Param30','Param31','Param36'].includes(id));assert.ok(Number.isFinite(value)&&Math.abs(value)<=1)}
   }
   assert.ok(min<-.4&&max>.4);assert.equal(h.channel.raising,0);
@@ -50,7 +50,7 @@ test('挥手连续重触发和打断后复位，异常时间步不污染状态',
  for(const dt of [NaN,Infinity,-1]){h.step(dt);for(const value of h.values.values())assert.ok(Number.isFinite(value))}
  h.channel.release();for(let i=0;i<60;i++)h.step(1/30);
  assert.equal(h.channel.raising,0);assert.deepEqual([...h.values.values()],[0,0,0]);
- h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);assert.equal(h.values.get('Param30'),1);
+ h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);assert.ok(h.values.get('Param30')>.99);
 });
 test('当前模型继续抬起旧版五段手链，结束后停止覆盖物理',()=>{
  const h=waveHarness(false);h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);
