@@ -191,6 +191,8 @@ export class PetModel
       this._gl.drawingBufferWidth,
       this._gl.drawingBufferHeight
     );
+    // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
+    this.getRenderer().setIsPremultipliedAlpha(true);
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
     for (let i = 0; i < textureCount; i++) {
