@@ -162,6 +162,44 @@ test('缩放期间切换镜像与顺序操作一致，补偿不混用不同镜�
   }
 });
 
+test('快捷尺寸保留三档循环，两次放大的实际尺寸增量相等', () => {
+  const { nextSizePreset, scaleToPercent } = load('settings');
+  for (const [minS, maxS] of [[0.15, 2], [0.1, 1.05], [0.24, 3.5]]) {
+    const middle = nextSizePreset(minS, minS, maxS);
+    const large = nextSizePreset(middle, minS, maxS);
+    assert.ok(Math.abs((middle - minS) - (large - middle)) < 1e-12);
+    assert.ok(Math.abs(scaleToPercent(middle, minS, maxS) - 55) < 1e-10);
+    assert.equal(large, maxS);
+    assert.equal(nextSizePreset(large, minS, maxS), minS);
+    assert.equal(nextSizePreset(minS + (maxS - minS) * 0.2, minS, maxS), middle);
+    assert.equal(nextSizePreset(minS + (maxS - minS) * 0.8, minS, maxS), large);
+    assert.equal(nextSizePreset(maxS * 2, minS, maxS), minS);
+  }
+  assert.equal(nextSizePreset(0.2, 0.2, 0.2), 0.2);
+});
+
+test('快捷切换按设备范围等步长缩放，连续点击不丢档位且脚底不漂移', async () => {
+  for (const sf of [1, 1.5, 2]) {
+    const h = resizeHarness(sf), foot = h.foot();
+    const { minS } = await h.app._deviceScaleRange();
+    h.change(minS); await h.app._windowSettingsTask;
+    const heights = [h.geometry().size.height];
+    for (let i = 0; i < 2; i++) {
+      await h.app._cycleSize(); await h.app._windowSettingsTask;
+      heights.push(h.geometry().size.height); nearFoot(h.foot(), foot);
+    }
+    assert.ok(Math.abs((heights[1] - heights[0]) - (heights[2] - heights[1])) <= 1);
+    await h.app._cycleSize(); await h.app._windowSettingsTask;
+    assert.equal(h.app.settings.scale, minS);
+    const gate = h.hold('resize');
+    await h.app._cycleSize(); await gate.reached;
+    await Promise.all([h.app._cycleSize(), h.app._cycleSize()]);
+    gate.release(); await h.app._windowSettingsTask;
+    assert.equal(h.app.settings.scale, minS);
+    nearFoot(h.foot(), foot); assert.equal(h.warnings.length, 0);
+  }
+});
+
 test('启动恢复尊重保存位置；失败不伪造位置成功，也不会阻断后续缩放', async () => {
   const h = resizeHarness();
   Object.assign(h.app._settings, { posX: -1800, posY: -200 });

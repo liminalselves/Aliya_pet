@@ -500,7 +500,7 @@ export class PetApp {
     }
   }
 
-  /** 托盘「切换尺寸」：在百分比域循环 10%→50%→100%（档位由设备范围换算，不会越界）。 */
+  /** 托盘「切换尺寸」：在设备范围内按最小→中点→最大等步长循环。 */
   private async _cycleSize(): Promise<void> {
     const { minS, maxS } = await this._deviceScaleRange();
     const next = nextSizePreset(this._settings.scale, minS, maxS);
