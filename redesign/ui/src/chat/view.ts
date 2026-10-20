@@ -134,7 +134,7 @@ export class ChatView {
       else if (platform === 'android') shellAction('open-settings');
     };
     this.get('.app-settings').hidden = platform === 'web';
-    this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; };
+    this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; this.reportLayout(); };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     this.input.addEventListener('compositionstart', () => { this.composing = true; });
     this.input.addEventListener('compositionend', () => { this.composing = false; });
@@ -142,7 +142,7 @@ export class ChatView {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !this.composing && e.keyCode !== 229) { e.preventDefault(); this.send(); }
     };
     this.input.oninput = () => {
-      this.input.style.height = 'auto'; this.input.style.height = `${Math.min(92, this.input.scrollHeight)}px`;
+      this.input.style.height = 'auto'; this.input.style.height = `${Math.min(64, this.input.scrollHeight)}px`;
       this.reportLayout();
     };
     this.input.onfocus = () => this.notify(); this.input.onblur = () => this.notify();
@@ -339,7 +339,7 @@ export class ChatView {
     const send = (height: number) => {
       if (revision !== this.layoutRevision || document.body.dataset.chatLayout !== mode) return;
       const contentHeight = mode === 'setup' ? 0 : mode === 'reply'
-        ? Math.max(118, Math.min(330, Math.ceil(height))) : Math.max(62, Math.min(88, Math.ceil(height)));
+        ? Math.max(118, Math.min(330, Math.ceil(height))) : Math.max(62, Math.min(144, Math.ceil(height)));
       // 与外窗目标同批落定；打字机只揭示内容，不再拉伸/收缩可见卡片。
       if (mode === 'reply') this.panel.style.setProperty('--chat-panel-height', `${Math.max(0, contentHeight - composerHeight - 6)}px`);
       else this.panel.style.removeProperty('--chat-panel-height');

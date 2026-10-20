@@ -71,11 +71,12 @@ function resizeHarness(sf = 1.5, mirror = false) {
   PhysicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } } };
   const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api,
     './platform': { platform: 'tauri' }, './settings': { ...settings, saveSettings: s => saved.push({ ...s }) },
-  }, { document: { body: { classList: { toggle() {} } } },
+  }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {} } },
     console: { warn: (...args) => warnings.push(args) } });
   const app = Object.create(PetApp.prototype);
   Object.assign(app, { _windowSettingsRevision: 0, _windowSettingsTask: Promise.resolve(), _windowResizeRemainder: { x: 0, y: 0 },
     _settings: { scale: 1, mirror }, _baseFpsCap: 30, _hitAreas: {}, _chatView: null,
+    _winPhysX: pos.x, _winPhysY: pos.y, _scaleFactor: sf, _metricsSynced: true,
     _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
       getStaticBounds: () => ({ minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 }) },
     _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _cancelSnapAnimation() {}, setFpsCap() {}, setMirrored() {},
@@ -83,13 +84,14 @@ function resizeHarness(sf = 1.5, mirror = false) {
     _tauriWindow: { setAlwaysOnTop: async () => {},
       outerPosition: async () => { await pause('before-position'); return { ...pos }; },
       innerSize: async () => { await pause(sizeReads++ % 2 === 0 ? 'before-size' : 'after-size'); return { ...size }; },
+      outerSize: async () => ({ ...size }),
       scaleFactor: async () => { await pause('scale-factor'); return sf; },
       setSize: async requested => {
         events.push('size'); sizes.push(requested);
         size = { width: Math.round(requested.width * sf), height: Math.round(requested.height * sf) };
         await pause('resize');
       },
-      setPosition: async target => { events.push('position'); await pause('position'); pos = { ...target }; positions.push(pos); },
+      setPosition: async target => { await pause('position-before-effect'); events.push('position'); pos = { ...target }; positions.push(pos); await pause('position'); },
     },
   });
   return { app, positions, sizes, anchors, saved, warnings, events,
@@ -214,6 +216,65 @@ test('启动恢复尊重保存位置；失败不伪造位置成功，也不会�
   h.app._tauriWindow.setPosition = setPosition;
   h.change(1); await h.app._windowSettingsTask;
   assert.equal(h.anchors.length, 2);
+});
+
+test('聊天 IPC 只上报局部归一化矩形；发送期间移动与 DPI 不会混入旧原点', async () => {
+  const calls = [];
+  const { PetApp } = load('pet-app', { './platform': { platform: 'tauri' },
+    '@tauri-apps/api/core': { invoke: async (_command, payload) => calls.push(payload) },
+  }, { window: { innerWidth: 400, innerHeight: 600 } });
+  const app = Object.create(PetApp.prototype);
+  Object.assign(app, { _metricsSynced: true, _winPhysX: -1200, _winPhysY: 300, _scaleFactor: 1.5,
+    _canvas: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 600 }) },
+    _model: { isReady: () => false } });
+  app._syncChatAnchor();
+  app._winPhysX = -2300; app._winPhysY = -500; app._scaleFactor = 2;
+  app._syncChatAnchor(); await new Promise(setImmediate);
+  assert.deepEqual(calls.map(p => [p.x,p.y,p.w,p.h]), [[0,0,1,1],[0,0,1,1]]);
+  assert.ok(Number.isSafeInteger(calls[0].revision)); assert.ok(calls[1].revision > calls[0].revision);
+});
+
+test('尺寸副作用已发生时重置仍在补偿之后执行，最终位置意图不会被旧缩放覆盖', async () => {
+  for (const stage of ['resize', 'after-size', 'scale-factor', 'position-before-effect', 'position']) {
+    const h = resizeHarness(), gate = h.hold(stage);
+    h.change(0.3); await gate.reached;
+    h.app.resetPosition();
+    await new Promise(setImmediate); gate.release(); await h.app._windowSettingsTask; await new Promise(setImmediate);
+    const { pos, size } = h.geometry();
+    assert.deepEqual(pos, { x: -3000 + Math.round((3000-size.width)/2), y: Math.round((2400-size.height)/2) }, stage);
+    assert.equal(h.saved.at(-1).posX, pos.x); assert.equal(h.saved.at(-1).posY, pos.y);
+    assert.equal(h.warnings.length, 0);
+  }
+});
+
+test('拖动与缩放共用几何队列，补偿会重定位待提交的拖动目标且不保存中间位置', async () => {
+  for (const sf of [1, 1.5, 2]) for (const stage of ['resize', 'after-size', 'scale-factor', 'position']) {
+    const h = resizeHarness(sf), before = h.foot(), gate = h.hold(stage);
+    h.app._dragging = true; h.change(0.3); await gate.reached;
+    const saved = h.saved.length;
+    h.app._moveWindowBy(25, -10); h.app._moveWindowBy(5, 4);
+    gate.release(); await h.app._windowSettingsTask; await new Promise(setImmediate);
+    nearFoot(h.foot(), { x: before.x + 30*sf, y: before.y - 6*sf });
+    assert.equal(h.saved.length, saved, '拖动完成前不持久化缩放中间位置');
+    h.app._dragging = false; h.app._persistDesktopPos();
+    assert.equal(h.saved.at(-1).posX, h.geometry().pos.x);
+    assert.equal(h.warnings.length, 0);
+  }
+});
+
+test('原生尺寸修改后即使 Promise 拒绝也完成补偿；位置失败的补偿债务先于后续缩放恢复', async () => {
+  const h = resizeHarness(), before = h.foot(), originalSize = h.app._tauriWindow.setSize;
+  h.app._tauriWindow.setSize = async s => { await originalSize(s); throw new Error('resize IPC failed after effect'); };
+  h.change(0.4); await h.app._windowSettingsTask;
+  nearFoot(h.foot(), before); assert.equal(h.warnings.length, 1);
+  h.app._tauriWindow.setSize = originalSize;
+  const originalPos = h.app._tauriWindow.setPosition;
+  h.app._tauriWindow.setPosition = async () => { throw new Error('position failed before effect'); };
+  h.change(0.7); await h.app._windowSettingsTask;
+  assert.equal(h.warnings.length, 2);
+  h.app._tauriWindow.setPosition = originalPos;
+  h.change(1.2); await h.app._windowSettingsTask;
+  nearFoot(h.foot(), before); assert.equal(h.warnings.length, 2);
 });
 
 test('聊天只测自然页高，不累计旧窗口高度或滚动填充；测量后恢复约束', () => {
@@ -417,3 +478,41 @@ for (const platform of ['tauri', 'android', 'web']) {
     else assert.deepEqual(calls, platform === 'android' ? ['open-settings', 'open-session-control'] : []);
   });
 }
+
+test('真实拖动收尾不持久化尺寸已生效但补偿失败的位置', async () => {
+  for (const sf of [1, 1.5, 2]) {
+    const h = resizeHarness(sf), before = h.foot();
+    h.app._settings.snapEdges = false; h.app._snapAnimToken = 0; h.app._dragging = true;
+    const setPosition = h.app._tauriWindow.setPosition;
+    h.app._tauriWindow.setPosition = async () => { throw new Error('position failed before effect'); };
+    h.change(0.3); await h.app._windowSettingsTask;
+    assert.ok(h.app._windowResizeRecovery, '失败后必须保留补偿债务');
+    const saved = h.saved.length;
+    h.app._onDragFinished(); h.app._dragging = false;
+    await new Promise(setImmediate);
+    assert.equal(h.saved.length, saved, '真实收尾不得保存尚未补偿的原点');
+    h.app._tauriWindow.setPosition = setPosition;
+    h.change(1); await h.app._windowSettingsTask;
+    nearFoot(h.foot(), before);
+    assert.equal(h.saved.at(-1).posX, h.geometry().pos.x);
+    assert.equal(h.saved.at(-1).posY, h.geometry().pos.y);
+  }
+});
+
+test('重置位置已生效但 IPC 拒绝后，下一次真实拖动不跳回旧原点', async () => {
+  for (const sf of [1, 1.5, 2]) for (const mirror of [false, true]) {
+    const h = resizeHarness(sf, mirror), win = h.app._tauriWindow, setPosition = win.setPosition;
+    h.app._settings.snapEdges = false; h.app._snapAnimToken = 0;
+    win.setPosition = async target => { await setPosition(target); throw new Error('position IPC failed after effect'); };
+    h.app.resetPosition(); await h.app._windowSettingsTask;
+    const reset = { ...h.geometry().pos };
+    win.setPosition = setPosition; h.app._dragging = true;
+    h.app._moveWindowBy(10, -4); await h.app._windowSettingsTask;
+    h.app._onDragFinished(); h.app._dragging = false;
+    await new Promise(setImmediate);
+    const expected = { x: reset.x + 10 * sf, y: reset.y - 4 * sf };
+    assert.deepEqual(h.geometry().pos, expected, `${sf}x mirror=${mirror}`);
+    assert.equal(h.saved.at(-1).posX, expected.x);
+    assert.equal(h.saved.at(-1).posY, expected.y);
+  }
+});

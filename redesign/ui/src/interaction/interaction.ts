@@ -27,6 +27,7 @@ export class InteractionService {
   readonly proximity = new PointerProximityService();
   readonly dragReaction = new DragReactionService();
   readonly procedural: ProceduralReactionService;
+  private _earClickUntilMs = 0;
 
   /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
   playClickDialogue: ((tag: string) => void) | null = null;
@@ -44,6 +45,7 @@ export class InteractionService {
     this.procedural.cancelAll();
     this.dragReaction.cancel();
     this.clickSequence.reset();
+    this._earClickUntilMs = 0;
   }
 
 
@@ -126,11 +128,14 @@ export class InteractionService {
 
     this.dragReaction.cancel();
     const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
-    // 耳朵是独立的单侧反馈，不升级成连点的双眼疑惑反应。
+    // 耳朵不计入普通疑惑连点，但保留其历史与全局冷却。
     if (area === 'ear_left' || area === 'ear_right') {
-      this.clickSequence.reset();
+      const now = performance.now();
+      if (this.clickSequence.isInCooldown || now < this._earClickUntilMs) return true;
+      // 左右耳共用一次反馈时窗，避免连点反复启动 120+60+240ms 的单眼动作。
+      this._earClickUntilMs = now + 420;
       this.procedural.apply(ProceduralReactions.earBlink(0.8, area));
-      this.playClickDialogue?.(area);
+      if (this.isDialogueActive?.() !== true) this.playClickDialogue?.(area);
       return true;
     }
     const result = this.clickSequence.registerClick();
@@ -170,6 +175,7 @@ export class InteractionService {
     this.petting.resetConfiguration();
     this.dragReaction.cancel();
     this.clickSequence.reset();
+    this._earClickUntilMs = 0;
     this.procedural.cancelAll(true);
   }
 
@@ -178,6 +184,7 @@ export class InteractionService {
     this.petting.exitPettingMode('windowClosing');
     this.procedural.cancelAll(true);
     this.clickSequence.reset();
+    this._earClickUntilMs = 0;
     this.proximity.reset();
     this.dragReaction.cancel();
   }

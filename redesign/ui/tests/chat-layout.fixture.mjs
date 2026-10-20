@@ -22,7 +22,7 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
     if (command !== 'set_chat_layout') return;
     events.push({...payload, phase});
     await frames(2); // WebView/native IPC does not resize synchronously.
-    const cap = payload.mode === 'reply' ? [118,330] : payload.mode === 'composer' ? [62,88] : [300,330];
+    const cap = payload.mode === 'reply' ? [118,330] : payload.mode === 'composer' ? [62,144] : [300,330];
     nativeHeight = Math.max(cap[0], Math.min(cap[1], payload.contentHeight || cap[0]));
     root.style.height = nativeHeight + 'px';
     window.dispatchEvent(new Event('resize'));
@@ -47,6 +47,24 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
   };
   requestAnimationFrame(sample);
   await frames(6);
+  const assertComposer = label => {
+    const host = root.getBoundingClientRect(), input = view.input.getBoundingClientRect(), composer = view.composer.getBoundingClientRect();
+    for (const el of [view.input, view.get('.send'), view.status, view.get('.stop')]) {
+      if (el.hidden || !el.getBoundingClientRect().height) continue;
+      const r=el.getBoundingClientRect();
+      if(r.top<host.top-1 || r.bottom>host.bottom+1) errors.push(label+' 控件被原生窗裁切: '+el.className);
+    }
+    if(composer.top<host.top-1 || input.height>64.5) errors.push(label+' 输入自然高度未容纳: '+composer.height+' / '+nativeHeight);
+  };
+  phase='composer-normal';assertComposer(phase);
+  phase='composer-long';view.input.value=Array.from({length:20},()=> '多行输入文字不会被窗口顶边裁掉。').join('\\n');view.input.oninput();await frames(8);assertComposer(phase);
+  controller.busy=true;view.showPending();view.changed();view.hideReply();
+  for(let i=0;!view.panel.hidden && i<120;i++)await frames(1);
+  phase='composer-wait';await frames(8);assertComposer(phase);
+  controller.busy=false;controller.error='真实错误消息';view.changed();view.hideReply();
+  for(let i=0;!view.panel.hidden && i<120;i++)await frames(1);
+  phase='composer-error';await frames(8);assertComposer(phase);
+  controller.error=null;view.input.value='';view.input.oninput();view.changed();await frames(8);assertComposer('composer-restored');
   phase = 'pending'; controller.busy = true; view.showPending(); view.changed();
   await frames(8);
   let settle, renderInput;

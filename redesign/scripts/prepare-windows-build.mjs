@@ -1,7 +1,53 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { lstatSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const cacheSignature = 'Signature: 8a477f597d28d172789f06886806bc55';
+const contains = (parent, child) => {
+  const path = relative(parent, child);
+  return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
+};
+const refuse = (target) => {
+  throw new Error(`不是独立的 Cargo 构建目录或路径含链接，拒绝修改完整性标签，已停止构建：${target}`);
+};
+
+function checkBuildDirectory(target, sources) {
+  if (sources.some((source) => contains(target, source))) refuse(target);
+  const home = homedir();
+  if (['', 'Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos', 'AppData']
+    .some((name) => relative(join(home, name), target) === '')) refuse(target);
+  // Check from the volume root down: lstat(target) alone follows junction ancestors.
+  let current = parse(target).root;
+  for (const part of ['', ...relative(current, target).split(sep).filter(Boolean)]) {
+    current = join(current, part);
+    const item = lstatSync(current, { throwIfNoEntry: false });
+    if (!item) return; // The remaining path will be created only after this check.
+    if (!item.isDirectory() || item.isSymbolicLink()) refuse(target);
+  }
+
+  const entries = readdirSync(target, { withFileTypes: true });
+  if (!entries.length) return; // Empty custom CARGO_TARGET_DIR is a valid first build.
+  const tag = join(target, 'CACHEDIR.TAG');
+  if (!lstatSync(tag, { throwIfNoEntry: false })?.isFile()
+    || !readFileSync(tag, 'utf8').startsWith(cacheSignature)) refuse(target);
+  const profile = (directory) => {
+    const lock = lstatSync(join(directory, '.cargo-lock'), { throwIfNoEntry: false });
+    return lock?.isFile() && !lock.isSymbolicLink();
+  };
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue; // The helper also skips these, without reading targets.
+    if (entry.isFile() && ['CACHEDIR.TAG', '.rustc_info.json'].includes(entry.name)) continue;
+    if (!entry.isDirectory()) refuse(target);
+    const directory = join(target, entry.name);
+    if (['debug', 'release', 'doc', 'tmp', 'package'].includes(entry.name) || profile(directory)) continue;
+    // Cargo --target triples contain profile directories; custom profiles have .cargo-lock.
+    const children = readdirSync(directory, { withFileTypes: true });
+    if (!children.length || !children.every((child) => child.isDirectory()
+      && !child.isSymbolicLink() && profile(join(directory, child.name)))) refuse(target);
+  }
+}
 
 // Only build outputs are relabeled; source/workspace and ancestor ACLs stay intact.
 export function prepareWindowsBuild({
@@ -18,16 +64,24 @@ export function prepareWindowsBuild({
   if (metadata.error || metadata.status !== 0) {
     throw new Error(`无法查询 Cargo 构建目录：${metadata.error?.message || metadata.stderr || metadata.stdout || metadata.status}`);
   }
-  const { target_directory: targetDirectory, workspace_root: workspaceRoot } = JSON.parse(metadata.stdout);
+  const { target_directory: targetDirectory, workspace_root: workspaceRoot, packages = [] } = JSON.parse(metadata.stdout);
   if (typeof targetDirectory !== 'string' || !isAbsolute(targetDirectory)
     || typeof workspaceRoot !== 'string' || !isAbsolute(workspaceRoot)) {
     throw new Error('Cargo 未返回有效的绝对构建目录。');
   }
   const target = resolve(targetDirectory);
-  const source = relative(target, resolve(workspaceRoot));
-  if (!isAbsolute(source) && source !== '..' && !source.startsWith(`..${sep}`)) {
-    throw new Error(`构建目录不能是源码目录或其祖先目录，拒绝修改完整性标签：${target}`);
+  const sources = [resolve(workspaceRoot), resolve(cwd)];
+  for (const pkg of packages) {
+    const packageRoot = dirname(resolve(pkg.manifest_path));
+    sources.push(packageRoot);
+    for (const entry of pkg.targets || []) {
+      if (typeof entry.src_path !== 'string') continue;
+      const source = dirname(resolve(entry.src_path));
+      if (relative(packageRoot, source) !== '' && contains(source, target)) refuse(target);
+      sources.push(source);
+    }
   }
+  checkBuildDirectory(target, sources);
 
   mkdir(target, { recursive: true });
   // Block Low only at the root; child executables must retain normal launch integrity.

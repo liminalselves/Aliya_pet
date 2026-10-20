@@ -268,16 +268,18 @@ function interactionHarness() {
   setFaceCheek: (...v) => writes.cheek=v,
  };
  let speaking=false;
- const lines=[];
+ const lines=[],actions=[],reactions=[];
  const service = new InteractionService({
   hitAreas:{isInHeadPetZone:()=>true,hitAreaAt:()=> 'face'},getTarget:()=>target,
   dialogue:{resolveSceneTag:(_scene,tag)=>({entryId:tag,pages:[{text:tag}]})},
   pettingHost:{isDialogueActive:()=>speaking,playPettingDialogue:r=>lines.push(r.entryId)},
-  playCharacterAction:()=>true,
+  playCharacterAction:action=>{actions.push(action);return true},
  });
+ const apply=service.procedural.apply.bind(service.procedural);
+ service.procedural.apply=reaction=>{reactions.push({...reaction});apply(reaction)};
  service.playClickDialogue=tag=>lines.push(tag);
  const ctx=(x=400,secondary=true,dt=1/60)=>({normX:.5,normY:.2,pxX:x,pxY:200,dtSeconds:dt,leftPressed:!secondary,isSecondary:secondary});
- return {service,writes,lines,ctx,globals,recognizer,procedural,
+ return {service,writes,lines,actions,reactions,ctx,globals,recognizer,procedural,
   speaking(v){speaking=v},advance(ms){now+=ms;service.tick(ms)},setTime(ms){now=ms},
   stroke(){for(let i=1;i<=90;i++){now+=1000/60;const t=i/60;const x=400+40*Math.sin(t*Math.PI*2);service.onPointerMove(ctx(x));service.tick(1000/60)}}};
 }
@@ -292,6 +294,75 @@ test('耳朵连点仅同侧眨眼并偏头，不写耳动、不升级双眼疑�
   assert.equal(minEye,0);assert.ok(maxTilt>0);assert.ok(h.lines.every(tag=>tag===area));assert.equal(h.writes.eyes[0],false);
  }
  const h=interactionHarness();h.service.onClick(h.ctx(400,false),false);h.advance(16);assert.equal(h.writes.eyes[0],false);
+});
+
+test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也不能重置历史',()=>{
+ const h=interactionHarness(),s=h.service;
+ const normal=['face','face','click_doubt','click_doubt','click_comment','click_comment','click_comment'];
+ for(let i=0;i<8;i++){
+  h.setTime(i*500);s.hitAreas.hitAreaAt=()=> 'face';
+  const before=h.lines.length;assert.equal(s.onClick(h.ctx(400,false),false),true);
+  if(i<7){assert.equal(h.lines.length,before+1);assert.equal(h.lines.at(-1),normal[i])}
+  else {assert.equal(h.lines.length,before);assert.equal(s.clickSequence.isInCooldown,true)}
+  h.setTime(i*500+100);const area=i%2?'ear_right':'ear_left';s.hitAreas.hitAreaAt=()=>area;
+  const earBefore=h.lines.length;s.onClick(h.ctx(400,false),false);
+  if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),area);assert.equal(h.reactions.at(-1).type,'earBlink')}
+  else assert.equal(h.lines.length,earBefore,'第八次普通点击后的耳朵也必须服从全局冷却');
+ }
+ assert.deepEqual(h.actions,Array(5).fill('doubt'));
+});
+
+test('左右耳高频点击不重复台词或动作启动，节流结束仍保留另一侧单眼反馈',()=>{
+ const h=interactionHarness(),s=h.service;s.hitAreas.hitAreaAt=()=> 'ear_left';
+ s.onClick(h.ctx(400,false),false);
+ for(let i=1;i<=25;i++){
+  h.advance(16);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';
+  assert.equal(s.onClick(h.ctx(400,false),false),true);
+  assert.equal(h.writes.eyes[3],'right','被节流的另一侧不能切换眼睛');
+ }
+ assert.deepEqual(h.lines,['ear_left']);
+ assert.deepEqual(h.reactions,[{type:'earBlink',strength:.8,areaId:'ear_left'}]);
+ assert.deepEqual(h.actions,[]);
+ for(let i=0;i<7;i++)h.advance(16);
+ s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);h.advance(16);
+ assert.deepEqual(h.lines,['ear_left','ear_right']);assert.equal(h.reactions.length,2);
+ assert.equal(h.writes.eyes[3],'left');assert.equal(s.clickSequence.isInCooldown,false);
+});
+
+test('全局冷却期间左右耳与普通点击均静默，不解除或延长冷却，到期后重新计数',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<8;i++){h.setTime(i*100);s.onClick(h.ctx(400,false),false)}
+ assert.equal(s.clickSequence.isInCooldown,true);
+ const lines=[...h.lines],starts=h.reactions.length,actions=[...h.actions];
+ for(const time of [800,950,2000,3699])for(const area of ['ear_left','ear_right','face']){
+  h.setTime(time);s.hitAreas.hitAreaAt=()=>area;
+  assert.equal(s.onClick(h.ctx(400,false),false),true);
+  assert.equal(s.clickSequence.isInCooldown,true,`${area}不能提前解除冷却`);
+  assert.deepEqual(h.lines,lines);assert.equal(h.reactions.length,starts);assert.deepEqual(h.actions,actions);
+ }
+ h.setTime(3700);s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);
+ assert.equal(s.clickSequence.isInCooldown,false);assert.equal(h.lines.at(-1),'ear_right');
+ assert.equal(h.reactions.at(-1).type,'earBlink');assert.equal(h.reactions.length,starts+1);
+ for(let i=0;i<3;i++){
+  h.setTime(3700+i*100);s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);
+  assert.equal(h.lines.at(-1),i===2?'click_doubt':'face','冷却内点击和耳朵均不能计入新一轮普通计数');
+ }
+});
+
+test('连续耳朵反馈不累积普通疑惑，已有台词不重启，生命周期清理释放耳朵节流',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<10;i++){h.setTime(i*500);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';s.onClick(h.ctx(400,false),false)}
+ assert.equal(h.reactions.length,10);assert.deepEqual(h.actions,[]);
+ s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);assert.equal(h.lines.at(-1),'face');
+ h.setTime(5000);s.hitAreas.hitAreaAt=()=> 'ear_left';s.isDialogueActive=()=>true;
+ const before=h.lines.length;s.onClick(h.ctx(400,false),false);
+ assert.equal(h.lines.length,before,'已有台词播放时不能重新请求耳朵台词');
+ s.isDialogueActive=()=>false;
+ for(const reset of ['cancel','onModelReloaded','onWindowClosed']){
+  const starts=h.reactions.length;s[reset]();s.onClick(h.ctx(400,false),false);
+  assert.equal(h.reactions.length,starts+1,`${reset}之后首次耳朵点击不能被旧节流阻挡`);
+  assert.equal(h.lines.at(-1),'ear_left');
+ }
 });
 
 test('抚摸必须往返：首次坐标无虚假速度，高频/低速采样与普通鼠标均可识别',()=>{
