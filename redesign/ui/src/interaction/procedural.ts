@@ -4,7 +4,7 @@
  *   - DragReactionService：快速拖动（≥250px/s）检测
  *   - PointerProximityService：指针位置/速度平滑滤波
  *   - ProceduralReactionService：点击 head（闭眼+头倾）、face（脸红）、
- *     耳朵（小幅耳动）、快速拖动（睁大）、连续点击（疑惑）的相位动画
+ *     耳朵（同侧眨眼与轻微偏头）、快速拖动（睁大）、连续点击（疑惑）的相位动画
  */
 
 import { InteractionTarget } from './target';
@@ -161,7 +161,7 @@ export class PointerProximityService {
 export type ProceduralReactionType =
   | 'headTiltAndEyes'
   | 'lookAtThenAway'
-  | 'earTwitch'
+  | 'earBlink'
   | 'eyesWiden'
   | 'doubt'
   | 'blush';
@@ -177,8 +177,8 @@ export const ProceduralReactions = {
     type: 'headTiltAndEyes',
     strength,
   }),
-  earTwitch: (strength: number, areaId: string): ProceduralReaction => ({
-    type: 'earTwitch',
+  earBlink: (strength: number, areaId: string): ProceduralReaction => ({
+    type: 'earBlink',
     strength,
     areaId,
   }),
@@ -253,6 +253,7 @@ export class ProceduralReactionService {
   private _earR = 0;
   private _cheek = 0;
   private _eyeOverrideActive = false;
+  private _eyeSide: 'both' | 'left' | 'right' = 'both';
 
   constructor(deps: {
     getTarget: () => InteractionTarget | null;
@@ -272,6 +273,10 @@ export class ProceduralReactionService {
     if (this._isPettingActive()) return;
     if (this._getTarget() == null) return;
 
+    // area 是未镜像画面侧，参数 L/R 是角色解剖侧（实模顶点验证为左右相反）。
+    // 镜像已由 HitAreas 还原，这里只映射一次；脸红和单纯转头不抢占眼睑。
+    this._eyeSide = reaction.areaId === 'ear_left' ? 'right'
+      : reaction.areaId === 'ear_right' ? 'left' : 'both';
     switch (reaction.type) {
       case 'headTiltAndEyes':
         this._start([
@@ -287,11 +292,12 @@ export class ProceduralReactionService {
           phase(300, 1.0, 0, -1.2, 0, 0, 0),
         ]);
         break;
-      case 'earTwitch': {
+      case 'earBlink': {
         const left = reaction.areaId === 'ear_left';
         this._start([
-          phase(120, 1.0, 0, 0, left ? -1.5 : 1.5, left ? 0.8 : 0, left ? 0 : 0.8),
-          phase(200, 1.0, 0, 0, 0, 0, 0),
+          phase(120, 0, 0, 0, left ? -1.5 : 1.5, 0, 0),
+          phase(60, 0, 0, 0, left ? -1.5 : 1.5, 0, 0),
+          phase(240, 1, 0, 0, 0, 0, 0),
         ]);
         break;
       }
@@ -318,9 +324,16 @@ export class ProceduralReactionService {
         ]);
         break;
     }
+    this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'lookAtThenAway';
   }
 
-  cancelAll(): void {
+  cancelAll(immediate = false): void {
+    if (!immediate && this.isPlaying) {
+      const eyes = this._eyeOverrideActive;
+      this._start([phase(180, 1, 0, 0, 0, 0, 0)]);
+      this._eyeOverrideActive = eyes;
+      return;
+    }
     this._phases.length = 0;
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
@@ -366,10 +379,11 @@ export class ProceduralReactionService {
       this._phases.length = 0;
     } else {
       const p = this._phases[this._phaseIndex];
-      const k = Math.min(
+      const progress = Math.min(
         Math.max(t / Math.max(p.durationMs / 1000, 0.001), 0),
         1
       );
+      const k = progress * progress * (3 - 2 * progress);
       this._eyeOpen = this._prev.eyeOpen + (p.eyeOpen - this._prev.eyeOpen) * k;
       this._headX = this._prev.headX + (p.headX - this._prev.headX) * k;
       this._headY = this._prev.headY + (p.headY - this._prev.headY) * k;
@@ -388,7 +402,7 @@ export class ProceduralReactionService {
     try {
       target.setInteractionOffsets(this._headX, this._headY, this._headZ, 0);
       if (this._eyeOverrideActive) {
-        target.setEyeOverride(true, this._eyeOpen, this._eyeOpen);
+        target.setEyeOverride(true, this._eyeOpen, this._eyeOpen, this._eyeSide);
       } else {
         target.setEyeOverride(false, 0, 0);
       }

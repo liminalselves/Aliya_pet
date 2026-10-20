@@ -93,7 +93,7 @@ export class InteractionService {
       this.petting.exitPettingMode('modeChanged');
     }
     if (this.petting.onPointerDown(ctx)) {
-      this.procedural.cancelAll();
+      this.procedural.cancelAll(true);
       this.dragReaction.cancel();
       return true;
     }
@@ -125,6 +125,14 @@ export class InteractionService {
     }
 
     this.dragReaction.cancel();
+    const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
+    // 耳朵是独立的单侧反馈，不升级成连点的双眼疑惑反应。
+    if (area === 'ear_left' || area === 'ear_right') {
+      this.clickSequence.reset();
+      this.procedural.apply(ProceduralReactions.earBlink(0.8, area));
+      this.playClickDialogue?.(area);
+      return true;
+    }
     const result = this.clickSequence.registerClick();
     if (result === ClickResult.cooldown) {
       return true; // 点击冷却中，抑制点击台词
@@ -136,7 +144,6 @@ export class InteractionService {
       return true;
     }
 
-    const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
     switch (area) {
       case 'head':
       case 'head_pet_zone':
@@ -146,10 +153,6 @@ export class InteractionService {
       case 'face':
         // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
         this.procedural.apply(ProceduralReactions.blush(1.0));
-        break;
-      case 'ear_left':
-      case 'ear_right':
-        this.procedural.apply(ProceduralReactions.earTwitch(0.8, area));
         break;
     }
 
@@ -167,13 +170,13 @@ export class InteractionService {
     this.petting.resetConfiguration();
     this.dragReaction.cancel();
     this.clickSequence.reset();
-    this.procedural.cancelAll();
+    this.procedural.cancelAll(true);
   }
 
   /** 关闭窗口时调用：完整清理，不残留参数覆盖。 */
   onWindowClosed(): void {
     this.petting.exitPettingMode('windowClosing');
-    this.procedural.cancelAll();
+    this.procedural.cancelAll(true);
     this.clickSequence.reset();
     this.proximity.reset();
     this.dragReaction.cancel();
@@ -183,7 +186,7 @@ export class InteractionService {
   tick(dtMs: number): void {
     // 一个时刻只有一个服务写互动覆盖通道。
     if (this.petting.isPettingSessionActive) {
-      if (this.procedural.isPlaying) this.procedural.cancelAll();
+      if (this.procedural.isPlaying) this.procedural.cancelAll(true);
       this.petting.tick(dtMs);
     } else {
       this.procedural.tick();

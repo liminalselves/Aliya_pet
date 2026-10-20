@@ -32,31 +32,79 @@ export class InteractionOffsetChannel implements OverlayChannel {
       bodyAngleX: CubismIdHandle;
     }
   ) {}
-  apply(model: CubismModel): void {
-    if (this.angleX !== 0)
-      model.addParameterValueById(this.ids.angleX, this.angleX);
-    if (this.angleY !== 0)
-      model.addParameterValueById(this.ids.angleY, this.angleY);
-    if (this.angleZ !== 0)
-      model.addParameterValueById(this.ids.angleZ, this.angleZ);
-    if (this.bodyX !== 0)
-      model.addParameterValueById(this.ids.bodyAngleX, this.bodyX);
+  private readonly _values = [0, 0, 0, 0];
+  apply(model: CubismModel, dt = 1 / 60): void {
+    const k = 1 - Math.exp(-Math.max(0, Number.isFinite(dt) ? dt : 0) / 0.06);
+    // 从点击交给抚摸、失焦回中时也从当前偏移继续，不清零跳帧。
+    this._values[0] += (this.angleX - this._values[0]) * k;
+    this._values[1] += (this.angleY - this._values[1]) * k;
+    this._values[2] += (this.angleZ - this._values[2]) * k;
+    this._values[3] += (this.bodyX - this._values[3]) * k;
+    for (let i = 0; i < 4; i++) if (Math.abs(this._values[i]) < 0.0001) this._values[i] = 0;
+    if (this._values[0] !== 0) model.addParameterValueById(this.ids.angleX, this._values[0]);
+    if (this._values[1] !== 0) model.addParameterValueById(this.ids.angleY, this._values[1]);
+    if (this._values[2] !== 0) model.addParameterValueById(this.ids.angleZ, this._values[2]);
+    if (this._values[3] !== 0) model.addParameterValueById(this.ids.bodyAngleX, this._values[3]);
   }
 }
 
-/** 眼睛覆盖（互动绝对值；覆盖期间眨眼已被调度器跳过）。 */
+interface EyeHandoff {
+  active: boolean;
+  elapsed: number;
+  from: number;
+  value: number | null;
+}
+
+/** 每只眼睛独立接管及释放，未接管侧完全不写入。 */
 export class EyeOverrideChannel implements OverlayChannel {
   readonly name = 'eye-override';
-  enabled = false;
+  private _enabled = false;
+  get enabled(): boolean { return this._enabled; }
+  set enabled(value: boolean) {
+    if (this._enabled && !value) {
+      // 同一帧先取消旧控制器、再由新控制器接管，也必须重新交接。
+      for (const state of [this._left, this._right]) {
+        if (!state.active) continue;
+        state.from = state.value ?? 1;
+        state.active = false;
+        state.elapsed = 0;
+      }
+    }
+    this._enabled = value;
+  }
+  side: 'both' | 'left' | 'right' = 'both';
   left = 1;
   right = 1;
+  private readonly _left: EyeHandoff = { active: false, elapsed: 1, from: 1, value: null };
+  private readonly _right: EyeHandoff = { active: false, elapsed: 1, from: 1, value: null };
   constructor(
     private readonly ids: { left: CubismIdHandle; right: CubismIdHandle }
   ) {}
-  apply(model: CubismModel): void {
-    if (!this.enabled) return;
-    model.setParameterValueById(this.ids.left, this.left);
-    model.setParameterValueById(this.ids.right, this.right);
+  apply(model: CubismModel, dt = 1 / 60): void {
+    dt = Math.max(0, Number.isFinite(dt) ? dt : 0);
+    this._applyEye(model, this.ids.left, this._left,
+      this.enabled && this.side !== 'right', this.left, dt);
+    this._applyEye(model, this.ids.right, this._right,
+      this.enabled && this.side !== 'left', this.right, dt);
+  }
+  private _applyEye(model: CubismModel, id: CubismIdHandle, state: EyeHandoff,
+    active: boolean, target: number, dt: number): void {
+    const base = model.getParameterValueById(id);
+    if (active !== state.active) {
+      state.from = state.value ?? base;
+      state.elapsed = 0;
+      state.active = active;
+    }
+    if (active || state.elapsed < 0.18) {
+      const duration = active ? 0.1 : 0.18;
+      state.elapsed = Math.min(state.elapsed + dt, duration);
+      const t = Math.min(state.elapsed / duration, 1);
+      const k = t * t * (3 - 2 * t);
+      state.value = state.from + ((active ? target : base) - state.from) * k;
+      model.setParameterValueById(id, state.value);
+    } else {
+      state.value = base;
+    }
   }
 }
 

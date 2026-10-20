@@ -18,8 +18,8 @@
 //!   工作区——窗口越界规范只对 pet 生效，chat 是 pet 的影子）。
 //!
 //! 锚点来源：
-//! - 前端 `sync_chat_anchor(x,y,w,h)` 显式上报 pet 窗口外接矩形（物理像素，
-//!   与 update_hit_mask 携带的 win_* 同源同单位）；
+//! - 前端 `sync_chat_anchor(x,y,w,h)` 显式上报模型可见矩形（屏幕物理像素）；
+//!   Rust 转为相对 pet 外窗原点的局部矩形保存，移动时只改变原点；
 //! - 未上报时回退为原生查询 pet 窗口 outer_position/outer_size；
 //! - pet 窗口 Moved/Resized 事件（on_window_event 挂接）同步锚点并让已打开的 chat 跟随。
 
@@ -27,7 +27,7 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
 
-/// pet 窗口外接矩形（物理像素），由前端显式上报。
+/// 模型可见矩形（屏幕物理像素），由前端显式上报。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PetAnchor {
     pub x: i32,
@@ -36,8 +36,22 @@ pub struct PetAnchor {
     pub h: i32,
 }
 
-/// pet 锚点；None 表示前端尚未上报。
-pub type ChatAnchorState = Arc<Mutex<Option<PetAnchor>>>;
+/// 保存局部矩形，避免 pet 移动时用外窗原点覆盖模型可见区域的偏移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalPetAnchor(PetAnchor);
+
+impl LocalPetAnchor {
+    fn from_screen(rect: PetAnchor, origin: PhysicalPosition<i32>) -> Self {
+        Self(PetAnchor { x: rect.x - origin.x, y: rect.y - origin.y, ..rect })
+    }
+
+    fn at_origin(self, origin: PhysicalPosition<i32>) -> PetAnchor {
+        PetAnchor { x: origin.x + self.0.x, y: origin.y + self.0.y, ..self.0 }
+    }
+}
+
+/// pet 局部锚点；None 表示前端尚未上报。
+pub type ChatAnchorState = Arc<Mutex<Option<LocalPetAnchor>>>;
 
 /// chat 运行态（busy/typing 由 chat 页面经 set_chat_state 汇报）。
 #[derive(Debug, Default)]
@@ -48,6 +62,34 @@ pub struct ChatRuntime {
     pub open_before_pet_hide: bool,
     /// 前端布局态：setup/reply/composer，决定从属窗口实际高度。
     pub layout: ChatLayout,
+    /// CSS px；按布局分别保留，移动、隐藏恢复和无测量通知不能重置高度。
+    reply_content_height: Option<u32>,
+    composer_content_height: Option<u32>,
+}
+
+impl ChatRuntime {
+    fn set_layout(&mut self, layout: ChatLayout, content_height: Option<u32>) {
+        self.layout = layout;
+        if let Some(height) = content_height.filter(|height| *height > 0) {
+            match layout {
+                ChatLayout::Reply => self.reply_content_height = Some(height),
+                ChatLayout::Composer => self.composer_content_height = Some(height),
+                ChatLayout::Setup => {}
+            }
+        }
+    }
+
+    fn height_css(&self, default_height: f64) -> f64 {
+        match self.layout {
+            ChatLayout::Composer => self.composer_content_height
+                .map(f64::from).unwrap_or(default_height).clamp(62.0, 88.0),
+            // 回复页按当前页内容量高，不为未来页预留空白。
+            ChatLayout::Reply => self.reply_content_height
+                .map(f64::from).unwrap_or(default_height).clamp(118.0, default_height),
+            // 授权/会话页给足高度，不采用尚未完成布局的一次测量。
+            ChatLayout::Setup => default_height.max(300.0),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +101,40 @@ pub enum ChatLayout {
 }
 
 pub type ChatRuntimeState = Arc<Mutex<ChatRuntime>>;
+
+/// 预创建窗口只能在创建后设置 owner：Tauri 的 parent/owner 仅在 Builder 公开。
+/// Windows owned top-level window 始终在 owner 上方，不依赖反复 set_focus 抢焦。
+pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+        use windows_sys::Win32::UI::WindowsAndMessaging::GWLP_HWNDPARENT;
+        #[cfg(target_pointer_width = "64")]
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
+        #[cfg(target_pointer_width = "32")]
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW as SetWindowLongPtrW;
+
+        let pet = app.get_webview_window("pet").ok_or("pet 窗口未预创建")?;
+        let chat = app.get_webview_window("chat").ok_or("chat 窗口未预创建")?;
+        let pet_hwnd = pet.hwnd()?;
+        let chat_hwnd = chat.hwnd()?;
+        // GWLP_HWNDPARENT 对 top-level window 设置 owner，不是 SetParent/WS_CHILD；
+        // chat 仍可越出 pet 外窗、独立接收输入，设置本身也不激活任一窗口。
+        unsafe {
+            SetLastError(0);
+            let previous = SetWindowLongPtrW(chat_hwnd.0 as _, GWLP_HWNDPARENT, pet_hwnd.0 as _);
+            if previous == 0 {
+                let error = GetLastError();
+                if error != 0 {
+                    return Err(std::io::Error::from_raw_os_error(error as i32).into());
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+    Ok(())
+}
 
 /// pet 隐藏：chat 若开着则记住并随之隐藏（不广播，状态原样保留，恢复时延续）。
 pub fn on_pet_hidden(app: &AppHandle) {
@@ -177,9 +253,10 @@ pub fn sync_chat_anchor(
     w: i32,
     h: i32,
 ) -> Result<(), String> {
-    if let Ok(mut slot) = anchor.lock() {
-        *slot = Some(PetAnchor { x, y, w, h });
-    }
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口未预创建")?;
+    let origin = pet.outer_position().map_err(|error| error.to_string())?;
+    *anchor.lock().map_err(|error| error.to_string())? =
+        Some(LocalPetAnchor::from_screen(PetAnchor { x, y, w, h }, origin));
     position_chat(&app, &anchor);
     Ok(())
 }
@@ -198,10 +275,8 @@ pub fn set_chat_layout(
         "reply" => ChatLayout::Reply,
         _ => ChatLayout::Setup,
     };
-    if let Ok(mut r) = runtime.lock() {
-        r.layout = layout;
-    }
-    position_chat_with_content(&app, &anchor, content_height);
+    runtime.lock().map_err(|error| error.to_string())?.set_layout(layout, content_height);
+    position_chat(&app, &anchor);
     Ok(())
 }
 
@@ -250,11 +325,8 @@ pub fn send_chat_cue(app: AppHandle, cue: serde_json::Value) -> Result<(), Strin
 /// - chat 销毁（关闭/退出）→ 广播关闭状态，pet 前端据此清理表演状态。
 pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
     match event {
-        WindowEvent::Moved(pos) if label == "pet" => {
-            update_anchor(app, |pet| {
-                pet.x = pos.x;
-                pet.y = pos.y;
-            });
+        WindowEvent::Moved(_) if label == "pet" => {
+            // 局部矩形不变；current_anchor 用当前外窗原点还原屏幕锚点。
             position_chat(app, app.state::<ChatAnchorState>().inner());
         }
         WindowEvent::Resized(_) if label == "pet" => {
@@ -267,17 +339,6 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
     }
 }
 
-/// 更新已上报的 pet 锚点（未上报过则忽略，保持回退逻辑用原生查询）。
-fn update_anchor(app: &AppHandle, f: impl FnOnce(&mut PetAnchor)) {
-    let state = app.state::<ChatAnchorState>();
-    let Ok(mut slot) = state.lock() else {
-        return;
-    };
-    if let Some(pet) = slot.as_mut() {
-        f(pet);
-    }
-}
-
 // ---------- 内部 ----------
 
 /// 窗口底边超出 pet 底边的距离（CSS px）：输入框贴住脚线又不没进屏幕底。
@@ -285,27 +346,15 @@ const FOOT_OFFSET_CSS: f64 = 56.0;
 
 /// 按锚点定位并缩放 chat：位置与尺寸都实时从 pet 推导，无用户态偏移。
 fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
-    position_chat_with_content(app, anchor, None);
-}
-
-fn position_chat_with_content(app: &AppHandle, anchor: &ChatAnchorState, content_height: Option<u32>) {
     let Some(chat) = app.get_webview_window("chat") else { return };
     let Some(pet) = current_anchor(app, anchor) else { return };
     let scale = chat.scale_factor().unwrap_or(1.0);
     let (w_css, default_h_css) = chat_size_for_pet(pet.w as f64 / scale);
-    let layout = app
+    let h_css = app
         .state::<ChatRuntimeState>()
         .lock()
-        .map(|r| r.layout)
-        .unwrap_or_default();
-    let requested_css = content_height.map(|h| h as f64).unwrap_or(default_h_css);
-    let h_css = match layout {
-        ChatLayout::Composer => requested_css.clamp(62.0, 88.0),
-        // 回复页按当前页内容量高：一行短句也该是窄条，不为未来页预留空白。
-        ChatLayout::Reply => requested_css.clamp(118.0, default_h_css),
-        // 授权/会话页必须给足高度，不以尚未完成布局的一次测量把内容裁掉。
-        ChatLayout::Setup => default_h_css.max(300.0),
-    };
+        .map(|runtime| runtime.height_css(default_h_css))
+        .unwrap_or_else(|_| ChatRuntime::default().height_css(default_h_css));
     let w = (w_css * scale).round().max(1.0) as i32;
     let h = (h_css * scale).round().max(1.0) as i32;
     let foot = (FOOT_OFFSET_CSS * scale).round() as i32;
@@ -346,13 +395,12 @@ fn pet_monitor_work_area(app: &AppHandle) -> Option<WorkRect> {
 
 /// 优先用前端显式上报的锚点；从未上报时回退为原生查询 pet 窗口外接矩形。
 fn current_anchor(app: &AppHandle, anchor: &ChatAnchorState) -> Option<PetAnchor> {
-    if let Ok(slot) = anchor.lock() {
-        if let Some(pet) = *slot {
-            return Some(pet);
-        }
-    }
+    let local = anchor.lock().ok().and_then(|slot| *slot);
     let pet = app.get_webview_window("pet")?;
     let pos = pet.outer_position().ok()?;
+    if let Some(local) = local {
+        return Some(local.at_origin(pos));
+    }
     let size = pet.outer_size().ok()?;
     Some(PetAnchor {
         x: pos.x,
@@ -409,6 +457,59 @@ mod tests {
         w: 3840,
         h: 4320,
     };
+
+    #[test]
+    fn local_anchor_preserves_visible_offset_across_window_moves() {
+        let origin = PhysicalPosition::new(970, 1940);
+        let local = LocalPetAnchor::from_screen(PET, origin);
+        assert_eq!(local.at_origin(origin), PET);
+        for moved_origin in [PhysicalPosition::new(1220, 1810), PhysicalPosition::new(-900, -400)] {
+            let moved = local.at_origin(moved_origin);
+            assert_eq!((moved.x - moved_origin.x, moved.y - moved_origin.y), (30, 60));
+            assert_eq!((moved.w, moved.h), (PET.w, PET.h));
+            let before = chat_position(PET, 600, 146, 56, None);
+            let after = chat_position(moved, 600, 146, 56, None);
+            assert_eq!((after.0 - before.0, after.1 - before.1),
+                (moved_origin.x - origin.x, moved_origin.y - origin.y));
+        }
+        // 回到原点不累积漂移，也不把可见区域偏移归零。
+        assert_eq!(local.at_origin(origin), PET);
+    }
+
+    #[test]
+    fn layout_measurements_survive_reposition_and_layout_switches() {
+        let mut runtime = ChatRuntime::default();
+        runtime.set_layout(ChatLayout::Reply, Some(146));
+        assert_eq!(runtime.height_css(300.0), 146.0);
+        assert_eq!(runtime.height_css(330.0), 146.0);
+        runtime.set_layout(ChatLayout::Composer, Some(70));
+        assert_eq!(runtime.height_css(300.0), 70.0);
+        runtime.set_layout(ChatLayout::Composer, None);
+        assert_eq!(runtime.height_css(300.0), 70.0);
+        runtime.set_layout(ChatLayout::Reply, None);
+        assert_eq!(runtime.height_css(300.0), 146.0);
+        runtime.set_layout(ChatLayout::Setup, Some(20));
+        assert_eq!(runtime.height_css(170.0), 300.0);
+        runtime.set_layout(ChatLayout::Composer, None);
+        assert_eq!(runtime.height_css(300.0), 70.0);
+    }
+
+    #[test]
+    fn remembered_heights_still_respect_current_pet_size_and_layout_limits() {
+        let mut runtime = ChatRuntime::default();
+        runtime.set_layout(ChatLayout::Reply, Some(400));
+        assert_eq!(runtime.height_css(330.0), 330.0);
+        assert_eq!(runtime.height_css(170.0), 170.0);
+        runtime.set_layout(ChatLayout::Reply, Some(1));
+        assert_eq!(runtime.height_css(330.0), 118.0);
+        runtime.set_layout(ChatLayout::Composer, Some(70));
+        runtime.set_layout(ChatLayout::Composer, Some(0));
+        assert_eq!(runtime.height_css(300.0), 70.0);
+        runtime.set_layout(ChatLayout::Composer, Some(1));
+        assert_eq!(runtime.height_css(300.0), 62.0);
+        runtime.set_layout(ChatLayout::Composer, Some(400));
+        assert_eq!(runtime.height_css(300.0), 88.0);
+    }
 
     #[test]
     fn chat_bottom_edge_constant_regardless_of_height() {
