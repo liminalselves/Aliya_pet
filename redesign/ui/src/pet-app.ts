@@ -68,6 +68,17 @@ export class PetApp {
   private _chatView: ChatView | null = null;
   private _chatPerformance: ChatPerformance | null = null;
   private _windowSettingsRevision = 0;
+  /** 尺寸与位置必须成对完成；队列中尚未开始的旧请求可合并跳过。 */
+  private _windowSettingsTask: Promise<void> = Promise.resolve();
+  private _windowGeometryPending = 0;
+  private _windowGeometryRevision = 0;
+  private _windowPositionRevision = 0;
+  private _windowPositionKind: 'move' | 'reset' = 'move';
+  /** 原生 resize 已发生但补偿失败时保留债务；下一次用户操作先完成它，不盲目重试。 */
+  private _windowResizeRecovery: ((publish?: boolean) => Promise<void>) | null = null;
+  private _windowGeometryError: unknown = null;
+  /** 保留原生窗口整数坐标舍去的亚像素，避免反复缩放累积漂移。 */
+  private _windowResizeRemainder = { x: 0, y: 0 };
   private _coordination = new InteractionCoordinator(() => ({
     interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
     speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
@@ -81,6 +92,7 @@ export class PetApp {
   private _winPhysY = 0;
   private _scaleFactor = 1;
   private _metricsSynced = false;
+  private _chatAnchorRevision = 0;
   private _windowMoveTask: Promise<void> | null = null;
 
   /** 悬浮窗内容贴合模式：固定尺寸窗口 + 像素掩码穿透（透明区域不挡下层触摸）。 */
@@ -251,7 +263,10 @@ export class PetApp {
         this._tauriWindow.onMoved(() => {
           if (!this._dragging && !this._windowMoveTask) this._syncWindowMetrics();
         }).catch(() => {});
-        this._tauriWindow.onScaleChanged(() => this._syncWindowMetrics()).catch(() => {});
+        this._tauriWindow.onScaleChanged(({ payload }) => {
+          this._scaleFactor = payload.scaleFactor;
+          this._syncWindowMetrics();
+        }).catch(() => {});
       })
       .catch(() => {
         this._tauriWindow = null;
@@ -496,7 +511,7 @@ export class PetApp {
     }
   }
 
-  /** 托盘「切换尺寸」：在百分比域循环 10%→50%→100%（档位由设备范围换算，不会越界）。 */
+  /** 托盘「切换尺寸」：在设备范围内按最小→中点→最大等步长循环。 */
   private async _cycleSize(): Promise<void> {
     const { minS, maxS } = await this._deviceScaleRange();
     const next = nextSizePreset(this._settings.scale, minS, maxS);
@@ -510,8 +525,13 @@ export class PetApp {
    */
   public applySettings(s: PetSettings, restoreWindow = false): void {
     this._cancelSnapAnimation();
+    // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
+    if (!restoreWindow && this._settings) s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
     this._settings = s;
+    const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
+    const restoredPosition = restoreWindow && s.posX != null && s.posY != null
+      ? { x: s.posX, y: s.posY } : null;
     saveSettings(s);
 
     // 行为层
@@ -535,8 +555,9 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
-      import('@tauri-apps/api/window')
-        .then(async (m) => {
+      this._queueWindowGeometry(async () => {
+          if (revision !== this._windowSettingsRevision) return;
+          const m = await import('@tauri-apps/api/window');
           // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
           let mon: import('@tauri-apps/api/window').Monitor | null = null;
           try {
@@ -559,34 +580,96 @@ export class PetApp {
           const width = chatOpen ? Math.min(roomW, Math.max(680, baseW * scale)) : baseW * scale;
           const height = chatOpen ? Math.min(roomH, Math.max(560, Math.min(760, baseH * scale))) : baseH * scale;
           document.body.classList.toggle('chat-mobile', chatOpen && width < 580);
-          // 缩放时保持角色脚底中心不动：窗口向左右等量扩缩，底边保持原位。
-          // 启动恢复则以保存的位置为准，不做自动拉回屏幕。
-          const beforePos = await win.outerPosition().catch((): null => null);
-          const beforeSize = await win.outerSize().catch((): null => null);
-          await win.setSize(new m.LogicalSize(width, height)).catch((): void => {});
+          // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
+          const beforePos = await win.outerPosition();
+          const beforeSize = await win.innerSize();
           if (revision !== this._windowSettingsRevision) return;
-          let target: { x: number; y: number } | null = null;
-          if (restoreWindow && s.posX != null && s.posY != null) {
-            target = { x: s.posX, y: s.posY };
-          } else if (beforePos && beforeSize) {
-            const afterSize = await win.outerSize().catch((): null => null);
-            if (afterSize) target = {
-              x: Math.round(beforePos.x + (beforeSize.width - afterSize.width) / 2),
-              y: beforePos.y + beforeSize.height - afterSize.height,
+          // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
+          const mirror = s.mirror;
+          const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
+          const anchor = {
+            x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
+            y: beforePos.y + beforeFoot.y + this._windowResizeRemainder.y,
+          };
+          // 在调用前登记补偿：Promise 拒绝不代表原生尺寸没有改变。
+          this._windowResizeRecovery = async (publish = true) => {
+            const afterSize = await win.innerSize();
+            const sf = await win.scaleFactor();
+            const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
+            const target = restoredPosition ?? {
+              x: Math.round(anchor.x - afterFoot.x), y: Math.round(anchor.y - afterFoot.y),
             };
-          }
-          if (target) {
-            await win.setPosition(new m.PhysicalPosition(target.x, target.y)).catch(() => {});
-            this._winPhysX = target.x; this._winPhysY = target.y;
-            this._settings.posX = target.x; this._settings.posY = target.y;
-            saveSettings(this._settings);
-            // 缩放落定立刻用已知几何重报锚点：等 onMoved→_syncWindowMetrics 的
-            // 异步往返，chat 会在旧锚点上多停好几帧（大档位切换时肉眼可见）。
-            this._syncChatAnchor({ cssW: width, cssH: height, physX: target.x, physY: target.y });
-          }
-        })
-        .catch(() => {});
+            const current = await win.outerPosition();
+            if (current.x !== target.x || current.y !== target.y) {
+              await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
+            }
+            this._windowResizeRemainder = restoredPosition ? { x: 0, y: 0 } : {
+              x: anchor.x - target.x - afterFoot.x, y: anchor.y - target.y - afterFoot.y,
+            };
+            this._rebaseWindowPosition(target, beforePos, positionRevision);
+            this._scaleFactor = sf; this._metricsSynced = true;
+            this._windowResizeRecovery = null;
+            this._windowGeometryError = null;
+            if (publish && positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging &&
+                revision === this._windowSettingsRevision) this._persistDesktopPos();
+            if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
+          };
+          let resizeError: unknown;
+          try { await win.setSize(new m.LogicalSize(width, height)); }
+          catch (error) { resizeError = error; }
+          await this._windowResizeRecovery();
+          if (resizeError) throw resizeError;
+        }, 'Failed to apply pet window settings');
     }
+  }
+
+  /** 所有应用侧原生几何写入共用队列；已开始的副作用不能用 revision 丢弃。 */
+  private _queueWindowGeometry(operation: () => Promise<void>, label: string): Promise<void> {
+    this._windowGeometryPending = (this._windowGeometryPending ?? 0) + 1;
+    this._windowGeometryRevision = (this._windowGeometryRevision ?? 0) + 1;
+    const task = (this._windowSettingsTask ?? Promise.resolve()).then(async () => {
+      if (this._windowResizeRecovery) await this._windowResizeRecovery(false);
+      await operation();
+    }).catch(error => { this._windowGeometryError = error; console.warn(label, error); }).finally(() => { this._windowGeometryPending--; });
+    this._windowSettingsTask = task;
+    return task;
+  }
+
+  /** IPC 拒绝不能证明 Win32 副作用未发生；所有位置写入用读回确认统一处理。 */
+  private async _setWindowPositionVerified(position: import('@tauri-apps/api/window').PhysicalPosition): Promise<void> {
+    const win = this._tauriWindow;
+    if (!win) throw new Error('Pet window unavailable');
+    try { await win.setPosition(position); }
+    catch (error) {
+      const actual = await win.outerPosition();
+      if (actual.x !== position.x || actual.y !== position.y) throw error;
+      console.warn('Pet position IPC failed after native position was applied', error);
+    }
+    this._windowGeometryError = null;
+  }
+
+  /** 缩放/重置改变原点时，后到的拖动仍表示相同屏幕位移，不能退回旧原点。 */
+  private _rebaseWindowPosition(target: { x: number; y: number }, before: { x: number; y: number }, revision: number): void {
+    if (revision === (this._windowPositionRevision ?? 0)) {
+      this._winPhysX = target.x; this._winPhysY = target.y;
+    } else if (this._windowPositionKind === 'move') {
+      this._winPhysX += target.x - before.x; this._winPhysY += target.y - before.y;
+    }
+  }
+
+  /** 与 _render 相同的适配公式；输入、输出均为物理像素。 */
+  private _windowFootOffset(
+    size: { width: number; height: number }, mirror: boolean, chatOpen: boolean
+  ): { x: number; y: number } {
+    const ready = this._model?.isReady();
+    const bounds = ready ? this._model.getStaticBounds() : null;
+    const fitH = chatOpen && ready
+      ? Math.min(size.height, size.width / this._model.boundsAspect) : size.height;
+    const scale = fitH / PetApp._renderMarginRatio / (ready ? this._model.boundsH : 1);
+    return {
+      x: size.width / 2 + (bounds ? (bounds.minX + bounds.maxX) / 2 : 0) * scale * (mirror ? -1 : 1),
+      y: size.height / 2 - (bounds?.minY ?? -0.5) * scale,
+    };
   }
 
   /** 刷新壳侧屏幕尺寸缓存（CSS px；缩放和贴边共用）。 */
@@ -811,22 +894,26 @@ export class PetApp {
     }
     const win = this._tauriWindow;
     if (!win) return;
-    import('@tauri-apps/api/window')
-      .then(async (m) => {
-        const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
-        if (!mon) return;
-        const size = await win.outerSize();
-        const x = mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2);
-        const y =
-          mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2);
-        await win.setPosition(new m.PhysicalPosition(x, y));
-        this._winPhysX = x;
-        this._winPhysY = y;
-        this._settings.posX = x;
-        this._settings.posY = y;
-        saveSettings(this._settings);
-      })
-      .catch(() => {});
+    const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
+    this._windowPositionKind = 'reset';
+    this._queueWindowGeometry(async () => {
+      const m = await import('@tauri-apps/api/window');
+      if (revision !== this._windowPositionRevision) return;
+      const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+      if (!mon || revision !== this._windowPositionRevision) return;
+      const size = await win.outerSize();
+      const before = await win.outerPosition();
+      if (revision !== this._windowPositionRevision) return;
+      const target = {
+        x: mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2),
+        y: mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2),
+      };
+      await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
+      this._windowResizeRemainder = { x: 0, y: 0 };
+      this._rebaseWindowPosition(target, before, revision);
+      if (revision === this._windowPositionRevision) this._persistDesktopPos();
+      this._syncChatAnchor();
+    }, 'Failed to reset pet position');
   }
 
   /** 短暂显示贴边成功反馈，不额外扩大可点击区域。 */
@@ -871,14 +958,19 @@ export class PetApp {
     import('@tauri-apps/api/window')
       .then(async (m) => {
         await pendingMove;
-        if (token !== this._snapAnimToken) return;
+        await this._windowSettingsTask;
+        const geometryRevision = this._windowGeometryRevision ?? 0;
+        const current = () => token === this._snapAnimToken &&
+          geometryRevision === (this._windowGeometryRevision ?? 0) && !this._windowGeometryPending &&
+          !this._windowResizeRecovery && !this._windowGeometryError;
+        if (!current()) return;
         const pos = await win.outerPosition();
-        if (token !== this._snapAnimToken) return;
+        if (!current()) return;
         this._winPhysX = pos.x;
         this._winPhysY = pos.y;
         if (this._settings.snapEdges) {
           const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
-          if (token !== this._snapAnimToken) return;
+          if (!current()) return;
           if (mon) {
             const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
             const left = mon.workArea.position.x;
@@ -897,13 +989,15 @@ export class PetApp {
             this._showSnapHint(edges);
           }
         }
+        if (token !== this._snapAnimToken || this._windowGeometryPending) return;
         this._persistDesktopPos();
       })
-      .catch(() => {});
+      .catch(error => { console.warn('Failed to finish pet drag', error); });
   }
 
   /** 持久化桌面窗口位置（物理 px）。 */
   private _persistDesktopPos(): void {
+    if (this._dragging || this._windowResizeRecovery || this._windowGeometryError) return;
     this._settings.posX = this._winPhysX;
     this._settings.posY = this._winPhysY;
     saveSettings(this._settings);
@@ -1294,9 +1388,12 @@ export class PetApp {
   private _syncWindowMetrics(): void {
     const win = this._tauriWindow;
     if (!win) return;
+    if (this._windowGeometryPending > 0 || this._windowResizeRecovery) return;
     const token = this._snapAnimToken;
+    const geometryRevision = this._windowGeometryRevision;
     Promise.all([win.outerPosition(), win.scaleFactor()])
       .then(([pos, sf]) => {
+        if (geometryRevision !== this._windowGeometryRevision || this._windowGeometryPending > 0) return;
         this._scaleFactor = sf;
         this._metricsSynced = true;
         if (token === this._snapAnimToken && !this._dragging && !this._windowMoveTask && !this._snapAnimation) {
@@ -1305,23 +1402,25 @@ export class PetApp {
           this._syncChatAnchor();
         }
       })
-      .catch(() => {});
+      .catch(error => console.warn('Failed to read pet window metrics', error));
   }
 
   /**
-   * 向壳上报模型可见矩形（物理像素）：底边 = 脚底，横向沿用画布宽
+   * 向壳上报模型可见矩形（客户区比例）：底边 = 脚底，横向沿用画布宽
    * （chat 宽 = 锚宽 × 1.18 的既有观感不变）。锚点不能取含渲染余量的
    * 整个画布——余量随窗口线性放大，用画布当锚点，缩放越大 chat 离脚越远。
-   * known 传入缩放落定时的已知几何（applySettings 路径），省去 DOM 与
-   * 位置查询的异步往返；缺省按画布实测 + 窗口位置缓存。
+   * known 传入缩放落定时的实际客户区尺寸（applySettings 路径）；缺省按画布实测。
+   * 协议发送相对于客户区的比例矩形，完全不混入屏幕位置或另一次 DPI 采样。
    */
-  private _syncChatAnchor(known?: { cssW: number; cssH: number; physX: number; physY: number }): void {
+  private _syncChatAnchor(known?: { cssW: number; cssH: number }): void {
     if (platform !== 'tauri' || !this._metricsSynced) return;
     const rect = known
       ? { left: 0, top: 0, width: known.cssW, height: known.cssH }
       : this._canvas.getBoundingClientRect();
-    const baseX = known ? known.physX : this._winPhysX;
-    const baseY = known ? known.physY : this._winPhysY;
+    // IPC 不携带屏幕原点；局部比例由 Rust 同一原生矩形快照还原，移动/DPI 不混时刻。
+    const viewportW = known?.cssW ?? window.innerWidth;
+    const viewportH = known?.cssH ?? window.innerHeight;
+    if (!(viewportW > 0 && viewportH > 0)) return;
     let left = rect.left;
     let top = rect.top;
     let w = rect.width || window.innerWidth;
@@ -1333,15 +1432,12 @@ export class PetApp {
       top += h / 2 - b.maxY * s;
       h = (b.maxY - b.minY) * s;
     }
-    const sf = this._scaleFactor;
+    const revision = this._chatAnchorRevision = Math.max((this._chatAnchorRevision ?? 0) + 1,
+      Math.round((performance.timeOrigin + performance.now()) * 1000));
+    const payload = { x: left / viewportW, y: top / viewportH, w: w / viewportW, h: h / viewportH, revision };
     void import('@tauri-apps/api/core')
-      .then(m => m.invoke('sync_chat_anchor', {
-        x: Math.round(baseX + left * sf),
-        y: Math.round(baseY + top * sf),
-        w: Math.round(w * sf),
-        h: Math.round(h * sf),
-      }))
-      .catch(() => {});
+      .then(m => m.invoke('sync_chat_anchor', payload))
+      .catch(error => console.warn('Failed to synchronize local chat anchor', error));
   }
 
   /** 拖动只跟随指针，不在移动过程中吸附或限制位置。 */
@@ -1362,20 +1458,19 @@ export class PetApp {
   private _submitWindowPos(): Promise<void> {
     const win = this._tauriWindow;
     if (!win) return Promise.resolve();
-    if (this._windowMoveTask) return this._windowMoveTask;
-    this._windowMoveTask = import('@tauri-apps/api/window')
-      .then(async (m) => {
-        let x: number, y: number;
-        do {
-          x = Math.round(this._winPhysX);
-          y = Math.round(this._winPhysY);
-          await win.setPosition(new m.PhysicalPosition(x, y));
-        } while (x !== Math.round(this._winPhysX) || y !== Math.round(this._winPhysY));
-      })
-      .finally(() => {
-        this._windowMoveTask = null;
-      });
-    return this._windowMoveTask;
+    const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
+    this._windowPositionKind = 'move';
+    const task = this._queueWindowGeometry(async () => {
+      const m = await import('@tauri-apps/api/window');
+      if (revision !== this._windowPositionRevision) return;
+      const x = Math.round(this._winPhysX), y = Math.round(this._winPhysY);
+      await this._setWindowPositionVerified(new m.PhysicalPosition(x, y));
+      this._windowResizeRemainder = { x: 0, y: 0 };
+    }, 'Failed to move pet window').finally(() => {
+      if (this._windowMoveTask === task) this._windowMoveTask = null;
+    });
+    this._windowMoveTask = task;
+    return task;
   }
 
   // ---------- 渲染循环 ----------

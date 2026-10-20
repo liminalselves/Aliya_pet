@@ -31,8 +31,11 @@ export interface InteractionTarget {
     bodyAngleX: number
   ): void;
 
-  /** 眼睛开合覆盖（0=闭 1=睁，映射到真实参数范围）；激活期间自动眨眼暂停。 */
-  setEyeOverride(enabled: boolean, leftOpen: number, rightOpen: number): void;
+  /** 眼睛开合覆盖；side 仅接管指定眼睛，其余眼睛继续基础眨眼。 */
+  setEyeOverride(
+    enabled: boolean, leftOpen: number, rightOpen: number,
+    side?: 'both' | 'left' | 'right'
+  ): void;
 
   /** 猫耳附加偏移（参数缺失时静默忽略）。 */
   setEarInteraction(enabled: boolean, leftValue: number, rightValue: number): void;

@@ -11,13 +11,12 @@ import {
 } from '@framework/effect/cubismbreath';
 import { CubismEyeBlink } from '@framework/effect/cubismeyeblink';
 import { CubismLook, LookParameterData } from '@framework/effect/cubismlook';
-import { CubismEyeBlinkUpdater } from '@framework/motion/cubismeyeblinkupdater';
+import { ContinuousEyeBlinkUpdater, FadingExpressionUpdater } from './animation-updaters';
 import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
 import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
-import { CubismExpressionUpdater } from '@framework/motion/cubismexpressionupdater';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
 import { GazeController } from './gaze';
@@ -191,6 +190,8 @@ export class PetModel
       this._gl.drawingBufferWidth,
       this._gl.drawingBufferHeight
     );
+    // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
+    this.getRenderer().setIsPremultipliedAlpha(true);
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
     for (let i = 0; i < textureCount; i++) {
@@ -218,9 +219,9 @@ export class PetModel
     this._eyeBlink = CubismEyeBlink.create();
     this._eyeBlink.setParameterIds(this._eyeBlinkIds);
     this._updateScheduler.addUpdatableList(
-      new CubismEyeBlinkUpdater(
-        // 动作更新中或眼睛被互动覆盖时暂停自动眨眼（通道装配后再取状态）
-        () => this._motionUpdated || this._chEye?.enabled === true,
+      new ContinuousEyeBlinkUpdater(
+        // 始终推进眨眼时钟；动作暂时拥有眼睛时只保留它的输出。
+        () => this._motionUpdated,
         this._eyeBlink
       )
     );
@@ -327,7 +328,7 @@ export class PetModel
     // Add 混合叠加在动作结果之上，且不进 saveParameters 快照（每帧重施加）。
     await this._preloadExpressions();
     this._updateScheduler.addUpdatableList(
-      new CubismExpressionUpdater(this._expressionManager)
+      new FadingExpressionUpdater(this._expressionManager)
     );
 
     this._ready = true;
@@ -374,8 +375,7 @@ export class PetModel
       // 播放空表情触发旧的淡出
       const neutral = this._expressions.get('neutral');
       if (neutral) {
-        // 高频切换时旧队列会累积并同时混合；只保留最新请求。
-        this._expressionManager.stopAllMotions();
+        // 新队列保留旧表情的淡出，已淡出的条目由 updater 清理。
         this._expressionManager.startMotion(neutral, false);
       }
       this._currentExpression = null;
@@ -385,7 +385,6 @@ export class PetModel
     const expr = this._expressions.get(name);
     if (!expr) return false;
     if (this._currentExpression === name) return true;
-    this._expressionManager.stopAllMotions();
     this._expressionManager.startMotion(expr, false);
     this._currentExpression = name;
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
@@ -522,9 +521,7 @@ export class PetModel
     }
     const motion = this._motions.get(`${group}_${index}`);
     if (!motion) return INVALID_MOTION_HANDLE;
-    // 每次只保留一个动作。连续触发时由新动作自身 fade-in 接管当前姿态，
-    // 避免多个淡出动作叠加写眼睑/笑眼/特殊脸参数。
-    this._motionManager.stopAllMotions();
+    // SDK startMotion 会让旧动作淡出，不提前清空它的参数贡献。
     const handle = this._motionManager.startMotionPriority(motion, false, priority);
     if (handle !== INVALID_MOTION_HANDLE) {
       if (group === 'wave') this._chHand.trigger();
@@ -545,8 +542,7 @@ export class PetModel
     const index = Math.floor(Math.random() * count);
     const motion = this._motions.get(`${name}_${index}`);
     if (!motion) return false;
-    // 高频入口采用 latest-wins，防止淡出队列无界累积。
-    this._motionManager.stopAllMotions();
+    // SDK 在淡出完成后回收旧动作；保留短暂重叠以连续交接。
     this._motionManager.startMotionPriority(
       motion,
       false,
@@ -643,9 +639,11 @@ export class PetModel
   public setEyeOverride(
     enabled: boolean,
     leftOpen: number,
-    rightOpen: number
+    rightOpen: number,
+    side: 'both' | 'left' | 'right' = 'both'
   ): void {
     this._chEye.enabled = enabled;
+    this._chEye.side = side;
     this._chEye.left = leftOpen;
     this._chEye.right = rightOpen;
   }
@@ -695,7 +693,7 @@ export class PetModel
       model.setParameterValueById(id, 0);
     }
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
-    this._chEye.apply(model);
+    this._chEye.apply(model, deltaTimeSeconds);
     applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权

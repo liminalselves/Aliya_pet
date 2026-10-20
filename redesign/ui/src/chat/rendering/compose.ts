@@ -135,7 +135,9 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
       }
     }
     drawOffset = draws.length;
-    if (html !== '') produced.push({ html: `<div class="msk-segment${hasDraw && parts.length === 1 ? ' msk-segment-draw' : ''}">${html}</div>`, isCue: false });
+    const mediaPage = options.segmented === true && parts.length === 1 && (parts[0]!.type === 'sticker' || parts[0]!.type === 'emoji');
+    const pageClass = mediaPage ? ' msk-segment-media' : hasDraw && parts.length === 1 ? ' msk-segment-draw' : '';
+    if (html !== '') produced.push({ html: `<div class="msk-segment${pageClass}">${html}</div>`, isCue: false });
   }
   // 开场归一：模型常让第一条指令落在开场白之后（开口时角色素颜）。只把首条指令
   // 提前到页首——表情是持续语义，提前只是让它多覆盖开场白，其原配对段落依然被

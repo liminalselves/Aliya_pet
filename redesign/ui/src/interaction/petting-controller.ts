@@ -282,9 +282,12 @@ export class PettingController {
       this.endPettingSession(reason);
     }
     this.recognizer.endGesture();
-    this.resetAll();
-    this._sessionEnding = false;
-    this._setState('inactive');
+    // 用户取消仍走睁眼和回中；只有模型销毁/不可用才立即清理。
+    if (reason === 'modelReload' || reason === 'windowClosing' || !this._available) {
+      this.resetAll();
+      this._sessionEnding = false;
+      this._setState('inactive');
+    }
   }
 
   /** 统一结束方法：停止采样 → Finishing → 睁眼恢复 → 头部回正。 */

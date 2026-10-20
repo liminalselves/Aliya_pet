@@ -5,12 +5,12 @@
   "identifier": "top.liminalselves.aliyapet",
   "build": {
     "beforeDevCommand": {
-      "script": "npm run dev -- --host 127.0.0.1",
+      "script": "node ../scripts/prepare-windows-build.mjs && npm run dev -- --host 127.0.0.1",
       "cwd": "../ui"
     },
     "devUrl": "http://127.0.0.1:5175",
     "beforeBuildCommand": {
-      "script": "npm run build",
+      "script": "node ../scripts/prepare-windows-build.mjs && npm run build",
       "cwd": "../ui"
     },
     "frontendDist": "../ui/dist"

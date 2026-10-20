@@ -37,7 +37,7 @@ test('新版挥手在15/30/60fps均产生摆动并完整复位，不写旧手链
   const h=waveHarness();h.channel.trigger();let min=0,max=0;
   for(let i=0;i<fps*6;i++){
    h.step(1/fps);const v=h.values.get('Param31');min=Math.min(min,v);max=Math.max(max,v);
-   assert.ok([0,1].includes(h.values.get('Param30')));
+   assert.ok(h.values.get('Param30')>=0&&h.values.get('Param30')<=1);
    for(const [id,value] of h.values){assert.ok(['Param30','Param31','Param36'].includes(id));assert.ok(Number.isFinite(value)&&Math.abs(value)<=1)}
   }
   assert.ok(min<-.4&&max>.4);assert.equal(h.channel.raising,0);
@@ -50,7 +50,7 @@ test('挥手连续重触发和打断后复位，异常时间步不污染状态',
  for(const dt of [NaN,Infinity,-1]){h.step(dt);for(const value of h.values.values())assert.ok(Number.isFinite(value))}
  h.channel.release();for(let i=0;i<60;i++)h.step(1/30);
  assert.equal(h.channel.raising,0);assert.deepEqual([...h.values.values()],[0,0,0]);
- h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);assert.equal(h.values.get('Param30'),1);
+ h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);assert.ok(h.values.get('Param30')>.99);
 });
 test('当前模型继续抬起旧版五段手链，结束后停止覆盖物理',()=>{
  const h=waveHarness(false);h.channel.trigger();for(let i=0;i<30;i++)h.step(1/30);
@@ -210,6 +210,42 @@ test('半闭眼收小瞳孔行程，完全闭眼回中',()=>{
  controller.update(model,1/30,{motionActive:false,reduction:1,eyeOpenness:0});assert.equal(Math.hypot(values.get('x'),values.get('y')),0);
 });
 
+test('单眼覆盖不写另一眼，按实际秒平滑接管/释放，低帧率一致',()=>{
+ const {EyeOverrideChannel}=load('overlay');
+ for(const fps of [15,30,60])for(const side of ['left','right']){
+  const c=new EyeOverrideChannel({left:'L',right:'R'}),values=new Map(),writes=[];
+  const m={getParameterValueById:id=>values.get(id),setParameterValueById:(id,v)=>{values.set(id,v);writes.push(id)}};
+  const step=()=>{values.set('L',.8);values.set('R',.9);writes.length=0;c.apply(m,1/fps)};
+  const eye=side==='left'?'L':'R',other=side==='left'?'R':'L';
+  c.side=side;c.enabled=true;c.left=c.right=0;
+  step();assert.ok(values.get(eye)>0&&values.get(eye)<1);assert.ok(!writes.includes(other));
+  for(let i=0;i<Math.ceil(fps*.12);i++){step();assert.ok(!writes.includes(other))}
+  assert.equal(values.get(eye),0);c.enabled=false;step();assert.ok(values.get(eye)>0&&values.get(eye)<.8);
+  for(let i=0;i<Math.ceil(fps*.2);i++)step();
+  assert.equal(values.get(eye),side==='left'?.8:.9);assert.ok(!writes.includes(eye));assert.ok(!writes.includes(other));
+ }
+});
+
+test('单眼切边及点击→抚摸同帧交接从可见值继续，最终释放旧侧',()=>{
+ const {EyeOverrideChannel}=load('overlay');const c=new EyeOverrideChannel({left:'L',right:'R'});
+ const values=new Map(),writes=[];const m={getParameterValueById:id=>values.get(id),setParameterValueById:(id,v)=>{values.set(id,v);writes.push(id)}};
+ const step=()=>{values.set('L',1);values.set('R',1);writes.length=0;c.apply(m,1/60)};
+ c.side='left';c.enabled=true;c.left=c.right=0;for(let i=0;i<10;i++)step();assert.equal(values.get('L'),0);
+ c.enabled=false;c.enabled=true;c.side='both';c.left=c.right=1;step();
+ assert.ok(values.get('L')>0&&values.get('L')<.1,'同帧控制源交接不能0→1跳变');
+ c.side='right';c.left=c.right=0;for(let i=0;i<20;i++)step();
+ assert.equal(values.get('L'),1);assert.equal(values.get('R'),0);assert.ok(!writes.includes('L'));
+});
+
+test('动作与表情请求不提前清空旧队列，SDK负责交叉淡化',()=>{
+ const {PetModel}=load('pet-model',{'@framework/model/cubismusermodel':{CubismUserModel:class{}}});
+ const m=Object.create(PetModel.prototype),starts=[];let clears=0;
+ const manager={getCurrentPriority:()=>0,stopAllMotions(){clears++},startMotionPriority:(...args)=>{starts.push(args);return 1},startMotion:(...args)=>starts.push(args)};
+ Object.assign(m,{_ready:true,_motions:new Map([['nod_0',{}]]),_setting:{getMotionCount:()=>1},_chHand:{release(){}},_motionManager:manager,_expressionManager:manager,_expressions:new Map([['happy',{}],['neutral',{}]]),_gaze:{setExpression(){}},_currentExpression:null});
+ m.startMotion('nod',0,2);m.playAction('nod');m.startExpression('happy');m.startExpression(null);
+ assert.equal(starts.length,4);assert.equal(clears,0);
+});
+
 // 普通互动：用可控时钟执行真实控制器，覆盖完整的输入/恢复生命周期。
 function interactionHarness() {
  let now = 0;
@@ -232,19 +268,102 @@ function interactionHarness() {
   setFaceCheek: (...v) => writes.cheek=v,
  };
  let speaking=false;
- const lines=[];
+ const lines=[],actions=[],reactions=[];
  const service = new InteractionService({
   hitAreas:{isInHeadPetZone:()=>true,hitAreaAt:()=> 'face'},getTarget:()=>target,
   dialogue:{resolveSceneTag:(_scene,tag)=>({entryId:tag,pages:[{text:tag}]})},
   pettingHost:{isDialogueActive:()=>speaking,playPettingDialogue:r=>lines.push(r.entryId)},
-  playCharacterAction:()=>true,
+  playCharacterAction:action=>{actions.push(action);return true},
  });
+ const apply=service.procedural.apply.bind(service.procedural);
+ service.procedural.apply=reaction=>{reactions.push({...reaction});apply(reaction)};
  service.playClickDialogue=tag=>lines.push(tag);
  const ctx=(x=400,secondary=true,dt=1/60)=>({normX:.5,normY:.2,pxX:x,pxY:200,dtSeconds:dt,leftPressed:!secondary,isSecondary:secondary});
- return {service,writes,lines,ctx,globals,recognizer,procedural,
+ return {service,writes,lines,actions,reactions,ctx,globals,recognizer,procedural,
   speaking(v){speaking=v},advance(ms){now+=ms;service.tick(ms)},setTime(ms){now=ms},
   stroke(){for(let i=1;i<=90;i++){now+=1000/60;const t=i/60;const x=400+40*Math.sin(t*Math.PI*2);service.onPointerMove(ctx(x));service.tick(1000/60)}}};
 }
+
+test('耳朵连点仅同侧眨眼并偏头，不写耳动、不升级双眼疑惑；脸红不接管眼睛',()=>{
+ for(const area of ['ear_left','ear_right']){
+  const h=interactionHarness(),s=h.service;s.hitAreas.hitAreaAt=()=>area;
+  let minEye=1,maxTilt=0;for(let i=0;i<8;i++){
+   s.onClick(h.ctx(400,false),false);
+   for(let j=0;j<30;j++){h.advance(16);if(h.writes.eyes[0]){assert.equal(h.writes.eyes[3],area==='ear_left'?'right':'left');minEye=Math.min(minEye,h.writes.eyes[1])}maxTilt=Math.max(maxTilt,Math.abs(h.writes.offsets[2]));assert.equal(h.writes.ears[1],0);assert.equal(h.writes.ears[2],0)}
+  }
+  assert.equal(minEye,0);assert.ok(maxTilt>0);assert.ok(h.lines.every(tag=>tag===area));assert.equal(h.writes.eyes[0],false);
+ }
+ const h=interactionHarness();h.service.onClick(h.ctx(400,false),false);h.advance(16);assert.equal(h.writes.eyes[0],false);
+});
+
+test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也不能重置历史',()=>{
+ const h=interactionHarness(),s=h.service;
+ const normal=['face','face','click_doubt','click_doubt','click_comment','click_comment','click_comment'];
+ for(let i=0;i<8;i++){
+  h.setTime(i*500);s.hitAreas.hitAreaAt=()=> 'face';
+  const before=h.lines.length;assert.equal(s.onClick(h.ctx(400,false),false),true);
+  if(i<7){assert.equal(h.lines.length,before+1);assert.equal(h.lines.at(-1),normal[i])}
+  else {assert.equal(h.lines.length,before);assert.equal(s.clickSequence.isInCooldown,true)}
+  h.setTime(i*500+100);const area=i%2?'ear_right':'ear_left';s.hitAreas.hitAreaAt=()=>area;
+  const earBefore=h.lines.length;s.onClick(h.ctx(400,false),false);
+  if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),area);assert.equal(h.reactions.at(-1).type,'earBlink')}
+  else assert.equal(h.lines.length,earBefore,'第八次普通点击后的耳朵也必须服从全局冷却');
+ }
+ assert.deepEqual(h.actions,Array(5).fill('doubt'));
+});
+
+test('左右耳高频点击不重复台词或动作启动，节流结束仍保留另一侧单眼反馈',()=>{
+ const h=interactionHarness(),s=h.service;s.hitAreas.hitAreaAt=()=> 'ear_left';
+ s.onClick(h.ctx(400,false),false);
+ for(let i=1;i<=25;i++){
+  h.advance(16);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';
+  assert.equal(s.onClick(h.ctx(400,false),false),true);
+  assert.equal(h.writes.eyes[3],'right','被节流的另一侧不能切换眼睛');
+ }
+ assert.deepEqual(h.lines,['ear_left']);
+ assert.deepEqual(h.reactions,[{type:'earBlink',strength:.8,areaId:'ear_left'}]);
+ assert.deepEqual(h.actions,[]);
+ for(let i=0;i<7;i++)h.advance(16);
+ s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);h.advance(16);
+ assert.deepEqual(h.lines,['ear_left','ear_right']);assert.equal(h.reactions.length,2);
+ assert.equal(h.writes.eyes[3],'left');assert.equal(s.clickSequence.isInCooldown,false);
+});
+
+test('全局冷却期间左右耳与普通点击均静默，不解除或延长冷却，到期后重新计数',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<8;i++){h.setTime(i*100);s.onClick(h.ctx(400,false),false)}
+ assert.equal(s.clickSequence.isInCooldown,true);
+ const lines=[...h.lines],starts=h.reactions.length,actions=[...h.actions];
+ for(const time of [800,950,2000,3699])for(const area of ['ear_left','ear_right','face']){
+  h.setTime(time);s.hitAreas.hitAreaAt=()=>area;
+  assert.equal(s.onClick(h.ctx(400,false),false),true);
+  assert.equal(s.clickSequence.isInCooldown,true,`${area}不能提前解除冷却`);
+  assert.deepEqual(h.lines,lines);assert.equal(h.reactions.length,starts);assert.deepEqual(h.actions,actions);
+ }
+ h.setTime(3700);s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);
+ assert.equal(s.clickSequence.isInCooldown,false);assert.equal(h.lines.at(-1),'ear_right');
+ assert.equal(h.reactions.at(-1).type,'earBlink');assert.equal(h.reactions.length,starts+1);
+ for(let i=0;i<3;i++){
+  h.setTime(3700+i*100);s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);
+  assert.equal(h.lines.at(-1),i===2?'click_doubt':'face','冷却内点击和耳朵均不能计入新一轮普通计数');
+ }
+});
+
+test('连续耳朵反馈不累积普通疑惑，已有台词不重启，生命周期清理释放耳朵节流',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<10;i++){h.setTime(i*500);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';s.onClick(h.ctx(400,false),false)}
+ assert.equal(h.reactions.length,10);assert.deepEqual(h.actions,[]);
+ s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);assert.equal(h.lines.at(-1),'face');
+ h.setTime(5000);s.hitAreas.hitAreaAt=()=> 'ear_left';s.isDialogueActive=()=>true;
+ const before=h.lines.length;s.onClick(h.ctx(400,false),false);
+ assert.equal(h.lines.length,before,'已有台词播放时不能重新请求耳朵台词');
+ s.isDialogueActive=()=>false;
+ for(const reset of ['cancel','onModelReloaded','onWindowClosed']){
+  const starts=h.reactions.length;s[reset]();s.onClick(h.ctx(400,false),false);
+  assert.equal(h.reactions.length,starts+1,`${reset}之后首次耳朵点击不能被旧节流阻挡`);
+  assert.equal(h.lines.at(-1),'ear_left');
+ }
+});
 
 test('抚摸必须往返：首次坐标无虚假速度，高频/低速采样与普通鼠标均可识别',()=>{
  const h=interactionHarness();
@@ -285,7 +404,10 @@ test('抚摸接管已有点击反应；失焦取消不会产生结束台词或�
  s.onClick(h.ctx(400,false),false);h.advance(150);assert.equal(s.procedural.isPlaying,true);
  s.onPointerDown(h.ctx());assert.equal(s.procedural.isPlaying,false);h.stroke();
  s.dragReaction.beginDrag();const n=h.lines.length;s.cancel();
- assert.equal(s.petting.state,'inactive');assert.equal(s.isBusy,false);assert.equal(h.lines.length,n);
+ assert.equal(s.petting.state,'finishing');assert.equal(s.isBusy,true);assert.equal(h.lines.length,n);
+ h.advance(1000/60);assert.equal(h.writes.eyes[0],true);assert.ok(h.writes.eyes[1]<.2,'取消后不瞬间睁眼');
+ for(let i=0;i<180;i++)h.advance(1000/60);
+ assert.equal(s.petting.state,'inactive');assert.equal(s.isBusy,false);
  assert.equal(h.writes.eyes[0],false);assert.equal(h.writes.cheek[0],false);
 });
 
@@ -358,7 +480,9 @@ function pointerHarness(touch=false) {
 
 test('真实事件接线：右键失焦可恢复，普通pointerup后的lostcapture不抹掉反馈',()=>{
  const h=pointerHarness();const e=h.canvasEvents;
- e.pointerdown(h.event());assert.equal(h.service.petting.state,'pressed');h.windowEvents.blur();
+ e.pointerdown(h.event());assert.equal(h.service.petting.state,'pressed');h.advance(1000/60);h.windowEvents.blur();
+ assert.equal(h.service.petting.state,'finishing');
+ for(let i=0;i<180;i++)h.advance(1000/60);
  assert.equal(h.service.petting.state,'inactive');
  e.pointerdown(h.event({button:0,buttons:1}));e.pointerup(h.event({button:0,buttons:0}));
  assert.equal(h.service.procedural.isPlaying,true);e.lostpointercapture();assert.equal(h.service.procedural.isPlaying,true);

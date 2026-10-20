@@ -86,10 +86,14 @@ export function percentToScale(
 }
 
 /** 尺寸档位（托盘"切换尺寸"循环，百分比域）。 */
-export const SIZE_PRESETS = [SCALE_PERCENT_MIN, 50, SCALE_PERCENT_MAX];
+export const SIZE_PRESETS = [
+  SCALE_PERCENT_MIN,
+  (SCALE_PERCENT_MIN + SCALE_PERCENT_MAX) / 2,
+  SCALE_PERCENT_MAX,
+];
 
 /**
- * 循环到下一个尺寸档位：10% → 50% → 100% → 10%。
+ * 循环到下一个尺寸档位：10% → 55% → 100% → 10%，两次放大的尺寸增量相等。
  * 档位取自设备范围 [minS, maxS] 的百分比域，天然不会越过上下限；
  * 当前值不在档位上时，跳到比它大的下一档（没有更大的则回到最小档）。
  */

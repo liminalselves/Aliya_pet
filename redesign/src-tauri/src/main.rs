@@ -334,6 +334,7 @@ fn main() {
             chat_window::handle_window_event(window.app_handle(), window.label(), event);
         })
         .setup(move |app| {
+            chat_window::setup(app.handle())?;
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）
