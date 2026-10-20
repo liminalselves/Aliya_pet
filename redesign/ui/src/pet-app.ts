@@ -68,6 +68,10 @@ export class PetApp {
   private _chatView: ChatView | null = null;
   private _chatPerformance: ChatPerformance | null = null;
   private _windowSettingsRevision = 0;
+  /** 尺寸与位置必须成对完成；队列中尚未开始的旧请求可合并跳过。 */
+  private _windowSettingsTask: Promise<void> = Promise.resolve();
+  /** 保留原生窗口整数坐标舍去的亚像素，避免反复缩放累积漂移。 */
+  private _windowResizeRemainder = { x: 0, y: 0 };
   private _coordination = new InteractionCoordinator(() => ({
     interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
     speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
@@ -512,6 +516,8 @@ export class PetApp {
     this._cancelSnapAnimation();
     this._settings = s;
     const revision = ++this._windowSettingsRevision;
+    const restoredPosition = restoreWindow && s.posX != null && s.posY != null
+      ? { x: s.posX, y: s.posY } : null;
     saveSettings(s);
 
     // 行为层
@@ -535,8 +541,10 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
-      import('@tauri-apps/api/window')
-        .then(async (m) => {
+      this._windowSettingsTask = this._windowSettingsTask
+        .then(async () => {
+          if (revision !== this._windowSettingsRevision) return;
+          const m = await import('@tauri-apps/api/window');
           // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
           let mon: import('@tauri-apps/api/window').Monitor | null = null;
           try {
@@ -559,34 +567,59 @@ export class PetApp {
           const width = chatOpen ? Math.min(roomW, Math.max(680, baseW * scale)) : baseW * scale;
           const height = chatOpen ? Math.min(roomH, Math.max(560, Math.min(760, baseH * scale))) : baseH * scale;
           document.body.classList.toggle('chat-mobile', chatOpen && width < 580);
-          // 缩放时保持角色脚底中心不动：窗口向左右等量扩缩，底边保持原位。
-          // 启动恢复则以保存的位置为准，不做自动拉回屏幕。
-          const beforePos = await win.outerPosition().catch((): null => null);
-          const beforeSize = await win.outerSize().catch((): null => null);
-          await win.setSize(new m.LogicalSize(width, height)).catch((): void => {});
+          // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
+          const beforePos = await win.outerPosition();
+          const beforeSize = await win.innerSize();
           if (revision !== this._windowSettingsRevision) return;
-          let target: { x: number; y: number } | null = null;
-          if (restoreWindow && s.posX != null && s.posY != null) {
-            target = { x: s.posX, y: s.posY };
-          } else if (beforePos && beforeSize) {
-            const afterSize = await win.outerSize().catch((): null => null);
-            if (afterSize) target = {
-              x: Math.round(beforePos.x + (beforeSize.width - afterSize.width) / 2),
-              y: beforePos.y + beforeSize.height - afterSize.height,
-            };
-          }
-          if (target) {
-            await win.setPosition(new m.PhysicalPosition(target.x, target.y)).catch(() => {});
-            this._winPhysX = target.x; this._winPhysY = target.y;
-            this._settings.posX = target.x; this._settings.posY = target.y;
-            saveSettings(this._settings);
-            // 缩放落定立刻用已知几何重报锚点：等 onMoved→_syncWindowMetrics 的
-            // 异步往返，chat 会在旧锚点上多停好几帧（大档位切换时肉眼可见）。
-            this._syncChatAnchor({ cssW: width, cssH: height, physX: target.x, physY: target.y });
-          }
+          // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
+          const mirror = s.mirror;
+          const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
+          const anchor = {
+            x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
+            y: beforePos.y + beforeFoot.y + this._windowResizeRemainder.y,
+          };
+          // 一旦开始改尺寸，即使有新请求，也必须完成本次位置补偿再处理下一次。
+          await win.setSize(new m.LogicalSize(width, height));
+          const afterSize = await win.innerSize();
+          const sf = await win.scaleFactor();
+          const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
+          const target = restoredPosition ?? {
+            x: Math.round(anchor.x - afterFoot.x),
+            y: Math.round(anchor.y - afterFoot.y),
+          };
+          await win.setPosition(new m.PhysicalPosition(target.x, target.y));
+          this._windowResizeRemainder = restoredPosition ? { x: 0, y: 0 } : {
+            x: anchor.x - target.x - afterFoot.x,
+            y: anchor.y - target.y - afterFoot.y,
+          };
+          this._winPhysX = target.x; this._winPhysY = target.y;
+          this._scaleFactor = sf; this._metricsSynced = true;
+          this._settings.posX = target.x; this._settings.posY = target.y;
+          saveSettings(this._settings);
+          // 用实际尺寸而非请求值上报，兼容 DPI 换算与原生尺寸取整。
+          this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf,
+            physX: target.x, physY: target.y });
         })
-        .catch(() => {});
+        .catch(error => {
+          this._windowResizeRemainder = { x: 0, y: 0 };
+          console.warn('Failed to apply pet window settings', error);
+        });
     }
+  }
+
+  /** 与 _render 相同的适配公式；输入、输出均为物理像素。 */
+  private _windowFootOffset(
+    size: { width: number; height: number }, mirror: boolean, chatOpen: boolean
+  ): { x: number; y: number } {
+    const ready = this._model?.isReady();
+    const bounds = ready ? this._model.getStaticBounds() : null;
+    const fitH = chatOpen && ready
+      ? Math.min(size.height, size.width / this._model.boundsAspect) : size.height;
+    const scale = fitH / PetApp._renderMarginRatio / (ready ? this._model.boundsH : 1);
+    return {
+      x: size.width / 2 + (bounds ? (bounds.minX + bounds.maxX) / 2 : 0) * scale * (mirror ? -1 : 1),
+      y: size.height / 2 - (bounds?.minY ?? -0.5) * scale,
+    };
   }
 
   /** 刷新壳侧屏幕尺寸缓存（CSS px；缩放和贴边共用）。 */

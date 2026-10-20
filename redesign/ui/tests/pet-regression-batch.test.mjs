@@ -58,6 +58,126 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   assert.equal(bound, true);
 });
 
+function resizeHarness(sf = 1.5, mirror = false) {
+  const positions = [], sizes = [], anchors = [], saved = [], warnings = [], events = [];
+  const settings = load('settings');
+  const hooks = new Map();
+  let pos = { x: -1200, y: 240 }, size = { width: Math.round(400 * sf), height: Math.round(600 * sf) };
+  let sizeReads = 0;
+  const pause = async stage => { const hook = hooks.get(stage); if (hook) { hooks.delete(stage); await hook(); } };
+  const api = { currentMonitor: async () => { await pause('monitor'); return {
+    scaleFactor: sf, workArea: { position: { x: -3000, y: 0 }, size: { width: 3000, height: 2400 } },
+  }; }, LogicalSize: class { constructor(width, height) { this.width = width; this.height = height; } },
+  PhysicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } } };
+  const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api,
+    './platform': { platform: 'tauri' }, './settings': { ...settings, saveSettings: s => saved.push({ ...s }) },
+  }, { document: { body: { classList: { toggle() {} } } },
+    console: { warn: (...args) => warnings.push(args) } });
+  const app = Object.create(PetApp.prototype);
+  Object.assign(app, { _windowSettingsRevision: 0, _windowSettingsTask: Promise.resolve(), _windowResizeRemainder: { x: 0, y: 0 },
+    _settings: { scale: 1, mirror }, _baseFpsCap: 30, _hitAreas: {}, _chatView: null,
+    _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
+      getStaticBounds: () => ({ minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 }) },
+    _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _cancelSnapAnimation() {}, setFpsCap() {}, setMirrored() {},
+    _syncChatAnchor: anchor => anchors.push(anchor), _broadcastSettings() {},
+    _tauriWindow: { setAlwaysOnTop: async () => {},
+      outerPosition: async () => { await pause('before-position'); return { ...pos }; },
+      innerSize: async () => { await pause(sizeReads++ % 2 === 0 ? 'before-size' : 'after-size'); return { ...size }; },
+      scaleFactor: async () => { await pause('scale-factor'); return sf; },
+      setSize: async requested => {
+        events.push('size'); sizes.push(requested);
+        size = { width: Math.round(requested.width * sf), height: Math.round(requested.height * sf) };
+        await pause('resize');
+      },
+      setPosition: async target => { events.push('position'); await pause('position'); pos = { ...target }; positions.push(pos); },
+    },
+  });
+  return { app, positions, sizes, anchors, saved, warnings, events,
+    change(scale, restore = false) { app.applySettings({ ...app._settings, scale }, restore); },
+    hold(stage) {
+      const reached = deferred(), release = deferred();
+      hooks.set(stage, async () => { reached.resolve(); await release.promise; });
+      return { reached: reached.promise, release: release.resolve };
+    },
+    geometry: () => ({ pos, size }),
+    // 按渲染坐标计算屏幕上的静态脚底中心，独立于窗口补偿方法。
+    foot: () => ({ x: pos.x + size.width / 2 + (app._settings.mirror ? -1 : 1) * 0.05 * size.height / 1.22 / 1.1,
+      y: pos.y + size.height / 2 + 0.6 * size.height / 1.22 / 1.1 }),
+  };
+}
+function nearFoot(actual, expected) {
+  assert.ok(Math.abs(actual.x - expected.x) <= 0.51, `foot x: ${actual.x} vs ${expected.x}`);
+  assert.ok(Math.abs(actual.y - expected.y) <= 0.51, `foot y: ${actual.y} vs ${expected.y}`);
+}
+
+test('缩放固定实际脚底而非窗口底边，兼容负坐标、DPI、镜像和重复往返', async () => {
+  for (const sf of [1, 1.5, 2]) for (const mirror of [false, true]) {
+    const h = resizeHarness(sf, mirror), foot = h.foot();
+    for (const scale of [0.3, 1.3, 0.7, 1, 0.3, 1.3, 1]) {
+      h.change(scale); await h.app._windowSettingsTask;
+      nearFoot(h.foot(), foot);
+      const { pos, size } = h.geometry(), anchor = h.anchors.at(-1);
+      assert.equal(anchor.cssW, size.width / sf); assert.equal(anchor.cssH, size.height / sf);
+      assert.equal(h.saved.at(-1).posX, pos.x); assert.equal(h.saved.at(-1).posY, pos.y);
+    }
+    assert.equal(h.warnings.length, 0);
+  }
+});
+
+test('快速缩放在所有异步边界保持尺寸/位置成对提交，只应用最新排队请求', async () => {
+  for (const stage of ['monitor', 'before-position', 'before-size', 'resize', 'after-size', 'scale-factor', 'position']) {
+    const h = resizeHarness(), foot = h.foot(), gate = h.hold(stage);
+    h.change(0.3); await gate.reached;
+    h.change(0.6); h.change(1.2); h.change(0.8);
+    gate.release(); await h.app._windowSettingsTask;
+    nearFoot(h.foot(), foot);
+    const mutated = ['resize', 'after-size', 'scale-factor', 'position'].includes(stage);
+    assert.deepEqual(h.events, mutated ? ['size', 'position', 'size', 'position'] : ['size', 'position'], stage);
+    assert.equal(h.sizes.at(-1).height, 480);
+    assert.ok(Math.abs(h.app._windowResizeRemainder.x) <= 0.5);
+    assert.ok(Math.abs(h.app._windowResizeRemainder.y) <= 0.5);
+    assert.equal(h.warnings.length, 0);
+  }
+});
+
+test('缩放期间切换镜像与顺序操作一致，补偿不混用不同镜像状态', async () => {
+  const stages = ['monitor', 'before-position', 'before-size', 'resize', 'after-size', 'scale-factor', 'position'];
+  for (const sf of [1, 1.5, 2]) for (const mirror of [false, true]) for (const stage of stages) {
+    const serial = resizeHarness(sf, mirror), overlap = resizeHarness(sf, mirror);
+    const toggleMirror = h => h.app.applySettings({ ...h.app._settings, mirror: !mirror });
+    const mutated = ['resize', 'after-size', 'scale-factor', 'position'].includes(stage);
+    if (mutated) {
+      serial.change(0.3); await serial.app._windowSettingsTask;
+      toggleMirror(serial); await serial.app._windowSettingsTask;
+    } else {
+      toggleMirror(serial); await serial.app._windowSettingsTask;
+      serial.change(0.3); await serial.app._windowSettingsTask;
+    }
+    const gate = overlap.hold(stage);
+    overlap.change(0.3); await gate.reached;
+    toggleMirror(overlap); gate.release(); await overlap.app._windowSettingsTask;
+    assert.deepEqual(overlap.geometry(), serial.geometry(), `${sf}x mirror=${mirror} stage=${stage}`);
+    nearFoot(overlap.foot(), serial.foot());
+    assert.equal(overlap.warnings.length, 0);
+  }
+});
+
+test('启动恢复尊重保存位置；失败不伪造位置成功，也不会阻断后续缩放', async () => {
+  const h = resizeHarness();
+  Object.assign(h.app._settings, { posX: -1800, posY: -200 });
+  h.change(0.7, true); await h.app._windowSettingsTask;
+  assert.deepEqual(h.geometry().pos, { x: -1800, y: -200 });
+  const setPosition = h.app._tauriWindow.setPosition;
+  h.app._tauriWindow.setPosition = async () => { throw new Error('position rejected'); };
+  h.change(0.4); await h.app._windowSettingsTask;
+  assert.equal(h.warnings.length, 1);
+  assert.equal(h.saved.at(-1).posX, -1800);
+  assert.equal(h.anchors.length, 1);
+  h.app._tauriWindow.setPosition = setPosition;
+  h.change(1); await h.app._windowSettingsTask;
+  assert.equal(h.anchors.length, 2);
+});
+
 function playbackHarness() {
   let expression = null, cancellations = 0, reads = 0;
   const timers = new Map();
