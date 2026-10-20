@@ -647,6 +647,8 @@ export class ChatView {
     else hint.textContent = total > 1 ? `▼ 点击收起 ${page}/${total}` : '▼ 点击收起';
   }
   private clearPlayback(): void {
+    // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
+    if (this.replyActive) this.controller.onCancelPerformance();
     this.replyActive = false; this.replyToken = null; this.playing = false;
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;

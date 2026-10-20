@@ -58,6 +58,61 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   assert.equal(bound, true);
 });
 
+function playbackHarness() {
+  let expression = null, cancellations = 0, reads = 0;
+  const timers = new Map();
+  const { ChatPerformance } = load('chat/performance');
+  const performance = new ChatPerformance({ expressions: () => ['shy'], actions: () => [], busy: () => false,
+    expression: () => expression, express: name => { expression = name; }, clearExpression: () => { expression = null; } });
+  const controller = { onCue: cue => performance.cue(cue), onCancelPerformance: () => { cancellations++; performance.cancel(); } };
+  class Typewriter {
+    typing = false;
+    start() { this.typing = true; }
+    finish() { this.typing = false; this.onDone?.(); }
+    cancel() { this.typing = false; }
+  }
+  const { ChatView } = load('chat/view', { './typewriter': { Typewriter }, './msk/config': loadMskConfig() }, {
+    setTimeout: fn => { const id = {}; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
+  });
+  const view = Object.create(ChatView.prototype);
+  Object.assign(view, { controller, screen: 'ready', replyActive: true, replyToken: 'reply-1', playing: true,
+    historyVisible: false, segments: [], pageIndex: 0, typewriter: null, cueTimer: null,
+    content: { scrollTop: 0, scrollHeight: 100, ownerDocument: { getSelection: () => null } },
+    updateHint() {}, reportLayout() {}, measureContentHeight: () => 100,
+    clearRendering() {}, hidePanelAnimated() {}, updateLayoutMode() {}, markSessionRead() { reads++; },
+  });
+  const page = (cue = false) => ({ hidden: true, dataset: cue ? { express: 'shy' } : {},
+    classList: { contains: name => cue && name === 'msk-cue', add() {} } });
+  const click = () => view.onPanelClick({ target: { closest: () => null }, stopPropagation() {}, preventDefault() {} });
+  return { view, performance, controller, page, click, expression: () => expression, reads: () => reads,
+    cancellations: () => cancellations, advanceCue() { const [id, fn] = timers.entries().next().value; timers.delete(id); fn(); },
+    timers,
+  };
+}
+
+test('回复分页期间保留表情；末页读完后释放且逐帧 tick 不会恢复旧表情', () => {
+  const h = playbackHarness();
+  h.view.segments = [h.page(true), h.page(), h.page()];
+  h.view.showPage(0, true); assert.equal(h.expression(), 'shy');
+  h.advanceCue(); h.view.typewriter.finish(); assert.equal(h.expression(), 'shy');
+  h.click(); h.view.typewriter.finish(); assert.equal(h.expression(), 'shy');
+  h.click(); h.performance.tick();
+  assert.equal(h.expression(), null); assert.equal(h.performance.active, false);
+  assert.equal(h.reads(), 1); assert.equal(h.cancellations(), 1);
+});
+
+test('中途收起、替换展示和纯指令末页都释放表情，旧指令计时器被清除', () => {
+  for (const end of ['hideReply', 'clearPlayback', 'cue-only']) {
+    const h = playbackHarness(); h.view.segments = [h.page(true)]; h.view.showPage(0, true);
+    assert.equal(h.expression(), 'shy');
+    if (end === 'cue-only') h.advanceCue(); else h.view[end]();
+    h.performance.tick();
+    assert.equal(h.expression(), null); assert.equal(h.performance.active, false);
+    assert.equal(h.timers.size, 0); assert.equal(h.reads(), end === 'cue-only' ? 1 : 0);
+    h.view.clearPlayback(); assert.equal(h.cancellations(), 1);
+  }
+});
+
 test('挥手图层在各帧率连续淡入淡出；打断放下也不跳变', () => {
   const { HandRaiseChannel } = load('overlay');
   for (const fps of [15, 30, 60]) for (const interrupt of [false, true]) {
