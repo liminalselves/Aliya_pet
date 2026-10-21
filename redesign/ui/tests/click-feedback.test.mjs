@@ -23,7 +23,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const { InteractionService } = load('interaction/interaction', {
     './petting-controller': petting, './procedural': procedural,
   }, globals);
-  const writes = {}, trace = [], lines = [], captures = [], masks = [], shellCalls = [];
+  const writes = {}, trace = [], lines = [], captures = [], masks = [], shellCalls = [], actions = [];
   const target = {
     getInteractionParamInfo: () => ({ angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
       angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
@@ -36,7 +36,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const hitAreas = { hitAreaAt: () => area, isInHeadPetZone: () => area === 'head' };
   const service = new InteractionService({ hitAreas, getTarget: () => target,
     dialogue: { resolveSceneTag: (_scene, tag) => ({ entryId: tag, pages: [{ text: tag }] }) },
-    pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: () => true });
+    pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: name => { actions.push(name); return true; } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
   const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
@@ -67,13 +67,47 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const ctx = (x = 400, secondary = true) => ({ normX: .5, normY: .2, pxX: x, pxY: 200,
     dtSeconds: 1 / 60, leftPressed: !secondary, isSecondary: secondary });
   const advance = ms => { now += ms; service.tick(ms); };
-  return { app, service, writes, trace, lines, captures, masks, shellCalls, canvasEvents, windowEvents, event, ctx, advance,
+  return { app, service, writes, trace, lines, captures, masks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
     area: value => { area = value; }, speaking: value => { speaking = value; }, setTime: value => { now = value; },
     click(overrides = {}) { canvasEvents.pointerdown(event(overrides)); canvasEvents.pointerup(event({ ...overrides, buttons: 0 })); },
     stroke() { for (let i = 1; i <= 90; i++) { now += 1000 / 60;
       service.onPointerMove(ctx(400 + 40 * Math.sin(i / 60 * Math.PI * 2))); service.tick(1000 / 60); } },
   };
 }
+
+test('八连点后的冷却仍有低幅反馈，耳朵共享限频且不续台词或高强度动作', () => {
+  for (const area of ['body', 'head', 'hand', 'tablet', 'ear_left', 'ear_right']) {
+    const h = harness(); h.area('body');
+    for (let i = 0; i < 8; i++) { h.click(); h.advance(100); }
+    assert.equal(h.service.clickSequence.isInCooldown, true);
+    for (let i = 0; i < 40; i++) h.advance(16); // 按帧推进至中性。
+    const lines = h.lines.length, actions = h.actions.length;
+    const apply = h.service.procedural.apply.bind(h.service.procedural); let starts = 0;
+    h.service.procedural.apply = reaction => { starts++; return apply(reaction); };
+    h.area(area); h.click(); h.advance(140);
+    assert.equal(starts, 1); assert.ok(Math.abs(h.writes.offsets[1]) > .5);
+    assert.ok(Math.abs(h.writes.offsets[1]) <= 1.05 + 1e-6, '仅低幅度点头');
+    h.click(); assert.equal(starts, 1, '240ms内不重启反馈');
+    h.advance(100); h.click(); assert.equal(starts, 2, '限频结束即可打断续接');
+    for (let i = 0; i < 10; i++) { h.advance(100); h.click(); }
+    assert.equal(h.lines.length, lines); assert.equal(h.actions.length, actions);
+    for (let i = 0; i < 40; i++) h.advance(16);
+    assert.deepEqual(h.writes.offsets, [0, 0, 0, 0]);
+    h.advance(1000); h.area('body'); h.click();
+    assert.equal(h.service.clickSequence.isInCooldown, false, '持续点击不延长全局冷却');
+    assert.equal(h.lines.length, lines + 1, '冷却后重新允许正常台词');
+  }
+});
+
+for (const ending of ['cancel', 'onModelReloaded', 'onWindowClosed']) test(`冷却反馈经${ending}释放且重置限频`, () => {
+  const h = harness();
+  for (let i = 0; i < 8; i++) { h.click(); h.advance(100); }
+  h.advance(600); h.click(); h.advance(60);
+  h.service[ending](); for (let i = 0; i < 100; i++) h.advance(16);
+  assert.deepEqual(h.writes.offsets, [0, 0, 0, 0]);
+  assert.equal(h.service.procedural.isPlaying, false);
+  assert.equal(h.service._basicClickUntilMs, 0);
+});
 
 for (const chat of ['local', 'remote']) test(`${chat}聊天打开时身体、手部、平板和未命名可见区仍有视觉反馈`, () => {
   for (const area of ['body', 'hand', 'tablet', null]) {

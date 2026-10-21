@@ -502,7 +502,7 @@ test('左右耳高频点击不重复台词或动作启动，节流结束仍保�
  assert.equal(h.writes.eyes[3],'left');assert.equal(s.clickSequence.isInCooldown,false);
 });
 
-test('全局冷却期间左右耳与普通点击均静默，不解除或延长冷却，到期后重新计数',()=>{
+test('全局冷却期间左右耳与普通点击只给低幅反馈，不解除或延长冷却，到期后重新计数',()=>{
  const h=interactionHarness(),s=h.service;
  for(let i=0;i<8;i++){h.setTime(i*100);s.onClick(h.ctx(400,false),false)}
  assert.equal(s.clickSequence.isInCooldown,true);
@@ -511,11 +511,12 @@ test('全局冷却期间左右耳与普通点击均静默，不解除或延长�
   h.setTime(time);s.hitAreas.hitAreaAt=()=>area;
   assert.equal(s.onClick(h.ctx(400,false),false),true);
   assert.equal(s.clickSequence.isInCooldown,true,`${area}不能提前解除冷却`);
-  assert.deepEqual(h.lines,lines);assert.equal(h.reactions.length,starts);assert.deepEqual(h.actions,actions);
+  assert.deepEqual(h.lines,lines);assert.deepEqual(h.actions,actions);
+   for(const reaction of h.reactions.slice(starts)){assert.equal(reaction.type,'acknowledge');assert.equal(reaction.strength,.35)}
  }
  h.setTime(3700);s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);
  assert.equal(s.clickSequence.isInCooldown,false);assert.equal(h.lines.at(-1),'ear_right');
- assert.equal(h.reactions.at(-1).type,'earBlink');assert.equal(h.reactions.length,starts+1);
+ assert.equal(h.reactions.at(-1).type,'earBlink');assert.equal(h.reactions.length,starts+4);
  for(let i=0;i<3;i++){
   h.setTime(3700+i*100);s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);
   assert.equal(h.lines.at(-1),i===2?'click_doubt':'face','冷却内点击和耳朵均不能计入新一轮普通计数');
@@ -629,7 +630,7 @@ function randomSpeechHarness() {
  const dialogue=new DialogueStore();dialogue._files.set('user_click',{entries:[{id:'manual-line',text:'预设台词'}]});
  const resolveRandom=dialogue.resolveRandom.bind(dialogue);
  dialogue.resolveRandom=()=>{draws++;return resolveRandom()};
-  Object.assign(app,{_remoteChat:{open:false},_chatView:{isOpen:false},_touchPetting:false,_running:true,
+  Object.assign(app,{_remoteChat:{open:false},_chatView:{isOpen:false},_touchPetting:false,_running:true,_shellActionsReady:true,_pendingShellActions:[],
   _interaction:{cancel(){}},_dialogue:dialogue,_coordination:new InteractionCoordinator(()=>state,()=>now),
   _bubble:{play(resolved){played.push(resolved);state.speaking=true}}});
  return {app,state,played,get draws(){return draws},setNow(value){now=value}};
@@ -659,16 +660,69 @@ test('手动随机台词保留暂停、互动和聊天防抢话规则，不积�
 
 test('模型与台词尚未加载时手动随机台词不丢失且只补发一次',()=>{
   const h=randomSpeechHarness(); let calls=0;
-  Object.assign(h.app,{_bubble:null,_interaction:null,_running:false,_pendingManualRandomSpeech:false,
+  Object.assign(h.app,{_bubble:null,_interaction:null,_running:false,_shellActionsReady:false,
     _playRandom:source=>{calls++;assert.equal(source,'manual')}});
   h.app.onShellAction({action:'random-speech'});
-  assert.equal(h.app._pendingManualRandomSpeech,true);
+  assert.equal(h.app._pendingShellActions.length,1);
   assert.equal(calls,0);
   Object.assign(h.app,{_bubble:{},_interaction:{},_running:true});
-  h.app._flushPendingManualRandomSpeech();
-  h.app._flushPendingManualRandomSpeech();
+  h.app._flushPendingShellActions();
+  h.app._flushPendingShellActions();
   assert.equal(calls,1);
  });
+
+test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，监听IPC完成先于fetch',async()=>{
+ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}};
+ const ipc=deferred(),fetchGate=deferred(),modelGate=deferred(),dialogueGate=deferred(),hitGate=deferred();
+ const listening=deferred(),fetchStarted=deferred(),modelStarted=deferred(),dialogueStarted=deferred();
+ const listeners=new Map(),calls=[],applied=[];let registrations=0;
+ const events={
+  async listen(name,handler){registrations++;if(registrations===3)listening.resolve();await ipc.promise;listeners.set(name,handler);return ()=>listeners.delete(name)},
+  async emitTo(target,name,payload){assert.equal(target,'pet');listeners.get(name)?.({payload})},
+ };
+ class Model{async loadFromSetting(){modelStarted.resolve();await modelGate.promise}isReady(){return true}actionManifest=[]}
+ class Behavior{setActionMeta(){}start(){}}
+ class Mood{onMoodChanged(){}}
+ class AI{play(name){calls.push(name)}express(name){calls.push(name)}clearExpression(){}setMood(name){calls.push(name)}}
+ const {PetApp}=load('pet-app',{
+  './platform':{platform:'tauri'},'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
+  './dialogue/bubble':{DialogueBubble:class{}},'./interaction/interaction':{InteractionService:class{}},
+  './behavior':{BehaviorService:Behavior},'./emotion':{MoodEngine:Mood},'./pet-ai':{PetAI:AI},
+ },{document:{getElementById:()=>({})},window:{},fetch:async()=>{fetchStarted.resolve();await fetchGate.promise;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_pendingShellActions:[],_shellActionsReady:false,_settingsSyncTask:null,_settings:{mirror:false},
+  _dialogue:{loadAll:()=>{dialogueStarted.resolve();return dialogueGate.promise}},_hitAreas:{load:()=>hitGate.promise},
+  _initializeChat(){this._chatView={setOpen:()=>calls.push('open-chat')}},_wirePointerEvents(){},_startLoop(){this._running=true},
+  applySettings(settings,initial){this._settings=settings;applied.push(initial)},
+  _playRandom(source){assert.ok(this._bubble&&this._interaction&&this._running);assert.equal(source,'manual');calls.push('random-speech')},
+ });
+ const loading=app.loadModel('/model/16.model3.json');await listening.promise;
+ assert.equal(app._model,undefined,'IPC注册未完成时不能进入资源加载');
+ ipc.resolve();await fetchStarted.promise;
+ await events.emitTo('pet','tray-action',{action:'random-speech'});
+ await events.emitTo('pet','tray-action',{action:'play-action',name:'cheerful_bounce'});
+ await events.emitTo('pet','settings-changed',{mirror:true});assert.equal(app._settings.mirror,true);
+ assert.deepEqual(calls,[]);fetchGate.resolve();await modelStarted.promise;
+ await events.emitTo('pet','tray-action',{action:'random-speech'});
+ await events.emitTo('pet','tray-action',{action:'express',name:'shy'});
+ modelGate.resolve();await dialogueStarted.promise;
+ await events.emitTo('pet','tray-action',{action:'set-mood',name:'happy'});
+ dialogueGate.resolve();await Promise.resolve();
+ await events.emitTo('pet','tray-action',{action:'open-chat'});
+ assert.deepEqual(calls,[],'命中区域尚未就绪也不能提前补发');
+ hitGate.resolve();await loading;
+ assert.deepEqual(calls,['random-speech','cheerful_bounce','shy','happy','open-chat']);
+ assert.deepEqual(applied,[false,true]);assert.equal(app._settings.mirror,true);
+ assert.equal(app._pendingShellActions.length,0);
+ await app._wireSettingsSync();await app._wireSettingsSync();assert.equal(registrations,3,'重载不重复监听');
+ await events.emitTo('pet','tray-action',{action:'random-speech'});assert.equal(calls.length,6);
+});
+
+test('Tauri监听安装失败应显式失败，不带着失效操作入口继续加载',async()=>{
+ const {PetApp}=load('pet-app',{'./platform':{platform:'tauri'},'@tauri-apps/api/event':{listen:async()=>{throw new Error('listen IPC failed')}}},
+  {fetch:()=>assert.fail('监听失败不能开始加载')});
+ const app=Object.create(PetApp.prototype);await assert.rejects(app.loadModel('/model.json'),/listen IPC failed/);
+});
 
 test('闲聊不抽取抚摸/点击反应或其他时段的台词',()=>{
  const {DialogueStore,timeScene}=load('dialogue/dialogue');const d=new DialogueStore();const current=timeScene(new Date());

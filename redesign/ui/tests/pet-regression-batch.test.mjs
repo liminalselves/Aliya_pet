@@ -103,8 +103,8 @@ function resizeHarness(sf = 1.5, mirror = false) {
     },
     geometry: () => ({ pos, size }),
     // 按渲染坐标计算屏幕上的静态脚底中心，独立于窗口补偿方法。
-    foot: () => ({ x: pos.x + size.width / 2 + (app._settings.mirror ? -1 : 1) * 0.05 * size.height / 1.22 / 1.1,
-      y: pos.y + size.height / 2 + 0.6 * size.height / 1.22 / 1.1 }),
+    foot: () => ({ x: pos.x + size.width / 2 + (app._settings.mirror ? -1 : 1) * 0.05 * size.height / PetApp._renderMarginRatio / 1.1,
+      y: pos.y + size.height / 2 + 0.6 * size.height / PetApp._renderMarginRatio / 1.1 }),
   };
 }
 function nearFoot(actual, expected) {

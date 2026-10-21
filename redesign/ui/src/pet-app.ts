@@ -29,6 +29,7 @@ import {
 
 /** Tauri 窗口句柄（浏览器环境为 null，拖动退化为不可用）。 */
 type TauriWindow = import('@tauri-apps/api/window').Window;
+type ShellAction = { action: string; value?: boolean; name?: string; duration?: number };
 
 /**
  * 应用外壳：WebGL 画布、渲染循环（帧率上限）、模型装配与投影、
@@ -51,8 +52,10 @@ export class PetApp {
 
   // 逻辑层
   private _dialogue = new DialogueStore();
-  /** 设置窗口可能在模型/台词加载完成前就发来手动随机台词请求。 */
-  private _pendingManualRandomSpeech = false;
+  /** 监听先于资源加载；依赖模型/台词的操作在完整装配后按接收顺序执行。 */
+  private _pendingShellActions: ShellAction[] = [];
+  private _shellActionsReady = false;
+  private _settingsSyncTask: Promise<void> | null = null;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
   private _interaction: InteractionService = null;
@@ -163,12 +166,11 @@ export class PetApp {
   private static readonly _snapZonePx = 48;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.22。
-   * Aliya 自编动作（tools/gen-motions.py）实测最差帧：水平 maxX 0.374 /
-   * 垂直 maxY 0.517（模型单位，静态包围盒 0.636×1.011）；需求 水平 1.156 /
-   * 垂直 1.023，1.22 = 最差 1.156 × 1.05 安全余量（测量方法见 docs/ACTIONS.md）。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.30，不改变用户窗口缩放设置。
+   * 正式 Core 的新动作×表情×极端注视/切换矩阵：需求 1.222872，
+   * 乘 1.05 安全系数后需 1.284015，向上取 1.30（测量方法见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.22;
+  private static readonly _renderMarginRatio = 1.30;
   /** 聊天入口与脚底的固定间隙（CSS px）。 */
   private static readonly _launcherGapCss = 6;
 
@@ -295,6 +297,9 @@ export class PetApp {
   }
 
   public async loadModel(model3JsonUrl: string): Promise<void> {
+    this._shellActionsReady = false;
+    // listen() 的 IPC 注册也异步：必须等监听安装完毕才开始加载模型/台词。
+    await this._wireSettingsSync();
     const response = await fetch(model3JsonUrl);
     const buffer = await response.arrayBuffer();
     const homeDir = model3JsonUrl.substring(
@@ -358,7 +363,6 @@ export class PetApp {
 
     this._initializeChat();
     this._wirePointerEvents();
-    this._wireSettingsSync();
     this._startLoop();
     console.log('[pet] model + logic layer ready');
 
@@ -377,7 +381,7 @@ export class PetApp {
 
     // 启动时全量应用设置（含窗口位置/缩放/置顶恢复）
     this.applySettings(this._settings, true);
-    this._flushPendingManualRandomSpeech();
+    this._flushPendingShellActions();
   }
 
   // ---------- 设置 ----------
@@ -753,38 +757,29 @@ export class PetApp {
     this._canvas.style.transform = v ? 'scaleX(-1)' : '';
   }
 
-  /** 设置窗口/托盘事件接线。 */
-  private _wireSettingsSync(): void {
-    if (platform !== 'tauri') return;
-    import('@tauri-apps/api/event')
-      .then((ev) => {
-        // 设置窗口推送的全量设置
+  /** 设置窗口/托盘事件接线；模型重载时复用注册任务，避免重复监听。 */
+  private _wireSettingsSync(): Promise<void> {
+    if (platform !== 'tauri') return Promise.resolve();
+    return this._settingsSyncTask ??= import('@tauri-apps/api/event').then(async (ev) => {
+      await Promise.all([
         ev.listen<PetSettings>('settings-changed', (e) => {
           if (!e.payload || typeof e.payload !== 'object') return;
           this.applySettings(e.payload, false);
-        });
-        // 托盘/设置窗口动作
-        ev.listen<{
-          action: string;
-          value?: boolean;
-          name?: string;
-          duration?: number;
-        }>('tray-action', (e) => {
+        }),
+        ev.listen<ShellAction>('tray-action', (e) => {
           const p = e.payload;
           if (!p || typeof p.action !== 'string') return;
           this.onShellAction(p);
-        });
+        }),
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
         ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
           if (Number.isFinite(e.payload.x) && Number.isFinite(e.payload.y)) {
             this._globalMouse = e.payload;
           }
-        });
-      })
-      .catch(() => {
-        // 浏览器环境：无事件同步
-      });
+        }),
+      ]);
+    });
   }
 
   /** 向设置窗口广播当前设置（托盘改动后保持 UI 同步）。 */
@@ -803,12 +798,16 @@ export class PetApp {
    * Android 设置页经壳桥 notifyPetAction 转发（main.ts 暴露给
    * window.__pet.onShellAction）。
    */
-  public onShellAction(p: {
-    action: string;
-    value?: boolean;
-    name?: string;
-    duration?: number;
-  }): void {
+  public onShellAction(p: ShellAction): void {
+    if (!this._shellActionsReady && [
+      'open-chat', 'play-action', 'random-speech', 'express', 'clear-expression', 'set-mood',
+    ].includes(p.action)) {
+      // 启动阶段连续点随机台词只补发一次，不积压一串气泡。
+      if (p.action !== 'random-speech' || !this._pendingShellActions.some(a => a.action === p.action)) {
+        this._pendingShellActions.push({ ...p });
+      }
+      return;
+    }
     switch (p.action) {
         case 'open-chat':
           if (this._chatView && !this._chatView.isOpen) this._chatView.setOpen(true);
@@ -832,12 +831,7 @@ export class PetApp {
           if (p.name) this._ai?.play(p.name);
           break;
         case 'random-speech':
-          // 设置窗口可以早于 pet 的模型/台词加载完成；此时不能把手动请求静默丢掉。
-          if (!this._bubble || !this._interaction || !this._running) {
-            this._pendingManualRandomSpeech = true;
-          } else {
-            this._playRandom('manual');
-          }
+          this._playRandom('manual');
           break;
         // 表情/情绪（设置窗口「表情与情绪」面板）
         case 'express':
@@ -852,11 +846,11 @@ export class PetApp {
     }
   }
 
-  /** 模型、台词和气泡就绪后补发启动阶段收到的手动随机台词请求。 */
-  private _flushPendingManualRandomSpeech(): void {
-    if (!this._pendingManualRandomSpeech) return;
-    this._pendingManualRandomSpeech = false;
-    this._playRandom('manual');
+  /** 模型、台词和气泡就绪后补发；忙碌/暂停等仲裁仍由正常入口处理。 */
+  private _flushPendingShellActions(): void {
+    this._shellActionsReady = true;
+    const pending = this._pendingShellActions.splice(0);
+    for (const action of pending) this.onShellAction(action);
   }
 
   /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
