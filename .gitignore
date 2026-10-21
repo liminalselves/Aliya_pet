@@ -59,6 +59,8 @@ redesign/node_modules/
 redesign/ui/node_modules/
 redesign/ui/dist/
 redesign/src-tauri/target/
+# Cargo 缓存备份及一次性构建目录
+redesign/src-tauri/target-*/
 redesign/android/.gradle/
 redesign/android/build/
 redesign/android/app/build/
