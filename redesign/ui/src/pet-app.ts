@@ -23,7 +23,6 @@ import {
 } from './settings';
 import {
   platform,
-  isTouchDevice,
   androidShell,
   isAndroidOverlay,
 } from './platform';
@@ -52,6 +51,8 @@ export class PetApp {
 
   // 逻辑层
   private _dialogue = new DialogueStore();
+  /** 设置窗口可能在模型/台词加载完成前就发来手动随机台词请求。 */
+  private _pendingManualRandomSpeech = false;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
   private _interaction: InteractionService = null;
@@ -130,6 +131,8 @@ export class PetApp {
   private _hitMaskData: Uint8Array = new Uint8Array(0);
   private _hitMaskRows = 0;
   private _hitMaskLastMs = 0;
+  private _hitMaskSentMs = 0;
+  private _hitMaskGeometry = '';
   private _hitMaskSend: ((args: Record<string, unknown>) => void) | null = null;
   private _hitMaskInteracting = false;
 
@@ -137,6 +140,7 @@ export class PetApp {
   private _settings: PetSettings = loadSettings();
 
   // 指针状态
+  private _activePointerId: number | null = null;
   private _leftDown = false;
   private _dragCandidate = false;
   private _dragging = false;
@@ -373,6 +377,7 @@ export class PetApp {
 
     // 启动时全量应用设置（含窗口位置/缩放/置顶恢复）
     this.applySettings(this._settings, true);
+    this._flushPendingManualRandomSpeech();
   }
 
   // ---------- 设置 ----------
@@ -827,7 +832,12 @@ export class PetApp {
           if (p.name) this._ai?.play(p.name);
           break;
         case 'random-speech':
-          this._playRandom();
+          // 设置窗口可以早于 pet 的模型/台词加载完成；此时不能把手动请求静默丢掉。
+          if (!this._bubble || !this._interaction || !this._running) {
+            this._pendingManualRandomSpeech = true;
+          } else {
+            this._playRandom('manual');
+          }
           break;
         // 表情/情绪（设置窗口「表情与情绪」面板）
         case 'express':
@@ -840,6 +850,13 @@ export class PetApp {
           if (p.name) this._ai?.setMood(p.name, p.duration);
           break;
     }
+  }
+
+  /** 模型、台词和气泡就绪后补发启动阶段收到的手动随机台词请求。 */
+  private _flushPendingManualRandomSpeech(): void {
+    if (!this._pendingManualRandomSpeech) return;
+    this._pendingManualRandomSpeech = false;
+    this._playRandom('manual');
   }
 
   /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
@@ -1133,10 +1150,10 @@ export class PetApp {
     if (resolved) this._speak(resolved, 'interaction');
   }
 
-  private _playRandom(): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak('ambient')) return;
+  private _playRandom(source: 'ambient' | 'manual' = 'ambient'): void {
+    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak(source)) return;
     const resolved = this._dialogue.resolveRandom();
-    if (resolved) this._speak(resolved, 'ambient');
+    if (resolved) this._speak(resolved, source);
   }
 
   // ---------- 指针输入 ----------
@@ -1207,7 +1224,7 @@ export class PetApp {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (!e.isPrimary || (e.button !== 0 && e.button !== 2)) return;
+      if (!e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
       // 透明像素兜底：壳穿透生效前的竞态，落在透明区的事件不触发互动
       if (
@@ -1218,6 +1235,9 @@ export class PetApp {
         return;
       }
       this._cancelSnapAnimation();
+      this._activePointerId = e.pointerId;
+      // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
+      this._publishHitMask();
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
@@ -1228,11 +1248,11 @@ export class PetApp {
         e.button === 2 ||
         // 触摸端没有右键：按下头部抚摸区视为抚摸手势起点，
         // 其余区域的单指按住保留给拖动窗口
-        (isTouchDevice &&
+        (e.pointerType === 'touch' &&
           e.button === 0 &&
           this._hitAreas.isInHeadPetZone(n0.nx, n0.ny));
       const ctx = this._ctx(e, isSecondary);
-      this._touchPetting = isTouchDevice && isSecondary && e.button === 0;
+      this._touchPetting = e.pointerType === 'touch' && isSecondary && e.button === 0;
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
@@ -1267,7 +1287,7 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointermove', (e) => {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._dragThresholdPx) {
         this._touchTapCandidate = false;
       }
@@ -1303,7 +1323,7 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointerup', (e) => {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       this._coordination.activity();
       const viaPetting = e.button === 2 || this._touchPetting;
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
@@ -1327,9 +1347,13 @@ export class PetApp {
         }
         this._resetDragState();
       }
+      this._activePointerId = null;
+      this._touchTapCandidate = false;
+      this._publishHitMask();
     });
 
-    canvas.addEventListener('pointercancel', () => {
+    canvas.addEventListener('pointercancel', (e) => {
+      if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -1337,8 +1361,9 @@ export class PetApp {
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
     });
-    canvas.addEventListener('lostpointercapture', () => {
-      if (!this._leftDown && !this._touchPetting &&
+    canvas.addEventListener('lostpointercapture', (e) => {
+      if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
       this._cancelInteraction();
@@ -1379,9 +1404,12 @@ export class PetApp {
    * 配对的 pointerup 可能永远不到达，需主动收尾，否则按下状态与 expand=96 卡死。
    */
   private _cancelInteraction(): void {
+    this._activePointerId = null;
     this._touchPetting = false;
+    this._touchTapCandidate = false;
     this._interaction?.cancel();
     this._coordination.activity();
+    this._publishHitMask();
   }
 
   /** 拉取窗口物理位置与 DPI 缩放；旧查询不得覆盖正在提交或播放动画的位置。 */
@@ -1880,11 +1908,13 @@ export class PetApp {
     const androidWrap = platform === 'android' && this._wrapWindow;
     if (!this._hitMaskSend && !androidWrap) return;
     if (!this._model?.isReady()) return;
-    const interacting = this._leftDown || this._touchPetting || (this._chatView?.pointerActive ?? false);
+    const interacting = this._isPointerInteracting();
+    const geometry = this._hitMaskGeometryKey();
     const now = performance.now();
     if (
       now - this._hitMaskLastMs < 120 &&
-      interacting === this._hitMaskInteracting
+      interacting === this._hitMaskInteracting &&
+      geometry === this._hitMaskGeometry
     ) {
       return;
     }
@@ -1937,13 +1967,16 @@ export class PetApp {
       interacting === this._hitMaskInteracting &&
       data.length === this._hitMaskData.length &&
       rows === this._hitMaskRows &&
-      data.every((v, i) => v === this._hitMaskData[i])
+      data.every((v, i) => v === this._hitMaskData[i]) &&
+      geometry === this._hitMaskGeometry &&
+      (androidWrap || now - this._hitMaskSentMs < 1000)
     ) {
-      return; // 掩码无变化：寂静期零 IPC
+      return; // Windows 仍需在原生 1.5s TTL 前刷新；相同剪影不能吞掉几何变化。
     }
     this._hitMaskData = data;
     this._hitMaskRows = rows;
     this._hitMaskInteracting = interacting;
+    this._hitMaskGeometry = geometry;
     if (androidWrap) {
       // Android 悬浮窗：壳在 ACTION_DOWN 命中透明格时临时切 NOT_TOUCHABLE 穿透
       let csv = '';
@@ -1951,11 +1984,30 @@ export class PetApp {
       androidShell()?.setHitMask(cols, rows, csv);
       return;
     }
-    this._hitMaskSend?.({
-      cols,
-      rows,
-      data: Array.from(data),
-      interacting,
+    this._publishHitMask();
+  }
+
+  private _isPointerInteracting(): boolean {
+    const petting = this._interaction?.petting.state;
+    return this._activePointerId != null || petting === 'pressed' || petting === 'petting'
+      || (this._chatView?.pointerActive ?? false);
+  }
+
+  private _hitMaskGeometryKey(): string {
+    return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor].join(':');
+  }
+
+  /** 只重发缓存掩码，不在输入回调读取/改写渲染缓冲。 */
+  private _publishHitMask(): void {
+    if (platform !== 'tauri' || !this._hitMaskSend || !this._hitMaskData.length) return;
+    this._hitMaskInteracting = this._isPointerInteracting();
+    this._hitMaskGeometry = this._hitMaskGeometryKey();
+    this._hitMaskSentMs = performance.now();
+    this._hitMaskSend({
+      cols: PetApp._hitMaskCols,
+      rows: this._hitMaskRows,
+      data: Array.from(this._hitMaskData),
+      interacting: this._hitMaskInteracting,
       winX: this._winPhysX,
       winY: this._winPhysY,
       winW: Math.round(window.innerWidth * this._scaleFactor),

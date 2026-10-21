@@ -21,6 +21,8 @@ export interface PetSettings {
   mirror: boolean;
   randomSpeech: boolean;
   randomSpeechMinutes: number;
+  /** 回复与聊天记录中显示生成配图卡片（含待生成占位符）。 */
+  showGeneratedImages: boolean;
   /** 省电模式：帧率上限降为 15fps（移动端主要收益）。 */
   batterySaver?: boolean;
 }
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   mirror: false,
   randomSpeech: false,
   randomSpeechMinutes: 5,
+  showGeneratedImages: true,
   batterySaver: false,
 };
 

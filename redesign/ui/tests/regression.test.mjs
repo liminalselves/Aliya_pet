@@ -620,6 +620,56 @@ test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留
  now=2500;assert.equal(c.canIdle(),true);state.paused=true;assert.equal(c.canSpeak('interaction'),false);
 });
 
+function randomSpeechHarness() {
+ const {PetApp}=load('pet-app');
+ const {InteractionCoordinator}=load('interaction/coordination');
+ const {DialogueStore}=load('dialogue/dialogue');
+ const app=Object.create(PetApp.prototype),played=[];
+ const state={interacting:false,speaking:false,paused:false};let now=0,draws=0;
+ const dialogue=new DialogueStore();dialogue._files.set('user_click',{entries:[{id:'manual-line',text:'预设台词'}]});
+ const resolveRandom=dialogue.resolveRandom.bind(dialogue);
+ dialogue.resolveRandom=()=>{draws++;return resolveRandom()};
+  Object.assign(app,{_remoteChat:{open:false},_chatView:{isOpen:false},_touchPetting:false,_running:true,
+  _interaction:{cancel(){}},_dialogue:dialogue,_coordination:new InteractionCoordinator(()=>state,()=>now),
+  _bubble:{play(resolved){played.push(resolved);state.speaking=true}}});
+ return {app,state,played,get draws(){return draws},setNow(value){now=value}};
+}
+
+test('设置窗口手动随机台词绕过失焦静默期，自动闲聊仍等待',()=>{
+ const h=randomSpeechHarness();
+ h.app._cancelInteraction();h.setNow(400);
+ h.app._playRandom();assert.equal(h.draws,0,'自动闲聊仍在静默期');
+ h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'手动按钮不能被失焦产生的静默期吞掉');
+ assert.equal(h.played[0].pages[0].text,'预设台词');
+ h.app.onShellAction({action:'random-speech'});assert.equal(h.draws,1,'连点不抽取或覆盖正在播放的气泡');
+ h.state.speaking=false;h.setNow(2500);h.app._playRandom();assert.equal(h.played.length,2);
+});
+
+test('手动随机台词保留暂停、互动和聊天防抢话规则，不积压请求',()=>{
+  const h=randomSpeechHarness();
+  for(const key of ['paused','speaking','interacting']){
+  h.state[key]=true;h.app.onShellAction({action:'random-speech'});h.state[key]=false;
+ }
+ h.app._remoteChat.open=true;h.app.onShellAction({action:'random-speech'});h.app._remoteChat.open=false;
+ h.app._chatView.isOpen=true;h.app.onShellAction({action:'random-speech'});h.app._chatView.isOpen=false;
+ assert.equal(h.draws,0);assert.equal(h.played.length,0);
+  h.app._dialogue._files.clear();h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
+ });
+
+test('模型与台词尚未加载时手动随机台词不丢失且只补发一次',()=>{
+  const h=randomSpeechHarness(); let calls=0;
+  Object.assign(h.app,{_bubble:null,_interaction:null,_running:false,_pendingManualRandomSpeech:false,
+    _playRandom:source=>{calls++;assert.equal(source,'manual')}});
+  h.app.onShellAction({action:'random-speech'});
+  assert.equal(h.app._pendingManualRandomSpeech,true);
+  assert.equal(calls,0);
+  Object.assign(h.app,{_bubble:{},_interaction:{},_running:true});
+  h.app._flushPendingManualRandomSpeech();
+  h.app._flushPendingManualRandomSpeech();
+  assert.equal(calls,1);
+ });
+
 test('闲聊不抽取抚摸/点击反应或其他时段的台词',()=>{
  const {DialogueStore,timeScene}=load('dialogue/dialogue');const d=new DialogueStore();const current=timeScene(new Date());
  for(const scene of ['user_click','interaction','head_petting','morning','deep_night',current])d._files.set(scene,{entries:[{id:scene,text:scene}]});

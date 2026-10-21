@@ -1,5 +1,5 @@
 /** 普通互动的共享规则。身体反馈与台词分开仲裁，不积压过时反应。 */
-export type SpeechSource = 'ambient' | 'interaction' | 'conversation';
+export type SpeechSource = 'ambient' | 'manual' | 'interaction' | 'conversation';
 
 export class InteractionCoordinator {
   private _quietUntil = 0;
@@ -22,6 +22,8 @@ export class InteractionCoordinator {
   canSpeak(source: SpeechSource): boolean {
     const s = this.state();
     if (s.paused || s.speaking) return false;
+    // 设置窗口会让角色失焦并进入安静期；手动台词只绕过该等待，不抢占进行中的互动。
+    if (source === 'manual') return !s.interacting;
     return source !== 'ambient' || this.canIdle();
   }
 }

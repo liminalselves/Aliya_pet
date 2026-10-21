@@ -79,6 +79,8 @@ export interface RenderContext {
   loadEmojis?: (signal?: AbortSignal) => Promise<ReadonlyArray<CustomEmojiInfo>>;
   /** 显示用正则规则（可用 fetchRegexRules(api, characterId) 拉取）。 */
   regexRules?: ReadonlyArray<AgentRegexRule>;
+  /** 生成配图显示开关，默认 true；false 时不创建卡片，也不查询或生成配图。 */
+  showGeneratedImages?: boolean;
   /** 自动生图开关，默认 true。 */
   autoDraw?: boolean;
   /** 单条消息自动生图张数上限，默认不限。 */

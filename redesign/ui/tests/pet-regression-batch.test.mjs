@@ -408,6 +408,19 @@ function playbackHarness() {
   };
 }
 
+test('仅含配图的回复被隐藏后收起空白面板，不误报已读', () => {
+  const h = playbackHarness();
+  let hidden = false;
+  h.view.content.querySelectorAll = () => [];
+  h.view.hidePanelAnimated = () => { hidden = true; };
+  h.view.resyncPages();
+  assert.equal(hidden, true);
+  assert.equal(h.view.replyActive, false);
+  assert.equal(h.view.playing, false);
+  assert.equal(h.reads(), 0);
+  assert.equal(h.cancellations(), 1);
+});
+
 test('回复分页期间保留表情；末页读完后释放且逐帧 tick 不会恢复旧表情', () => {
   const h = playbackHarness();
   h.view.segments = [h.page(true), h.page(), h.page()];

@@ -66,6 +66,7 @@ export class InteractionService {
     this.procedural = new ProceduralReactionService({
       getTarget: deps.getTarget,
       isPettingActive: () => this.petting.isPettingSessionActive,
+      takeOverPetting: () => this.petting.releaseFinishing(),
       playCharacterAction: deps.playCharacterAction,
     });
   }
@@ -158,6 +159,10 @@ export class InteractionService {
       case 'face':
         // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
         this.procedural.apply(ProceduralReactions.blush(1.0));
+        break;
+      default:
+        // 身体、手部、平板及未命名的可见区域也有独立反馈，不依赖台词成功播放。
+        this.procedural.apply(ProceduralReactions.acknowledge(0.8));
         break;
     }
 

@@ -7,7 +7,7 @@
  *     耳朵（同侧眨眼与轻微偏头）、快速拖动（睁大）、连续点击（疑惑）的相位动画
  */
 
-import { InteractionTarget } from './target';
+import { InteractionTarget, type InteractionPose } from './target';
 
 // ---------- 连续点击检测 ----------
 
@@ -164,7 +164,8 @@ export type ProceduralReactionType =
   | 'earBlink'
   | 'eyesWiden'
   | 'doubt'
-  | 'blush';
+  | 'blush'
+  | 'acknowledge';
 
 export interface ProceduralReaction {
   type: ProceduralReactionType;
@@ -173,6 +174,10 @@ export interface ProceduralReaction {
 }
 
 export const ProceduralReactions = {
+  acknowledge: (strength: number): ProceduralReaction => ({
+    type: 'acknowledge',
+    strength,
+  }),
   eyesAndTilt: (strength: number): ProceduralReaction => ({
     type: 'headTiltAndEyes',
     strength,
@@ -239,6 +244,8 @@ export class ProceduralReactionService {
   private readonly _getTarget: () => InteractionTarget | null;
   private readonly _isPettingActive: () => boolean;
   private readonly _playCharacterAction: (action: string) => boolean;
+  private readonly _takeOverPetting?: () => InteractionPose | null;
+  private _recovery: { from: InteractionPose; current: InteractionPose; startMs: number } | null = null;
 
   private _phases: Phase[] = [];
   private _phaseIndex = 0;
@@ -258,26 +265,42 @@ export class ProceduralReactionService {
   constructor(deps: {
     getTarget: () => InteractionTarget | null;
     isPettingActive: () => boolean;
+    takeOverPetting?: () => InteractionPose | null;
     playCharacterAction: (action: string) => boolean;
   }) {
     this._getTarget = deps.getTarget;
     this._isPettingActive = deps.isPettingActive;
+    this._takeOverPetting = deps.takeOverPetting;
     this._playCharacterAction = deps.playCharacterAction;
   }
 
   get isPlaying(): boolean {
-    return this._phases.length > 0;
+    return this._phases.length > 0 || this._recovery !== null;
   }
 
   apply(reaction: ProceduralReaction): void {
-    if (this._isPettingActive()) return;
     if (this._getTarget() == null) return;
+    // Finishing 可被点击接管；Pressed/Petting 仍独占互动通道。
+    const pose = this._takeOverPetting?.();
+    if (this._isPettingActive()) return;
+    if (pose) {
+      this._recovery = { from: pose, current: pose, startMs: performance.now() };
+    }
 
     // area 是未镜像画面侧，参数 L/R 是角色解剖侧（实模顶点验证为左右相反）。
     // 镜像已由 HitAreas 还原，这里只映射一次；脸红和单纯转头不抢占眼睑。
     this._eyeSide = reaction.areaId === 'ear_left' ? 'right'
       : reaction.areaId === 'ear_right' ? 'left' : 'both';
     switch (reaction.type) {
+      case 'acknowledge': {
+        const s = Math.min(1, Math.max(0, reaction.strength));
+        this._start([
+          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0),
+          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0),
+          phase(280, 1, 0, 0, 0, 0, 0),
+        ]);
+        break;
+      }
       case 'headTiltAndEyes':
         this._start([
           phase(180, 0.85, 2.5, 0, -3, 0, 0),
@@ -324,7 +347,8 @@ export class ProceduralReactionService {
         ]);
         break;
     }
-    this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'lookAtThenAway';
+    this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'lookAtThenAway'
+      && reaction.type !== 'acknowledge';
   }
 
   cancelAll(immediate = false): void {
@@ -335,6 +359,7 @@ export class ProceduralReactionService {
       return;
     }
     this._phases.length = 0;
+    this._recovery = null;
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
     this._eyeOpen = 1;
@@ -354,6 +379,11 @@ export class ProceduralReactionService {
   }
 
   private _start(phases: Phase[]): void {
+    // 恢复期内再次点击，从上一帧实际输出重新交接，不能回退到旧抚摸姿态。
+    if (this._recovery) {
+      this._recovery.from = this._recovery.current;
+      this._recovery.startMs = performance.now();
+    }
     this._phases = phases.length > 0 ? [...phases] : [NEUTRAL];
     this._phaseIndex = 0;
     this._phaseStartMs = performance.now();
@@ -366,7 +396,7 @@ export class ProceduralReactionService {
   tick(): void {
     const target = this._getTarget();
     if (!target) return;
-    if (this._phases.length === 0) return;
+    if (!this.isPlaying) return;
 
     const now = performance.now();
     const t = (now - this._phaseStartMs) / 1000;
@@ -399,10 +429,36 @@ export class ProceduralReactionService {
       }
     }
 
+    // 只由本服务写通道：从抚摸的最后一帧平滑混入新反应，而非先清零。
+    let output: InteractionPose = {
+      headX: this._headX, headY: this._headY, headZ: this._headZ, bodyX: 0,
+      eyeEnabled: this._eyeOverrideActive,
+      eyeLeft: this._eyeOpen, eyeRight: this._eyeOpen,
+    };
+    let side = this._eyeSide;
+    if (this._recovery) {
+      const { from, startMs } = this._recovery;
+      const t = Math.min(Math.max((now - startMs) / 240, 0), 1);
+      const k = t * t * (3 - 2 * t);
+      const blend = (a: number, b: number) => a + (b - a) * k;
+      output = {
+        headX: blend(from.headX, output.headX), headY: blend(from.headY, output.headY),
+        headZ: blend(from.headZ, output.headZ), bodyX: blend(from.bodyX, 0),
+        eyeEnabled: output.eyeEnabled || (from.eyeEnabled && t < 1),
+        eyeLeft: blend(from.eyeEnabled ? from.eyeLeft : 1,
+          output.eyeEnabled && side !== 'right' ? this._eyeOpen : 1),
+        eyeRight: blend(from.eyeEnabled ? from.eyeRight : 1,
+          output.eyeEnabled && side !== 'left' ? this._eyeOpen : 1),
+      };
+      // 另一只眼只平滑睁开，不跟随耳朵点击再次闭眼。
+      if (from.eyeEnabled && t < 1) side = 'both';
+      this._recovery.current = output;
+      if (t >= 1) this._recovery = null;
+    }
     try {
-      target.setInteractionOffsets(this._headX, this._headY, this._headZ, 0);
-      if (this._eyeOverrideActive) {
-        target.setEyeOverride(true, this._eyeOpen, this._eyeOpen, this._eyeSide);
+      target.setInteractionOffsets(output.headX, output.headY, output.headZ, output.bodyX);
+      if (output.eyeEnabled) {
+        target.setEyeOverride(true, output.eyeLeft, output.eyeRight, side);
       } else {
         target.setEyeOverride(false, 0, 0);
       }

@@ -11,6 +11,7 @@ import { normalizeRegexRules } from './rendering/rules';
 import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } from './rendering/emoji';
 import type { MskApiCaller } from './rendering/types';
 import { openUrl, platform, shellAction } from '../platform';
+import { loadSettings } from '../settings';
 import './chat.css';
 
 /** 会话列表用的简短相对时间。 */
@@ -479,7 +480,8 @@ export class ChatView {
       this.historyMayHaveMore = timeline.length >= HISTORY_FETCH_LIMIT;
       this.renderer = new MskMessageRenderer({ api, openUrl: url => { void openUrl(url); }, onImageClick: url => { void openUrl(url); },
         regexRules: normalizeRegexRules(character.regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
-        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false });
+        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false,
+        get showGeneratedImages() { return loadSettings().showGeneratedImages; } });
       this.controller.useProvider(new MskChatProvider(client, session.id));
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.lastAnswer = this.controller.latest?.id ?? '';
@@ -591,7 +593,8 @@ export class ChatView {
   private resyncPages(): void {
     if (!this.replyActive || !this.playing) return;
     const segments = [...this.content.querySelectorAll<HTMLElement>('.msk-segment')];
-    if (!segments.length) return;
+    // 仅含配图的回复在关闭配图后没有可播放页，不留下空白面板。
+    if (!segments.length) { this.hideReply(); return; }
     if (segments.length === this.segments.length && segments.every((s, i) => s === this.segments[i])) return;
     const firstPaint = this.segments.length === 0;
     this.segments = segments;

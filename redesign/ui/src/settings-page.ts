@@ -204,6 +204,7 @@ function switchRow(
 const refs: {
   autoActions?: HTMLInputElement;
   randomSpeech?: HTMLInputElement;
+  showGeneratedImages?: HTMLInputElement;
   speechMinutes?: HTMLInputElement;
   mirror?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
@@ -235,6 +236,7 @@ function paintSliderFill(slider: HTMLInputElement): void {
 function refreshControls(): void {
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
+  if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
   if (refs.speechMinutes)
     refs.speechMinutes.value = String(settings.randomSpeechMinutes);
   if (refs.mirror) refs.mirror.checked = settings.mirror;
@@ -475,6 +477,19 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     (v) => update({ mirror: v })
   );
   refs.batterySaver = addBatterySaverSwitch(box);
+}
+
+// ---- 聊天 ----
+{
+  const box = section('聊天');
+  refs.showGeneratedImages = switchRow(
+    box,
+    '显示生成配图',
+    '显示回复和记录中的配图及生成按钮；更改后对新回复、重新播放或重新打开的记录生效，不影响表情包和用户附图',
+    () => settings.showGeneratedImages,
+    (v) => update({ showGeneratedImages: v })
+  );
+  refs.showGeneratedImages.setAttribute('aria-label', '显示生成配图');
 }
 
 // ---- 窗口 ----
