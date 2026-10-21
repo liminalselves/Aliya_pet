@@ -718,10 +718,85 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
  await events.emitTo('pet','tray-action',{action:'random-speech'});assert.equal(calls.length,6);
 });
 
-test('Tauri监听安装失败应显式失败，不带着失效操作入口继续加载',async()=>{
- const {PetApp}=load('pet-app',{'./platform':{platform:'tauri'},'@tauri-apps/api/event':{listen:async()=>{throw new Error('listen IPC failed')}}},
-  {fetch:()=>assert.fail('监听失败不能开始加载')});
- const app=Object.create(PetApp.prototype);await assert.rejects(app.loadModel('/model.json'),/listen IPC failed/);
+test('Tauri监听失败降级加载模型，可见提示重试只补装失败项且不重建模型',async()=>{
+ const attempts=new Map(),listeners=new Map(),notices=[],errors=[];let failing=true,fetches=0,clicks=0,random=0;
+ const notice={remove(){this.removed=true}};
+ class Model{async loadFromSetting(){}isReady(){return true}actionManifest=[]}
+ const {PetApp}=load('pet-app',{
+  './platform':{platform:'tauri'},'@tauri-apps/api/event':{async listen(name,handler){
+   attempts.set(name,(attempts.get(name)??0)+1);
+   if(name==='tray-action'&&failing)throw new Error('listen IPC failed');
+   assert.equal(listeners.has(name),false,'成功项不能重复注册');listeners.set(name,handler);return ()=>{};
+  }},
+  './startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
+  './pet-model':{PetModel:Model},'./dialogue/bubble':{DialogueBubble:class{}},
+  './interaction/interaction':{InteractionService:class{onClick(){clicks++}}},
+  './behavior':{BehaviorService:class{setActionMeta(){}start(){}}},
+  './emotion':{MoodEngine:class{onMoodChanged(){}}},'./pet-ai':{PetAI:class{}},
+ },{console:{...console,error:(...args)=>errors.push(args)},document:{getElementById:()=>({})},window:{},
+  fetch:async()=>{fetches++;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_pendingShellActions:[],_settingsSyncTask:null,_settings:{},
+  _dialogue:{async loadAll(){}},_hitAreas:{async load(){}},_initializeChat(){},_wirePointerEvents(){},
+  _startLoop(){this._running=true},applySettings(s){this._settings=s},_playRandom(){random++}});
+ await app.loadModel('/model.json');
+ assert.equal(fetches,1);assert.equal(app._model.isReady(),true);assert.equal(app._running,true);
+ app._interaction.onClick();assert.equal(clicks,1,'本地互动服务仍可使用');
+ assert.equal(app._shellActionsReady,true);assert.equal(app._settingsSyncTask,null,'失败的Promise不缓存');
+ assert.equal(notices.length,1);assert.match(String(notices[0][2]),/tray-action: Error: listen IPC failed/);
+ assert.equal(errors.length,1);assert.equal(app._shellSyncNotice,notice);
+ listeners.get('settings-changed')({payload:{mirror:true}});assert.equal(app._settings.mirror,true,'成功项在降级期间仍工作');
+ await assert.rejects(notices[0][3](),/listen IPC failed/);assert.equal(app._shellSyncNotice,notice);
+ failing=false;await notices[0][3]();assert.equal(app._shellSyncNotice,null);assert.equal(fetches,1);
+ assert.equal(attempts.get('settings-changed'),1);assert.equal(attempts.get('global-mouse'),1);assert.equal(attempts.get('tray-action'),3);
+ listeners.get('tray-action')({payload:{action:'random-speech'}});assert.equal(random,1);
+ await app._wireSettingsSync();assert.equal(attempts.get('tray-action'),3,'成功任务复用');
+});
+
+test('监听并发重试共享任务且等待全部注册结束，模块导入失败后也可恢复',async()=>{
+ let available=false,release;const gate=new Promise(resolve=>release=resolve);const attempts=[];
+ const imports={'./platform':{platform:'tauri'}};
+ Object.defineProperty(imports,'@tauri-apps/api/event',{get(){
+  if(!available)throw new Error('event module unavailable');
+  return {async listen(name){attempts.push(name);await gate;return ()=>{}}};
+ }});
+ const {PetApp}=load('pet-app',imports);const app=Object.create(PetApp.prototype);
+ await assert.rejects(app._wireSettingsSync(),/event module unavailable/);assert.equal(app._settingsSyncTask,null);
+ available=true;const first=app._wireSettingsSync(),second=app._wireSettingsSync();assert.equal(first,second);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(attempts.length,3);
+ release();await Promise.all([first,second]);await app._wireSettingsSync();assert.equal(attempts.length,3);
+});
+
+function noticeDocument(){
+ const nodes=[];
+ return {nodes,body:{append(node){nodes.push(node)}},getElementById:id=>nodes.find(n=>n.id===id&&!n.removed),
+  createElement:tag=>({tag,children:[],setAttribute(name,value){this[name]=value},append(...children){this.children.push(...children)},remove(){this.removed=true}})};
+}
+
+test('启动提示以纯文本展示错误，重试时禁用按钮，失败可再试且成功移除',async()=>{
+ const document=noticeDocument(),errors=[];let release,fail=true;
+ const {showStartupNotice}=load('startup-notice',{}, {document,console:{...console,error:(...args)=>errors.push(args)}});
+ const notice=showStartupNotice('sync','同步暂不可用',new Error('<img src=x onerror=alert(1)>'),
+  async()=>{await new Promise(resolve=>release=resolve);if(fail)throw new Error('again')});
+ assert.equal(notice.role,'alert');const [text,button]=notice.children;
+ assert.match(text.textContent,/<img src=x/);assert.equal(text.innerHTML,undefined);
+ const first=button.onclick();assert.equal(button.disabled,true);release();await first;
+ assert.equal(button.disabled,false);assert.equal(notice.removed,undefined);assert.match(text.textContent,/again/);assert.equal(errors.length,1);
+ fail=false;const second=button.onclick();release();await second;assert.equal(notice.removed,true);
+});
+
+for(const failure of ['construct','initialize-throw','initialize-false','load'])test(`入口捕获${failure}失败并提供重新加载，桥接入口先于模型加载`,async()=>{
+ const notices=[],errors=[],window={location:{reload(){this.reloaded=true}}};
+ class App{
+  constructor(){if(failure==='construct')throw new Error('construct failed')}
+  initialize(){if(failure==='initialize-throw')throw new Error('initialize failed');return failure!=='initialize-false'}
+  async loadModel(){assert.equal(window.__pet,this);assert.equal(typeof window.__applySettingsFromAndroid,'function');throw new Error('load failed')}
+ }
+ load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)}},
+  {window,console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(notices.length,1);assert.equal(errors.length,1);
+ assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
+ await notices[0][3]();assert.equal(window.location.reloaded,true);
 });
 
 test('闲聊不抽取抚摸/点击反应或其他时段的台词',()=>{

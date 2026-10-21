@@ -1,6 +1,7 @@
 /**
  * 互动区域（移植自 Flutter HitAreaService）：
- * 角色视口归一化坐标下的椭圆区域，按优先级取命中。
+ * 固定模型参考视口中的椭圆区域，按优先级取命中。
+ * PetApp 先反解实际渲染变换，再按 referenceRenderMargin 换算到本坐标系。
  */
 
 export interface HitAreaDefinition {
@@ -28,6 +29,8 @@ function contains(
 export class HitAreas {
   private _areas: HitAreaDefinition[] = [];
   private _headPetZone: HitAreaDefinition | null = null;
+  /** 配置校准时的视口余量，不随当前渲染余量变化。 */
+  referenceRenderMargin = 1;
 
   /** 是否镜像（左右互换）。 */
   mirrored = false;
@@ -38,6 +41,11 @@ export class HitAreas {
       if (!res.ok) return;
       const doc = await res.json();
       if (!doc || !Array.isArray(doc.areas)) return;
+      if (doc.coordinateSpace !== 'model_reference_normalized' ||
+        !Number.isFinite(doc.referenceRenderMargin) || doc.referenceRenderMargin <= 0) return;
+      this.referenceRenderMargin = doc.referenceRenderMargin;
+      this._areas = [];
+      this._headPetZone = null;
       for (const m of doc.areas) {
         const def: HitAreaDefinition = {
           id: String(m.id ?? ''),

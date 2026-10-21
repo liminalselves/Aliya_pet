@@ -9,6 +9,7 @@ import { InteractionCoordinator, type SpeechSource } from './interaction/coordin
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
 import { HitAreas } from './interaction/hit-areas';
+import { showStartupNotice } from './startup-notice';
 import { InteractionService } from './interaction/interaction';
 import { PointerContext } from './interaction/petting-recognizer';
 import { BehaviorService } from './behavior';
@@ -56,6 +57,8 @@ export class PetApp {
   private _pendingShellActions: ShellAction[] = [];
   private _shellActionsReady = false;
   private _settingsSyncTask: Promise<void> | null = null;
+  private _settingsSyncListeners = new Set<string>();
+  private _shellSyncNotice: HTMLElement | null = null;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
   private _interaction: InteractionService = null;
@@ -298,8 +301,19 @@ export class PetApp {
 
   public async loadModel(model3JsonUrl: string): Promise<void> {
     this._shellActionsReady = false;
-    // listen() 的 IPC 注册也异步：必须等监听安装完毕才开始加载模型/台词。
-    await this._wireSettingsSync();
+    // 先尝试安装监听；IPC 故障不应阻断本地模型和互动。
+    try {
+      await this._wireSettingsSync();
+      this._shellSyncNotice?.remove();
+      this._shellSyncNotice = null;
+    } catch (error) {
+      console.error('[pet] shell event registration failed', error);
+      this._shellSyncNotice = showStartupNotice('pet-shell-sync-error',
+        '设置/托盘同步暂不可用，桌宠本地互动仍可使用。', error, async () => {
+          await this._wireSettingsSync();
+          this._shellSyncNotice = null;
+        });
+    }
     const response = await fetch(model3JsonUrl);
     const buffer = await response.arrayBuffer();
     const homeDir = model3JsonUrl.substring(
@@ -761,24 +775,40 @@ export class PetApp {
   private _wireSettingsSync(): Promise<void> {
     if (platform !== 'tauri') return Promise.resolve();
     return this._settingsSyncTask ??= import('@tauri-apps/api/event').then(async (ev) => {
-      await Promise.all([
-        ev.listen<PetSettings>('settings-changed', (e) => {
+      const installed = this._settingsSyncListeners ??= new Set<string>();
+      const listen = async <T>(name: string, handler: import('@tauri-apps/api/event').EventCallback<T>) => {
+        if (installed.has(name)) return;
+        try {
+          await ev.listen<T>(name, handler);
+          installed.add(name);
+        } catch (error) {
+          throw new Error(`${name}: ${String(error)}`);
+        }
+      };
+      // 等待全部结果，保留已成功的监听；重试只补装失败项。
+      const results = await Promise.allSettled([
+        listen<PetSettings>('settings-changed', (e) => {
           if (!e.payload || typeof e.payload !== 'object') return;
           this.applySettings(e.payload, false);
         }),
-        ev.listen<ShellAction>('tray-action', (e) => {
+        listen<ShellAction>('tray-action', (e) => {
           const p = e.payload;
           if (!p || typeof p.action !== 'string') return;
           this.onShellAction(p);
         }),
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
-        ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
+        listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
           if (Number.isFinite(e.payload.x) && Number.isFinite(e.payload.y)) {
             this._globalMouse = e.payload;
           }
         }),
       ]);
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    }).catch(error => {
+      this._settingsSyncTask = null;
+      throw error;
     });
   }
 
@@ -1190,7 +1220,30 @@ export class PetApp {
     };
   }
 
-  /** 构造互动上下文（归一化坐标 + 物理像素 + 真实事件间隔）。 */
+  /** 点击/抚摸使用模型参考坐标；注视仍使用原来的视口坐标。 */
+  private _hitEventNorm(e: PointerEvent): { nx: number; ny: number } {
+    if (!this._model?.isReady()) return this._eventNorm(e);
+    const rect = this._canvas.getBoundingClientRect();
+    const { scale, originX, originY } = this._modelViewportTransform();
+    // 先到真实 backing-store 像素，包含 DPR 与 canvas 尺寸取整，再反解渲染变换。
+    const px = (e.clientX - rect.left) * this._canvas.width / rect.width;
+    const py = (e.clientY - rect.top) * this._canvas.height / rect.height;
+    const screenOriginX = this._settings.mirror ? this._canvas.width - originX : originX;
+    const referenceScale = scale * this._hitAreas.referenceRenderMargin;
+    return {
+      // 保留屏幕左右方向，镜像只由 HitAreas 消除一次；贴合模式的非居中原点也同步翻转。
+      nx: 0.5 + (px - screenOriginX) / (referenceScale * this._model.boundsW),
+      ny: 0.5 + (py - originY) / (referenceScale * this._model.boundsH),
+    };
+  }
+
+  private _updatePointerLook(e: PointerEvent): void {
+    if (platform === 'tauri' && e.pointerType === 'mouse') return;
+    const n = this._eventNorm(e);
+    this._behavior?.updateLookTarget(n.nx, n.ny);
+  }
+
+  /** 构造互动上下文（模型参考坐标 + 物理像素 + 真实事件间隔）。 */
   private _ctx(e: PointerEvent, isSecondary: boolean): PointerContext {
     const rect = this._canvas.getBoundingClientRect();
     const scale = rect.width > 0 ? this._canvas.width / rect.width : 1;
@@ -1200,7 +1253,7 @@ export class PetApp {
         ? Math.min(Math.max((now - this._lastMoveEventMs) / 1000, 0.001), 0.2)
         : 0.016;
     this._lastMoveEventMs = now;
-    const n = this._eventNorm(e);
+    const n = this._hitEventNorm(e);
     return {
       normX: n.nx,
       normY: n.ny,
@@ -1237,7 +1290,7 @@ export class PetApp {
       } catch {
         // 合成事件/非常规指针没有 active pointer，捕获失败不影响交互
       }
-      const n0 = this._eventNorm(e);
+      const n0 = this._hitEventNorm(e);
       const isSecondary =
         e.button === 2 ||
         // 触摸端没有右键：按下头部抚摸区视为抚摸手势起点，
@@ -1251,9 +1304,7 @@ export class PetApp {
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
       // 视线跟随：按下即更新目标（轻点不移动也要看向触点）
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
 
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
@@ -1265,9 +1316,7 @@ export class PetApp {
       if (e.button !== 0) return;
 
       this._leftDown = true;
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
@@ -1287,9 +1336,7 @@ export class PetApp {
       }
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
 
       if (this._dragCandidate && this._leftDown && !handled) {
         if (!this._dragging) {
@@ -1784,6 +1831,25 @@ export class PetApp {
     this._model?.update(dt);
   }
 
+  /** 模型 → backing-store 像素：渲染与命中反解共享同一变换。 */
+  private _modelViewportTransform(): { scale: number; originX: number; originY: number } {
+    if (this._wrapWindow) {
+      return {
+        scale: this._contentScaleCss * this._dpr,
+        originX: (this._originCssX - this._appliedRectX) * this._dpr,
+        originY: (this._originCssY - this._appliedRectY) * this._dpr,
+      };
+    }
+    // 包围盒适配，与 native SetupModelMatrix/Render 的布局口径一致。
+    const fitH = (this._chatView?.isOpen || platform === 'android')
+      ? Math.min(this._canvas.height, this._canvas.width / this._model.boundsAspect) : this._canvas.height;
+    return {
+      scale: fitH / PetApp._renderMarginRatio / this._model.boundsH,
+      originX: this._canvas.width / 2,
+      originY: this._canvas.height / 2,
+    };
+  }
+
   private _render(): void {
     const gl = this._gl;
     if (gl.isContextLost()) return;
@@ -1801,24 +1867,9 @@ export class PetApp {
     const vpH = this._canvas.height;
     const modelMatrix = this._model.getModelMatrix();
     modelMatrix.loadIdentity();
-    if (this._wrapWindow) {
-      // 贴合模式：渲染比例固定，模型原点锚在窗口内对应位置，窗口包裹剪影。
-      const sDev = this._contentScaleCss * this._dpr;
-      modelMatrix.scale(sDev, -sDev); // 模型 Y 轴朝上，视口 Y 轴朝下
-      modelMatrix.translate(
-        (this._originCssX - this._appliedRectX) * this._dpr,
-        (this._originCssY - this._appliedRectY) * this._dpr
-      );
-    } else {
-      // 视口适配算法与 native SetupModelMatrix/Render 一致：
-      //   模型渲染高 = 视口高 / 余量，按包围盒均匀缩放，模型原点置于视口中心。
-      // 官方 Demo 的 canvas-fit 对 Aliya 的 1×1 方形画布会把角色缩到窗口的 ~44%，
-      // 观感与 Flutter 版不符（"压扁"）；包围盒适配才是用户熟悉的布局。
-      const fitH = (this._chatView?.isOpen || platform === 'android') ? Math.min(vpH, vpW / this._model.boundsAspect) : vpH;
-      const s = fitH / PetApp._renderMarginRatio / this._model.boundsH;
-      modelMatrix.scale(s, -s); // 模型 Y 轴朝上，视口 Y 轴朝下
-      modelMatrix.translate(vpW * 0.5, vpH * 0.5);
-    }
+    const { scale, originX, originY } = this._modelViewportTransform();
+    modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
+    modelMatrix.translate(originX, originY);
 
     // 视口像素 -> NDC（y 翻转）
     const projection = new CubismMatrix44();
@@ -1950,6 +2001,10 @@ export class PetApp {
     // 对话面板、输入框、聊天按钮可点击；其余透明区域继续穿透。
     ctx.fillStyle = '#fff';
     for (const r of this._chatView?.hitRects() ?? (this._chatLauncher && !this._chatLauncher.hidden ? [this._chatLauncher.getBoundingClientRect()] : [])) {
+      ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
+    }
+    if (this._shellSyncNotice) {
+      const r = this._shellSyncNotice.getBoundingClientRect();
       ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
     }
     const img = ctx.getImageData(0, 0, cols, rows).data;

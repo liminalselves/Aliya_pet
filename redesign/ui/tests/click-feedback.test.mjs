@@ -247,3 +247,21 @@ test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相�
   assert.equal(h.masks.length, before, '仍保留短期去重');
   h.setTime(1800); h.app._maybeSendHitMask(); assert.equal(h.masks.length, before + 1, '在1.5s TTL前刷新');
 });
+
+test('监听降级提示区域加入Windows命中掩码，成功移除提示后恢复穿透', () => {
+  const h = harness({ platform: 'tauri' }), pixels = new Uint8ClampedArray(48 * 48 * 4), fills = [];
+  Object.assign(h.app, { _model: { isReady: () => true },
+    _shellSyncNotice: { getBoundingClientRect: () => ({ left: 100, top: 50, width: 200, height: 100 }) },
+    _hitMaskCanvas: { width: 48, height: 48 }, _hitMaskCtx: {
+      clearRect() { pixels.fill(0); }, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {},
+      fillRect(x, y, w, h) {
+        fills.push([x, y, w, h]);
+        for(let row=y;row<Math.min(48,y+h);row++)for(let col=x;col<Math.min(48,x+w);col++)pixels[(row*48+col)*4+3]=255;
+      }, getImageData: () => ({ data: pixels }),
+    }, _chatView: { hitRects: () => [] },
+  });
+  h.setTime(200); h.app._maybeSendHitMask();
+  assert.deepEqual(fills, [[6, 3, 13, 7]]);assert.equal(h.masks.at(-1).data[4 * 48 + 7], 1);
+  h.app._shellSyncNotice = null; h.setTime(400); h.app._maybeSendHitMask();
+  assert.ok(h.masks.at(-1).data.every(v => v === 0));
+});

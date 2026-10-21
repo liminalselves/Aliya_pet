@@ -170,6 +170,19 @@ Android 设备的实际渲染与触摸观感仍需人工确认。跨平台使用
 水平使用实际静态 `boundsW`，不再用 `0.64×boundsH` 近似宽度，以免低估所需余量。
 画面须等待纹理与首次有效 WebGL 渲染，不能只以 `isReady()` 为截图就绪依据。
 
+## 互动命中坐标
+
+`aliya_hit_areas.json` 使用固定模型参考坐标 `model_reference_normalized`，
+`referenceRenderMargin: 1.22` 记录原椭圆的校准基准；椭圆数值保留，不宣称重新测量了可见部位。
+`PetApp` 的渲染和命中反解共享模型到画布的变换，点击先按真实 canvas 像素尺寸反投影，
+再换算到参考坐标；镜像只消除一次，聊天适配、贴合原点和 DPR 取整均纳入计算。
+因此当前或后续渲染余量变化不需手工平移椭圆；注视及指针速度仍保持原口径。
+
+在 `redesign/ui` 运行 `node --test tests/eye-side.test.mjs` 可复现命中回归：
+正式 Core/moc 的全部顶点及椭圆采样点，经真实 `PetApp._render` 和 Cubism 矩阵投影，
+在 288 组余量、尺寸、DPI、镜像及布局组合下保持相同参考坐标和命中分类。
+这证明坐标随渲染一致，不是部位语义的重新标注，也不替代实机 GPU、鼠标及触摸验收。
+
 ## 旧版格式参考
 
 git 历史 `windows/Assets/Live2D/Aliya/Actions/*.json` 是旧 C# 自定义
