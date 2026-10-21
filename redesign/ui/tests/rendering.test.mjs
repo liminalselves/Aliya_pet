@@ -59,6 +59,77 @@ const { scanAgentTokens } = tokens;
 const { composeMessage } = composeMod;
 const { MskMessageRenderer } = rendererMod;
 
+test('生成配图设置默认开启，兼容旧设置并持久化开关', () => {
+  let stored = JSON.stringify({ scale: 1.2, mirror: true });
+  const { loadSettings, saveSettings } = load('settings', {}, {
+    localStorage: {
+      getItem: () => stored,
+      setItem: (_key, value) => { stored = value; },
+    },
+  });
+  assert.equal(loadSettings().showGeneratedImages, true);
+  saveSettings({ ...loadSettings(), showGeneratedImages: false });
+  assert.equal(loadSettings().showGeneratedImages, false);
+  assert.equal(loadSettings().scale, 1.2);
+  assert.equal(loadSettings().mirror, true);
+  saveSettings({ ...loadSettings(), showGeneratedImages: true });
+  assert.equal(loadSettings().showGeneratedImages, true);
+  stored = null;
+  assert.equal(loadSettings().showGeneratedImages, true);
+});
+
+test('隐藏生成配图剥离标记和独立配图页，保留正文、表演、贴纸与用户附图', () => {
+  const options = { role: 'assistant', stickersEnabled: true, showGeneratedImages: false,
+    resolveSticker: () => ({ url: 'https://files.example/wave.png', type: 'image/png' }),
+    resolveEmoji: () => ({ name: 'smile', url: 'https://files.example/smile.png' }) };
+  for (const segmented of [false, true]) {
+    const hidden = composeMessage('你好\n[[agent_draw tag=秘密提示词]]\n再见', { ...options, segmented });
+    assert.equal(hidden.draws.length, 0);
+    assert.doesNotMatch(hidden.html, /msk-draw|agent_draw|秘密提示词|\u0000/);
+    assert.match(hidden.html, /你好/);
+    assert.match(hidden.html, /再见/);
+    if (segmented) assert.equal((hidden.html.match(/class="msk-segment"/g) ?? []).length, 2);
+    assert.equal(composeMessage('  [[agent_draw tag=only]]  ', { ...options, segmented }).html, '');
+    const inline = composeMessage('前[[agent_draw tag=a]]后[[agent_draw tag=b]]末', { ...options, segmented });
+    assert.match(inline.html, /前/);
+    assert.match(inline.html, /后/);
+    assert.match(inline.html, /末/);
+    assert.doesNotMatch(inline.html, /msk-draw|agent_draw/);
+  }
+  const otherMedia = composeMessage('[[agent_cue express=happy]]\n[[agent_sticker key=wave]]\n:smile:\n[[agent_draw tag=a]]', { ...options, segmented: true });
+  assert.match(otherMedia.html, /msk-cue/);
+  assert.match(otherMedia.html, /msk-sticker msk-zoom/);
+  assert.match(otherMedia.html, /msk-emoji-img/);
+  const user = composeMessage('[[agent_draw tag=user]]', { ...options, role: 'user',
+    file: { type: 'image/png', url: 'https://files.example/user.png' } });
+  assert.match(user.html, /agent_draw tag=user/);
+  assert.match(user.html, /msk-attachment-img/);
+});
+
+test('隐藏生成配图时新消息和历史消息均不请求生图接口，同一渲染器可重新开启', async () => {
+  const calls = [];
+  let visible = false;
+  const renderer = new MskMessageRenderer({
+    api: async endpoint => { calls.push(endpoint); return null; },
+    autoDraw: false,
+    get showGeneratedImages() { return visible; },
+  });
+  for (const liveArrived of [false, true]) {
+    const task = renderer.render({ sessionId: 's1', messageId: 'm1',
+      text: '你好\n[[agent_draw tag=hidden]]', role: 'assistant', segmented: true, liveArrived });
+    const html = await task.settled;
+    assert.match(html, /你好/);
+    assert.doesNotMatch(html, /msk-draw|agent_draw|尚未生成|立即生成/);
+  }
+  assert.equal(calls.length, 0);
+  visible = true;
+  const html = await renderer.render({ sessionId: 's1', messageId: 'm2',
+    text: '[[agent_draw tag=visible]]', role: 'assistant' }).settled;
+  assert.deepEqual(calls, ['agents/images/placeholder-status']);
+  assert.match(html, /尚未生成/);
+  assert.match(html, /立即生成/);
+});
+
 test('分页独立表情与贴纸标记为大图页；记录中的行内表情不放大', () => {
   const options = { role: 'assistant', stickersEnabled: true,
     resolveEmoji: () => ({ url: 'https://files.example/smile.png' }),

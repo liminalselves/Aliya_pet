@@ -25,14 +25,14 @@ async function loadModel() {
   return { model, release() { model.release(); moc._release(); } };
 }
 
-function loadSource(name, globals = {}) {
+function loadSource(name, globals = {}, imports = null) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`src/${name}.ts`, root), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   vm.runInNewContext(code, {
     exports, ...globals,
-    require(id) { throw new Error(`unexpected runtime import: ${id}`); },
+    require(id) { if (imports) return imports[id] ?? {}; throw new Error(`unexpected runtime import: ${id}`); },
   }, { filename: `${name}.ts` });
   return exports;
 }
@@ -152,4 +152,96 @@ test('real Aliya eye geometry matches ear hit areas, procedural masks and mirror
   } finally {
     loaded.release();
   }
+});
+
+test('正式模型顶点与命中椭圆经真实渲染投影后，余量、镜像、DPI、聊天和贴合模式命中不漂移', { timeout: 15000 }, async t => {
+  const loaded = await loadModel();
+  try {
+    const positions = snapshot(loaded.model, 1, 1);
+    const config = JSON.parse(readFileSync(new URL('assets/interaction/aliya_hit_areas.json', root), 'utf8'));
+    const { HitAreas } = loadSource('interaction/hit-areas', { fetch: async () => ({ ok: true, json: async () => config }) });
+    const hit = new HitAreas(); await hit.load(); await hit.load();
+    assert.equal(hit.areas.length, config.areas.length, '重载不积累椭圆');
+    assert.equal(hit.referenceRenderMargin, 1.22, '保留原校准参考，不冒充实机重新测量');
+    const sdkExports = {};
+    const matrixCode = ts.transpileModule(readFileSync(new URL('../../third_party/cubism-web-sdk/Framework/src/math/cubismmatrix44.ts', root), 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
+    }).outputText;
+    vm.runInNewContext(matrixCode, { exports: sdkExports, require: () => ({}) });
+    const { CubismMatrix44 } = sdkExports;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const mesh of positions) for (let i = 0; i < mesh.length; i += 2) {
+      minX = Math.min(minX, mesh[i]); maxX = Math.max(maxX, mesh[i]);
+      minY = Math.min(minY, mesh[i + 1]); maxY = Math.max(maxY, mesh[i + 1]);
+    }
+    const boundsW = maxX - minX, boundsH = maxY - minY, aspect = boundsW / boundsH;
+    const ref = (x, y) => ({ nx: .5 + x / (boundsW * hit.referenceRenderMargin), ny: .5 - y / (boundsH * hit.referenceRenderMargin) });
+    // 全部真实顶点 + 各椭圆中心、内外边缘；既核对分类，也核对反投影坐标。
+    const points = positions.flatMap(mesh => {
+      const result = []; for (let i = 0; i < mesh.length; i += 2) result.push([mesh[i], mesh[i + 1]]); return result;
+    });
+    for (const area of hit.areas) for (const offset of [0, .45, .55]) {
+      points.push([(area.x + area.width * offset - .5) * boundsW * hit.referenceRenderMargin,
+        (.5 - area.y) * boundsH * hit.referenceRenderMargin]);
+    }
+    const expected = points.map(([x, y]) => { const n = ref(x, y); return [n, hit.hitAreaAt(n.nx, n.ny), hit.isInHeadPetZone(n.nx, n.ny)]; });
+    let cases = 0;
+    for (const mode of ['native', 'chat', 'android', 'wrap']) {
+      const { PetApp } = loadSource('pet-app', { performance }, {
+        './platform': { platform: mode === 'android' ? 'android' : 'tauri' },
+        '@framework/math/cubismmatrix44': { CubismMatrix44 },
+      });
+      const currentMargin = PetApp._renderMarginRatio;
+      for (const margin of [1.22, currentMargin, 1.5]) for (const dpr of [1, 1.25, 2, 3])
+        for (const size of [120, 600, 2160]) for (const mirror of [false, true]) {
+          PetApp._renderMarginRatio = margin;
+          const width = Math.round(size * aspect * (mode === 'chat' ? .6 : 1)), height = size;
+          const rect = { left: 117, top: 31, width, height };
+          const modelMatrix = new CubismMatrix44(); let projection;
+          const model = { isReady: () => true, boundsW, boundsH, boundsAspect: aspect,
+            getModelMatrix: () => modelMatrix, draw(p) { p.multiplyByMatrix(modelMatrix); projection = p; } };
+          const app = Object.create(PetApp.prototype);
+          hit.mirrored = mirror;
+          Object.assign(app, { _model: model, _hitAreas: hit, _settings: { mirror, scale: 1 },
+            _canvas: { width: Math.round(width * dpr), height: Math.round(height * dpr), getBoundingClientRect: () => rect },
+            _gl: { isContextLost: () => false, viewport() {}, clearColor() {}, enable() {}, depthFunc() {}, clearDepth() {}, clear() {} },
+            _chatView: { isOpen: mode === 'chat' }, _wrapWindow: mode === 'wrap', _dpr: dpr,
+            _contentScaleCss: size / currentMargin / boundsH,
+            _originCssX: 701, _originCssY: 503, _appliedRectX: 701 - width * .43, _appliedRectY: 503 - height * .61,
+          });
+          app._render(); cases++;
+          // 独立核对重构前的渲染公式，避免共享变换把渲染和反解一起改错。
+          const vpW = app._canvas.width, vpH = app._canvas.height;
+          const fitH = ['chat', 'android'].includes(mode) ? Math.min(vpH, vpW / aspect) : vpH;
+          const oldScale = mode === 'wrap' ? app._contentScaleCss * dpr : fitH / margin / boundsH;
+          const oldX = mode === 'wrap' ? (app._originCssX - app._appliedRectX) * dpr : vpW / 2;
+          const oldY = mode === 'wrap' ? (app._originCssY - app._appliedRectY) * dpr : vpH / 2;
+          assert.ok(Math.abs(projection.transformX(.1) - (2 * (oldX + .1 * oldScale) / vpW - 1)) < 2e-6);
+          assert.ok(Math.abs(projection.transformY(.1) - (1 - 2 * (oldY - .1 * oldScale) / vpH)) < 2e-6);
+          const eventAt = (x, y) => {
+            const screenX = (projection.transformX(x) + 1) * width / 2;
+            return { clientX: rect.left + (mirror ? width - screenX : screenX),
+              clientY: rect.top + (1 - projection.transformY(y)) * height / 2, pointerType: 'touch' };
+          };
+          for (let i = 0; i < points.length; i++) {
+            const [x, y] = points[i], [want, area, headZone] = expected[i];
+            const n = app._hitEventNorm(eventAt(x, y));
+            assert.ok(Math.abs((mirror ? 1 - n.nx : n.nx) - want.nx) < 2e-6 && Math.abs(n.ny - want.ny) < 2e-6,
+              `${mode}, margin=${margin}, DPI=${dpr}, size=${size}, mirror=${mirror}: 反投影必须回到同一模型坐标`);
+            assert.equal(hit.hitAreaAt(n.nx, n.ny), area);
+            assert.equal(hit.isInHeadPetZone(n.nx, n.ny), headZone);
+          }
+          const far = app._hitEventNorm(eventAt(boundsW * 10, boundsH * 10));
+          assert.equal(hit.hitAreaAt(far.nx, far.ny), null, '远处点击不能被clamp成边缘命中');
+          const e = eventAt(0, 0); let gaze;
+          app._behavior = { updateLookTarget: (nx, ny) => gaze = { nx, ny } };
+          app._updatePointerLook(e); const oldGaze = app._eventNorm(e);
+          assert.equal(gaze.nx, oldGaze.nx); assert.equal(gaze.ny, oldGaze.ny, '注视仍用旧视口口径');
+          app._lastMoveMs = 0; const ctx = app._ctx(e), n = app._hitEventNorm(e);
+          assert.equal(ctx.normX, n.nx); assert.equal(ctx.normY, n.ny, '指针实际入口使用新命中口径');
+        }
+      PetApp._renderMarginRatio = currentMargin;
+    }
+    t.diagnostic(JSON.stringify({ cases, modelPoints: points.length, boundsW, boundsH }));
+  } finally { loaded.release(); }
 });

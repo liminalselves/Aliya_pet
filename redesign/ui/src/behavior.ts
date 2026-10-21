@@ -25,7 +25,8 @@ export const ACTION_LIBRARY = [
   'doubt',
   'angry',
   'yawn',
-  'walk',
+  'cheerful_bounce',
+  'shy_sway',
 ];
 
 /** 动作清单元数据条目（pet-model 从 actions.json 载入后注入）。 */

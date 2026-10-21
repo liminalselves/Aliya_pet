@@ -9,6 +9,7 @@
     { "name": "doubt",   "category": "emotion", "weight": 0.8, "moods": { "curious": 3.0, "speechless": 2.0 } },
     { "name": "angry",   "category": "emotion", "weight": 0.6, "moods": { "angry": 3.5 } },
     { "name": "yawn",    "category": "idle",    "weight": 0.7, "moods": { "sleepy": 3.5 } },
-    { "name": "walk",    "category": "idle",    "weight": 0.9, "moods": { "curious": 2.0, "happy": 1.5 } }
+    { "name": "cheerful_bounce", "category": "emotion", "weight": 0.45, "moods": { "happy": 3.0, "smug": 1.5, "sad": 0.2, "sleepy": 0.2, "angry": 0.2 } },
+    { "name": "shy_sway", "category": "emotion", "weight": 0.4, "moods": { "shy": 4.0, "happy": 2.0, "angry": 0.2, "sad": 0.4, "sleepy": 0.4 } }
   ]
 }

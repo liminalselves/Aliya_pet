@@ -19,6 +19,17 @@ export interface InteractionParamInfo {
   hasEyes: boolean;
 }
 
+/** 抚摸恢复交给点击反应时，保留上一帧实际写入的姿态。 */
+export interface InteractionPose {
+  headX: number;
+  headY: number;
+  headZ: number;
+  bodyX: number;
+  eyeEnabled: boolean;
+  eyeLeft: number;
+  eyeRight: number;
+}
+
 export interface InteractionTarget {
   /** 模型互动参数范围；模型未就绪返回 null。 */
   getInteractionParamInfo(): InteractionParamInfo | null;

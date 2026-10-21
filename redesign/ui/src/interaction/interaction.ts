@@ -28,6 +28,7 @@ export class InteractionService {
   readonly dragReaction = new DragReactionService();
   readonly procedural: ProceduralReactionService;
   private _earClickUntilMs = 0;
+  private _basicClickUntilMs = 0;
 
   /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
   playClickDialogue: ((tag: string) => void) | null = null;
@@ -46,6 +47,7 @@ export class InteractionService {
     this.dragReaction.cancel();
     this.clickSequence.reset();
     this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
   }
 
 
@@ -66,6 +68,7 @@ export class InteractionService {
     this.procedural = new ProceduralReactionService({
       getTarget: deps.getTarget,
       isPettingActive: () => this.petting.isPettingSessionActive,
+      takeOverPetting: () => this.petting.releaseFinishing(),
       playCharacterAction: deps.playCharacterAction,
     });
   }
@@ -131,7 +134,11 @@ export class InteractionService {
     // 耳朵不计入普通疑惑连点，但保留其历史与全局冷却。
     if (area === 'ear_left' || area === 'ear_right') {
       const now = performance.now();
-      if (this.clickSequence.isInCooldown || now < this._earClickUntilMs) return true;
+      if (this.clickSequence.isInCooldown) {
+        this._acknowledgeCooldownClick();
+        return true;
+      }
+      if (now < this._earClickUntilMs) return true;
       // 左右耳共用一次反馈时窗，避免连点反复启动 120+60+240ms 的单眼动作。
       this._earClickUntilMs = now + 420;
       this.procedural.apply(ProceduralReactions.earBlink(0.8, area));
@@ -140,7 +147,8 @@ export class InteractionService {
     }
     const result = this.clickSequence.registerClick();
     if (result === ClickResult.cooldown) {
-      return true; // 点击冷却中，抑制点击台词
+      this._acknowledgeCooldownClick();
+      return true; // 冷却只抑制台词/连击动作，不吞掉基础视觉反馈。
     }
 
     if (result === ClickResult.doubt || result === ClickResult.comment) {
@@ -159,10 +167,22 @@ export class InteractionService {
         // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
         this.procedural.apply(ProceduralReactions.blush(1.0));
         break;
+      default:
+        // 身体、手部、平板及未命名的可见区域也有独立反馈，不依赖台词成功播放。
+        this.procedural.apply(ProceduralReactions.acknowledge(0.8));
+        break;
     }
 
     this.playClickDialogue?.(area === 'head_pet_zone' ? 'head' : area ?? 'body');
     return true;
+  }
+
+  /** 冷却期间只允许低幅度点头；限频不延长台词冷却，也不触发角色动作。 */
+  private _acknowledgeCooldownClick(): void {
+    const now = performance.now();
+    if (now < this._basicClickUntilMs) return;
+    this._basicClickUntilMs = now + 240;
+    this.procedural.apply(ProceduralReactions.acknowledge(0.35));
   }
 
   onEsc(): void {
@@ -176,6 +196,7 @@ export class InteractionService {
     this.dragReaction.cancel();
     this.clickSequence.reset();
     this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
     this.procedural.cancelAll(true);
   }
 
@@ -185,6 +206,7 @@ export class InteractionService {
     this.procedural.cancelAll(true);
     this.clickSequence.reset();
     this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
     this.proximity.reset();
     this.dragReaction.cancel();
   }

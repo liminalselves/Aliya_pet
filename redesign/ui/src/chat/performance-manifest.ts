@@ -35,7 +35,8 @@ export const PERFORMANCE_ACTIONS: readonly PerformanceItem[] = [
   { name: 'doubt', hint: '歪头疑惑' },
   { name: 'angry', hint: '气得发抖' },
   { name: 'yawn', hint: '打哈欠' },
-  { name: 'walk', hint: '原地踱步' },
+  { name: 'cheerful_bounce', hint: '开心地轻弹上半身，笑着逐渐收住（不离地跳跃）' },
+  { name: 'shy_sway', hint: '撒娇：小臂内折藏在外套后、低头轻晃，自动渐入脸红并随收尾淡出；不替换当前表情（非手指交握）' },
 ];
 
 export interface PerformanceRequestPayload {

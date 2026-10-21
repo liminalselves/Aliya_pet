@@ -38,6 +38,8 @@ export interface ComposedMessage {
 export interface ComposeOptions {
   role: ChatRole;
   stickersEnabled: boolean;
+  /** false 时剥离生图标记，不创建卡片或空白分页。 */
+  showGeneratedImages?: boolean;
   resolveSticker?: (key: string) => DriveFileLike | undefined;
   resolveEmoji?: (name: string) => CustomEmojiInfo | undefined;
   segmented?: boolean;
@@ -128,7 +130,7 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
         const emoji = options.resolveEmoji?.(part.name);
         if (emoji?.url) html += emojiHtml(part.name, emoji);
         else html += renderMarkdown(clean.slice(part.start, part.end));
-      } else {
+      } else if (options.showGeneratedImages !== false) {
         hasDraw = true;
         draws.push({ index: part.index, size: part.size, tag: part.tag });
         html += drawCardHtml({ index: part.index, size: part.size, tag: part.tag });

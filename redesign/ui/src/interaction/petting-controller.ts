@@ -21,7 +21,7 @@ import {
   PettingGestureRecognizer,
   PointerContext,
 } from './petting-recognizer';
-import { InteractionTarget } from './target';
+import { InteractionTarget, type InteractionPose } from './target';
 
 export type PettingState =
   | 'inactive'
@@ -317,6 +317,22 @@ export class PettingController {
 
     this._finishingStartMs = performance.now();
     this.onSessionEnded?.(reason);
+  }
+
+  /** 只转交恢复动画的所有权，不复位通道，也不重复结算会话或触发台词。 */
+  releaseFinishing(): InteractionPose | null {
+    if (this.state !== 'finishing') return null;
+    const pose: InteractionPose = {
+      headX: this._curAngleX, headY: this._curAngleY, headZ: this._curAngleZ,
+      bodyX: this._curBodyX, eyeEnabled: this._eyeOverrideActive && this._hasEyes,
+      eyeLeft: this._eyeLMin + this._eyeOpenness * (this._eyeLMax - this._eyeLMin),
+      eyeRight: this._eyeRMin + this._eyeOpenness * (this._eyeRMax - this._eyeRMin),
+    };
+    this.recognizer.endGesture();
+    this._applyLookAtReduction(false);
+    this._sessionEnding = false;
+    this._setState('inactive');
+    return pose;
   }
 
   // ---------- 反应：目标计算 ----------

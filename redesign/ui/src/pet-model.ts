@@ -526,6 +526,8 @@ export class PetModel
     if (handle !== INVALID_MOTION_HANDLE) {
       if (group === 'wave') this._chHand.trigger();
       else this._chHand.release();
+      if (group === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
+      else this._chCheek.releaseAction();
     }
     return handle;
   }
@@ -543,17 +545,22 @@ export class PetModel
     const motion = this._motions.get(`${name}_${index}`);
     if (!motion) return false;
     // SDK 在淡出完成后回收旧动作；保留短暂重叠以连续交接。
-    this._motionManager.startMotionPriority(
+    const handle = this._motionManager.startMotionPriority(
       motion,
       false,
       MotionPriority.Normal
     );
+    if (handle === INVALID_MOTION_HANDLE) return false;
     // 挥手联动抬手包络；其他动作打断时平滑放下
     if (name === 'wave') {
       this._chHand.trigger();
     } else {
       this._chHand.release();
     }
+    // 从统一播放入口联动，设置页（Windows/Android）、AI 和自动行为均生效。
+    // 只附加脸红包络，不调用 startExpression，原表情继续按自己的生命周期求值。
+    if (name === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
+    else this._chCheek.releaseAction();
     return true;
   }
 

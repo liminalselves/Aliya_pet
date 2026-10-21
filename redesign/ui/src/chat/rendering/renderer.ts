@@ -133,6 +133,7 @@ class RenderTask implements MskRendered {
     const ctx = this.renderer.context;
     this.composed = composeMessage(this.input.text ?? '', {
       role: this.input.role,
+      showGeneratedImages: ctx.showGeneratedImages,
       stickersEnabled: ctx.stickersEnabled ?? typeof ctx.resolveSticker === 'function',
       resolveSticker: ctx.resolveSticker,
       resolveEmoji: (name) => {

@@ -22,6 +22,7 @@ opencode.json
 redesign/tools/*
 !redesign/tools/gen-expressions.py
 !redesign/tools/gen-motions.py
+!redesign/tools/test_gen_motions.py
 
 # Kotlin 编译器缓存与错误日志
 .kotlin/
@@ -58,6 +59,8 @@ redesign/node_modules/
 redesign/ui/node_modules/
 redesign/ui/dist/
 redesign/src-tauri/target/
+# Cargo 缓存备份及一次性构建目录
+redesign/src-tauri/target-*/
 redesign/android/.gradle/
 redesign/android/build/
 redesign/android/app/build/

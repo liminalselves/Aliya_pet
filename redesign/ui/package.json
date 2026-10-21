@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/regression.test.mjs tests/rendering.test.mjs tests/control.test.mjs tests/pet-regression-batch.test.mjs tests/animation-transition.test.mjs tests/eye-side.test.mjs",
+    "test": "node --test tests/regression.test.mjs tests/rendering.test.mjs tests/control.test.mjs tests/pet-regression-batch.test.mjs tests/animation-transition.test.mjs tests/eye-side.test.mjs tests/click-feedback.test.mjs",
+    "test:bounds": "node --test tests/render-margin.test.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
@@ -15,6 +16,6 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "vite": "^8.0.2"
+    "vite": "^8.3.5"
   }
 }

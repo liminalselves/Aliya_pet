@@ -1,4 +1,5 @@
 import { openUrl, platform, shellAction } from '../platform';
+import { loadSettings } from '../settings';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from '../chat/msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from '../chat/msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MskClient, type MskSession, type MskTimelineMessage } from '../chat/msk/client';
@@ -197,7 +198,7 @@ class RecordsView {
 
       const messages = await client.timeline(saved.session.id, HISTORY_FETCH_LIMIT, operation.signal);
       if (operation.signal.aborted) return;
-      const signature = `${saved.session.id}:${messages.length}:${messages[messages.length - 1]?.id ?? ''}`;
+      const signature = `${saved.session.id}:${messages.length}:${messages[messages.length - 1]?.id ?? ''}:${loadSettings().showGeneratedImages}`;
       if (!messages.length) {
         this.signature = signature;
         this.meta.textContent = `最近 ${HISTORY_ROUND_LIMIT} 轮 · 0 条`;
@@ -245,6 +246,7 @@ class RecordsView {
       resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
       loadEmojis: signal => fetchCustomEmojis(api, signal),
       autoDraw: false,
+      get showGeneratedImages() { return loadSettings().showGeneratedImages; },
     });
     return true;
   }

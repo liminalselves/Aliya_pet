@@ -125,15 +125,43 @@ export class EarChannel implements OverlayChannel {
   }
 }
 
-/** 脸红（互动优先于表情的 Cheek 写入）。 */
+/** 脸红唯一覆盖层：表情、点击与撒娇取较强值，不清除其他来源的状态。 */
 export class CheekChannel implements OverlayChannel {
   readonly name = 'cheek';
   enabled = false;
   value = 0;
+  private _actionRemaining = 0;
+  private _actionValue = 0;
+  private _interactionValue = 0;
   constructor(private readonly id: CubismIdHandle) {}
-  apply(model: CubismModel): void {
-    if (!this.enabled) return;
-    model.setParameterValueById(this.id, this.value);
+
+  /** 与正式动作时长对齐；末尾 1.2s 为默认姿态尾垫，不再保持红晕。 */
+  triggerAction(duration: number): void {
+    this._actionRemaining = Math.max(0, duration - 1.2);
+    // 重播不清零当前可见值，避免红晕在连续撒娇时闪灭。
+  }
+  releaseAction(): void {
+    this._actionRemaining = 0;
+  }
+
+  apply(model: CubismModel, dt = 1 / 60): void {
+    dt = Math.max(0, Number.isFinite(dt) ? dt : 0);
+    this._actionRemaining = Math.max(0, this._actionRemaining - dt);
+    const t = Math.min(this._actionRemaining / 0.6, 1);
+    const actionTarget = t * t * (3 - 2 * t);
+    const interactionTarget = this.enabled && Number.isFinite(this.value)
+      ? Math.min(1, Math.max(0, this.value)) : 0;
+    const k = 1 - Math.exp(-dt / 0.1);
+    const actionK = 1 - Math.exp(-dt / (actionTarget >= this._actionValue ? 0.1 : 0.18));
+    this._actionValue += (actionTarget - this._actionValue) * actionK;
+    this._interactionValue += (interactionTarget - this._interactionValue) * k;
+    if (this._actionValue < 0.001) this._actionValue = 0;
+    if (this._interactionValue < 0.0001) this._interactionValue = 0;
+    if (this._actionValue === 0 && this._interactionValue === 0) return;
+    // 此时已在 saveParameters 之后，base 是本帧表情值，不将覆盖写入持久基线。
+    const base = model.getParameterValueById(this.id);
+    model.setParameterValueById(this.id,
+      Math.min(1, Math.max(base, this._interactionValue, this._actionValue)));
   }
 }
 

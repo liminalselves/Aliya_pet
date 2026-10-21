@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { linkSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -44,6 +44,135 @@ test('creates and relabels only the actual Cargo output tree, including old cach
   assert.match(calls[2][1][6], /prepare-windows-build\.ps1$/);
   assert.deepEqual(calls[2][1].slice(7), ['-TargetDirectory', target]);
   assert.equal(calls[2][2].stdio, 'inherit');
+});
+
+test('marks a new empty Cargo output before the first build', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'aliya-build-empty-'));
+  const output = join(fixture, 'target');
+  try {
+    const { options } = harness([metadata(output), { status: 0 }]);
+    options.mkdir = mkdirSync;
+    assert.equal(prepareWindowsBuild(options), output);
+    assert.equal(readFileSync(join(output, 'CACHEDIR.TAG'), 'utf8'), cacheTag);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('migrates only recognizable untagged Cargo output and adds a persistent cache marker', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'aliya-build-untagged-'));
+  const output = join(fixture, 'target');
+  try {
+    mkdirSync(join(output, 'release'), { recursive: true });
+    writeFileSync(join(output, '.rustc_info.json'), '{}');
+    writeFileSync(join(output, 'release', '.cargo-lock'), '');
+    const { options } = harness([metadata(output), { status: 0 }]);
+    options.mkdir = mkdirSync;
+    assert.equal(prepareWindowsBuild(options), output);
+    assert.equal(readFileSync(join(output, 'CACHEDIR.TAG'), 'utf8'), cacheTag);
+
+    const unsafe = join(fixture, 'ordinary-files');
+    mkdirSync(unsafe);
+    writeFileSync(join(unsafe, 'notes.txt'), 'keep untouched');
+    const { options: unsafeOptions } = harness([metadata(unsafe)]);
+    assert.throws(() => prepareWindowsBuild(unsafeOptions), /拒绝修改完整性标签/);
+    assert.equal(readFileSync(join(unsafe, 'notes.txt'), 'utf8'), 'keep untouched');
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('diagnoses invalid caches without writing a marker or invoking the label helper', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'aliya-cache-diagnostics-'));
+  try {
+    const cases = [
+      ['missing-tag', /缺少 CACHEDIR.TAG/, (output) => writeFileSync(join(output, 'notes.txt'), 'keep')],
+      ['invalid-tag', /缓存标签签名无效/, (output) => writeFileSync(join(output, 'CACHEDIR.TAG'), 'invalid')],
+      ['tag-directory', /缓存标签不是普通文件/, (output) => mkdirSync(join(output, 'CACHEDIR.TAG'))],
+      ['unexpected-file', /非预期文件.*notes.txt/, (output) => {
+        writeFileSync(join(output, 'CACHEDIR.TAG'), cacheTag);
+        writeFileSync(join(output, 'notes.txt'), 'keep');
+      }],
+      ['invalid-triple', /target triple 子项.*notes.txt/, (output) => {
+        writeFileSync(join(output, 'CACHEDIR.TAG'), cacheTag);
+        mkdirSync(join(output, 'unknown'));
+        writeFileSync(join(output, 'unknown', 'notes.txt'), 'keep');
+      }],
+      ['legacy-with-extra-file', /非预期文件.*notes.txt/, (output) => {
+        mkdirSync(join(output, 'release'));
+        writeFileSync(join(output, '.rustc_info.json'), '{}');
+        writeFileSync(join(output, 'release', '.cargo-lock'), '');
+        writeFileSync(join(output, 'notes.txt'), 'keep');
+      }],
+    ];
+    for (const [name, reason, setup] of cases) {
+      const output = join(fixture, name);
+      mkdirSync(output);
+      setup(output);
+      const before = readdirSync(output);
+      const { calls, options } = harness([metadata(output)]);
+      assert.throws(() => prepareWindowsBuild(options), (error) => {
+        assert.match(error.message, reason);
+        assert.ok(error.message.includes(output));
+        assert.match(error.message, /--backup-cache/);
+        return true;
+      });
+      assert.deepEqual(readdirSync(output), before);
+      assert.equal(calls.length, 1);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('explicit backup preserves all old files and previous backups before preparing a fresh target', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'aliya-cache-backup-'));
+  const output = join(fixture, 'target');
+  const reports = [];
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      mkdirSync(output, { recursive: true });
+      writeFileSync(join(output, 'notes.txt'), `old files ${attempt}`);
+      const { options } = harness([metadata(output), { status: 0 }]);
+      assert.equal(prepareWindowsBuild({ ...options, cwd: fixture, mkdir: mkdirSync,
+        backupCache: true, report: (message) => reports.push(message) }), output);
+      assert.deepEqual(readdirSync(output), ['CACHEDIR.TAG']);
+      assert.equal(readFileSync(join(output, 'CACHEDIR.TAG'), 'utf8'), cacheTag);
+    }
+    const backups = readdirSync(fixture).filter((name) => name.startsWith('target-backup-'));
+    assert.equal(backups.length, 2);
+    assert.deepEqual(backups.map((name) => readFileSync(join(fixture, name, 'target', 'notes.txt'), 'utf8')).sort(),
+      ['old files 0', 'old files 1']);
+    assert.equal(reports.length, 2);
+    assert.ok(backups.every((name) => reports.some((message) => message.includes(join(fixture, name, 'target')))));
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('backup refuses custom targets, source roots and junction ancestors without moving files', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'aliya-cache-backup-scope-'));
+  try {
+    const custom = join(fixture, 'custom');
+    mkdirSync(custom);
+    writeFileSync(join(custom, 'notes.txt'), 'keep');
+    const { calls, options } = harness([metadata(custom)]);
+    assert.throws(() => prepareWindowsBuild({ ...options, cwd: fixture, backupCache: true }), /不会移动自定义/);
+    assert.equal(readFileSync(join(custom, 'notes.txt'), 'utf8'), 'keep');
+    assert.equal(calls.length, 1);
+    const source = harness([metadata(workspace)]);
+    assert.throws(() => prepareWindowsBuild({ ...source.options, backupCache: true }), /包含源码或工作区/);
+    if (process.platform === 'win32') {
+      const linked = join(fixture, 'linked');
+      symlinkSync(custom, linked, 'junction');
+      const linkedRun = harness([metadata(join(linked, 'target'))]);
+      assert.throws(() => prepareWindowsBuild({ ...linkedRun.options, cwd: linked, backupCache: true }), /路径包含符号链接或 junction/);
+      assert.equal(existsSync(join(custom, 'target')), false);
+    }
+    assert.deepEqual(readdirSync(fixture).filter((name) => name.startsWith('target-backup-')), []);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 test('respects a custom target directory returned by Cargo instead of guessing it', () => {

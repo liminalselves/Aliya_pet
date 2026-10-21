@@ -103,8 +103,8 @@ function resizeHarness(sf = 1.5, mirror = false) {
     },
     geometry: () => ({ pos, size }),
     // 按渲染坐标计算屏幕上的静态脚底中心，独立于窗口补偿方法。
-    foot: () => ({ x: pos.x + size.width / 2 + (app._settings.mirror ? -1 : 1) * 0.05 * size.height / 1.22 / 1.1,
-      y: pos.y + size.height / 2 + 0.6 * size.height / 1.22 / 1.1 }),
+    foot: () => ({ x: pos.x + size.width / 2 + (app._settings.mirror ? -1 : 1) * 0.05 * size.height / PetApp._renderMarginRatio / 1.1,
+      y: pos.y + size.height / 2 + 0.6 * size.height / PetApp._renderMarginRatio / 1.1 }),
   };
 }
 function nearFoot(actual, expected) {
@@ -407,6 +407,19 @@ function playbackHarness() {
     timers,
   };
 }
+
+test('仅含配图的回复被隐藏后收起空白面板，不误报已读', () => {
+  const h = playbackHarness();
+  let hidden = false;
+  h.view.content.querySelectorAll = () => [];
+  h.view.hidePanelAnimated = () => { hidden = true; };
+  h.view.resyncPages();
+  assert.equal(hidden, true);
+  assert.equal(h.view.replyActive, false);
+  assert.equal(h.view.playing, false);
+  assert.equal(h.reads(), 0);
+  assert.equal(h.cancellations(), 1);
+});
 
 test('回复分页期间保留表情；末页读完后释放且逐帧 tick 不会恢复旧表情', () => {
   const h = playbackHarness();
