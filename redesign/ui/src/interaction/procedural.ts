@@ -318,8 +318,8 @@ export class ProceduralReactionService {
         break;
       case 'blush':
         this._start([
-          phase(300, 1.0, 0, 0, 0, 0, 0, 0.55 * reaction.strength),
-          phase(900, 1.0, 0, 0, 0, 0, 0, 0.55 * reaction.strength),
+          phase(300, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
+          phase(900, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
           phase(700, 1.0, 0, 0, 0, 0, 0, 0.0),
         ]);
         break;

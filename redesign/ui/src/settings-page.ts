@@ -43,7 +43,8 @@ const ACTION_LABELS: Record<string, string> = {
   doubt: '疑惑',
   angry: '生气',
   yawn: '哈欠',
-  walk: '走动',
+  cheerful_bounce: '开心雀跃',
+  shy_sway: '撒娇',
 };
 
 /** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */

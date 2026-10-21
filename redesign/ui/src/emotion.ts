@@ -31,7 +31,7 @@ export const MOODS: Record<string, MoodDefinition> = {
   happy: {
     expression: 'happy',
     durationSeconds: 10 * 60,
-    actionBias: { wave: 3, sway: 2, stretch: 1.5, walk: 1.5 },
+    actionBias: { wave: 3, sway: 2, stretch: 1.5 },
   },
   cheerful: {
     // 高兴的弱档：不换表情，只影响动作选择（供 AI 表达「还不错」）
@@ -67,7 +67,7 @@ export const MOODS: Record<string, MoodDefinition> = {
   curious: {
     expression: null,
     durationSeconds: 5 * 60,
-    actionBias: { doubt: 3, walk: 2 },
+    actionBias: { doubt: 3 },
   },
   speechless: {
     expression: 'speechless',

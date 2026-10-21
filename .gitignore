@@ -22,6 +22,7 @@ opencode.json
 redesign/tools/*
 !redesign/tools/gen-expressions.py
 !redesign/tools/gen-motions.py
+!redesign/tools/test_gen_motions.py
 
 # Kotlin 编译器缓存与错误日志
 .kotlin/
