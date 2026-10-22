@@ -100,6 +100,16 @@
   --al-focus-ring: 0 0 0 2px rgba(226, 155, 163, 0.5);
 }
 
+/* Android surfaces keep the same palette while gaining calmer, roomier touch geometry. */
+body.platform-android,
+body.android-main,
+body.android-records,
+body.chat-window {
+  --al-r-touch: 16px;
+  --al-touch-size: 48px;
+  --al-mobile-gutter: 12px;
+}
+
 /* ---- 共享动效库：各表面只挂既有 class，不再各自定义关键帧 ----
    入场唯一形态=上浮淡入（距离用 --al-rise 按上下文调）；出场唯一形态=下沉淡出（--al-sink）；
    同容器内容替换/切页用纯淡入，不与布局争夺。全部只动 transform/opacity。 */

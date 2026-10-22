@@ -3,7 +3,7 @@
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; }
 body { margin: 0; overflow: hidden; background: var(--al-bg-0); color: var(--al-text-1); font: 13.5px/1.7 var(--al-font); }
-button { font: inherit; }
+button { font: inherit; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 
 /* 壳：平铺纸色，层次靠发线与留白 */
 .records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: var(--al-bg-0); }
@@ -34,7 +34,7 @@ button { font: inherit; }
 @keyframes records-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 状态条：仅在有内容时占位 ---------- */
-.records-status { max-height: 0; padding: 0 24px; overflow: hidden; color: var(--al-text-3); font-size: 11px; text-align: center; opacity: 0; transition: max-height var(--al-t-med) var(--al-ease), padding var(--al-t-med) var(--al-ease), opacity var(--al-t-med) var(--al-ease); }
+.records-status { max-height: 0; padding: 0 24px; overflow: hidden; color: var(--al-text-3); font-size: 11px; text-align: center; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease); }
 .records-status.show { max-height: 42px; padding: 6px 24px; opacity: 1; }
 .records-status[data-kind="error"] { color: var(--al-danger); }
 
@@ -95,9 +95,9 @@ button { font: inherit; }
 /* ---------- 骨架屏（首次加载） ---------- */
 .record-skeleton { width: var(--w, 50%); max-width: 460px; margin: 10px 0; padding: 11px 13px; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); }
 .record-skeleton.right { margin-left: auto; border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); }
-.record-skeleton i { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--al-bg-3) 25%, color-mix(in srgb, var(--al-text-3) 26%, var(--al-bg-3)) 50%, var(--al-bg-3) 75%); background-size: 200% 100%; animation: record-shimmer 1.25s linear infinite; }
+.record-skeleton i { display: block; height: 10px; border-radius: 5px; background: var(--al-bg-3); animation: record-shimmer .24s ease-in-out infinite alternate; }
 .record-skeleton i + i { width: 64%; margin-top: 8px; }
-@keyframes record-shimmer { from { background-position: 180% 0; } to { background-position: -20% 0; } }
+@keyframes record-shimmer { from { opacity: .55; } to { opacity: 1; } }
 
 /* ---------- 空态 ---------- */
 .records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 5px; color: var(--al-text-3); text-align: center; }
@@ -178,16 +178,25 @@ button { font: inherit; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; transition: none !important; } }
 
 .android-records .records-header { gap:8px; padding:8px; }
+/* MainActivity owns system-bar and IME insets on Android. Do not add env() here too. */
+.android-records { overscroll-behavior:none; }
+.android-records .records-shell { min-height:100%; }
+.android-records .records-header { padding:8px; }
 .android-records .records-logo, .android-records .records-kicker { display:none; }
 .android-records .records-brand { flex:1; }
 .android-records .records-title { max-width:100px; }
 .records-back { flex:none; width:40px; height:44px; border:0; border-radius:var(--al-r-s); background:transparent; color:var(--al-text-1); font-size:28px; cursor:pointer; }
 .records-back:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 .android-records .records-refresh { width:44px; height:44px; }
+.android-records .records-list { padding:16px 14px 42px; overscroll-behavior-y:contain; }
 .android-records .record-message { max-width:94%; }
 .android-records .record-message header { flex-wrap:wrap; }
 .android-records .message-text .msk-draw-image { max-width:min(260px, 72vw); }
 @media (hover:none) {
   .record-replay { opacity:1; min-height:36px; }
   .message-text .msk-draw-card:has(img) .msk-draw-btn { opacity:1; width:40px; height:40px; }
+}
+@media (hover:none) {
+  .android-records .records-refresh, .android-records .records-back, .android-records .records-open-chat { min-width:48px; min-height:48px; }
+  .android-records .record-replay { min-height:48px; }
 }

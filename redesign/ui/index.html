@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- 悬浮窗小窗 WebView 必须钉住 CSS 像素比例，否则气泡等 DOM 元素尺寸漂移 -->
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Aliya Pet</title>
 <style>
   /* 只保留 JS 加载前必须生效的透明基底；气泡/贴边样式见 src/pet.css */
@@ -11,6 +11,8 @@
     margin: 0; height: 100%; overflow: hidden;
     background: transparent;
     -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
   }
   #stage { position: fixed; inset: 0; }
   canvas { display: block; width: 100%; height: 100%; }

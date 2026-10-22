@@ -4,11 +4,14 @@
         <item name="android:windowBackground">@drawable/bg_main</item>
 
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/pet_accent</item>
     </style>
 
     <!-- 底部菜单 Dialog：自带滑入/滑出窗口动画 -->
     <style name="MenuSheetDialog" parent="android:Theme.Translucent.NoTitleBar">
         <item name="android:windowAnimationStyle">@style/MenuSheetAnim</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 
     <style name="MenuSheetAnim" parent="android:Animation">

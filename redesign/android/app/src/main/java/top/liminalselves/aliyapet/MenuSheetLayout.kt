@@ -1,6 +1,7 @@
 package top.liminalselves.aliyapet
 
 import android.content.Context
+import android.provider.Settings
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.VelocityTracker
@@ -29,6 +30,13 @@ class MenuSheetLayout @JvmOverloads constructor(
     private var dragging = false
     private var tracker: VelocityTracker? = null
     private var dismissing = false
+
+    private val animationsEnabled: Boolean
+        get() = Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f
+        ) > 0f
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
@@ -71,18 +79,18 @@ class MenuSheetLayout @JvmOverloads constructor(
                         (translationY > height * 0.3f || vy > 1200f)
                     if (shouldDismiss && !dismissing) {
                         dismissing = true
-                        animate()
-                            .translationY(height.toFloat())
-                            .setDuration(180)
-                            .setInterpolator(AccelerateInterpolator(1.2f))
-                            .withEndAction { onDismissed?.invoke() }
-                            .start()
+                        if (!animationsEnabled) {
+                            translationY = height.toFloat()
+                            onDismissed?.invoke()
+                        } else {
+                            animate().translationY(height.toFloat()).setDuration(180)
+                                .setInterpolator(AccelerateInterpolator(1.2f))
+                                .withEndAction { onDismissed?.invoke() }.start()
+                        }
                     } else {
-                        animate()
-                            .translationY(0f)
-                            .setDuration(220)
-                            .setInterpolator(DecelerateInterpolator(1.6f))
-                            .start()
+                        if (!animationsEnabled) translationY = 0f
+                        else animate().translationY(0f).setDuration(180)
+                            .setInterpolator(DecelerateInterpolator(1.6f)).start()
                     }
                 }
                 tracker?.recycle()

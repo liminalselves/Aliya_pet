@@ -598,9 +598,9 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   }
 }
 
-// ---- 聊天（Misskey 连接状态；鉴权与会话选择仍在聊天窗口内完成）----
+// ---- 连接与会话（Misskey 连接状态；鉴权与会话选择仍在聊天窗口内完成）----
 {
-  const box = section('聊天');
+  const box = section('连接与会话');
   const statusRow = document.createElement('div');
   statusRow.className = 'row';
   const statusLab = document.createElement('div');

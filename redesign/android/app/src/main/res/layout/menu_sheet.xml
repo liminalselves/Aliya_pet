@@ -5,7 +5,9 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/sheet_bg"
+    android:paddingStart="12dp"
     android:paddingTop="12dp"
+    android:paddingEnd="12dp"
     android:paddingBottom="14dp">
 
     <View
@@ -18,7 +20,10 @@
     <TextView
         android:id="@+id/menu_chat"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="56dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:gravity="center_vertical"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
@@ -30,7 +35,10 @@
     <TextView
         android:id="@+id/menu_records"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="56dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:gravity="center_vertical"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
@@ -42,14 +50,15 @@
     <LinearLayout
         android:id="@+id/menu_settings"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:foreground="?attr/selectableItemBackground"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -70,14 +79,15 @@
     <LinearLayout
         android:id="@+id/menu_overlay"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="64dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:foreground="?attr/selectableItemBackground"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -107,14 +117,15 @@
     <LinearLayout
         android:id="@+id/menu_about"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:foreground="?attr/selectableItemBackground"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -135,14 +146,15 @@
     <LinearLayout
         android:id="@+id/menu_quit"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
+        android:minHeight="48dp"
+        android:clickable="true"
+        android:focusable="true"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:foreground="?attr/selectableItemBackground"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -155,7 +167,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:text="@string/menu_quit"
-            android:textColor="#D96A77"
+            android:textColor="@color/pet_blush"
             android:textSize="16sp"
             android:letterSpacing="0.01" />
     </LinearLayout>

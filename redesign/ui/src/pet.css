@@ -124,5 +124,7 @@ body.overlay-wrap #dialogue-bubble {
 }
 
 body.android-main { background:var(--al-bg-0); }
+/* MainActivity applies system-bar and IME insets to the WebView container. */
+body.android-main { overscroll-behavior:none; }
 body.android-main #stage { inset:56px 0 20px; }
 body.android-main.chat-open #stage { bottom:calc(var(--chat-composer-height, 88px) + 12px); }

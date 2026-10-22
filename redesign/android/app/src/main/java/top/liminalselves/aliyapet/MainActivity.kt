@@ -84,9 +84,9 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
             contentDescription = getString(R.string.menu_title)
             setOnClickListener { showMenuSheet() }
         }
-        val size = (44 * density).roundToInt()
+        val size = (48 * density).roundToInt()
         root.addView(menuBtn, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.END).apply {
-            topMargin = (10 * density).roundToInt()
+            topMargin = (8 * density).roundToInt()
             marginEnd = (12 * density).roundToInt()
         })
         setContentView(root)
@@ -229,9 +229,10 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         val dialog = Dialog(this, R.style.MenuSheetDialog)
         menuDialog = dialog
         val view = layoutInflater.inflate(R.layout.menu_sheet, null) as MenuSheetLayout
+        val baseBottomPadding = view.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, (12 * resources.displayMetrics.density).roundToInt() + bars.bottom)
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, baseBottomPadding + bars.bottom)
             insets
         }
         dialog.setContentView(view)
