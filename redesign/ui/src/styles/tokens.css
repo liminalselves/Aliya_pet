@@ -8,6 +8,8 @@
  * 标题与台词用衬线（思源宋体可变字重，完整字库打包在 /fonts）。
  */
 
+@import './android.css';
+
 /* 完整思源宋体（Noto Serif SC 可变字重 100-900，OFL 许可见 /fonts/OFL.txt） */
 @font-face {
   font-family: 'Aliya Serif';

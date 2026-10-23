@@ -189,6 +189,8 @@ function switchRow(
   sw.className = 'sw';
   const input = document.createElement('input');
   input.type = 'checkbox';
+  input.setAttribute('role', 'switch');
+  input.setAttribute('aria-label', label);
   input.checked = get();
   input.addEventListener('change', () => set(input.checked));
   const knob = document.createElement('i');
@@ -281,6 +283,7 @@ let currentMood = 'neutral';
 function refreshMoodHighlight(): void {
   for (const [name, btn] of moodButtons) {
     btn.classList.toggle('active', name === currentMood);
+    btn.setAttribute('aria-pressed', String(name === currentMood));
   }
 }
 
@@ -366,6 +369,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const num = document.createElement('input');
   num.className = 'num';
   num.type = 'number';
+  num.setAttribute('aria-label', '台词间隔（分钟）');
   num.min = '1';
   num.max = '120';
   num.value = String(settings.randomSpeechMinutes);
@@ -394,10 +398,13 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   wrap.style.marginLeft = '12px';
   const minus = document.createElement('button');
   minus.textContent = '−';
+  minus.setAttribute('aria-label', '缩小角色');
   const plus = document.createElement('button');
   plus.textContent = '+';
+  plus.setAttribute('aria-label', '放大角色');
   const slider = document.createElement('input');
   slider.type = 'range';
+  slider.setAttribute('aria-label', '角色缩放');
   // 显示百分比域：10%~100%（实际缩放范围经线性映射，不改实际上下限）
   slider.min = '10';
   slider.max = '100';

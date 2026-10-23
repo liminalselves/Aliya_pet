@@ -2,10 +2,14 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<script src="/android-theme.js"></script>
 <title>Aliya 设置</title>
 <!-- 只保留防白屏底色；完整样式在 src/settings.css（settings-page.ts 引入） -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1412; }
+  html[data-platform="android"][data-container="activity"], html[data-platform="android"][data-container="activity"] body { background: #F8F6FC; }
+  html[data-platform="android"][data-container="overlay"], html[data-platform="android"][data-container="overlay"] body { background: transparent; }
 </style>
 </head>
 <body>

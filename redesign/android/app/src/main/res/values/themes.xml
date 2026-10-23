@@ -1,14 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AliyaPet" parent="Theme.AppCompat.NoActionBar">
+    <style name="Theme.AliyaPet" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowBackground">@drawable/bg_main</item>
-
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/pet_accent</item>
+        <item name="colorAccent">@color/pet_accent</item>
+        <item name="android:textColorPrimary">@color/pet_text</item>
+        <item name="android:textColorSecondary">@color/pet_muted</item>
+        <item name="android:colorControlHighlight">@color/pet_ripple</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 
-    <!-- 底部菜单 Dialog：自带滑入/滑出窗口动画 -->
     <style name="MenuSheetDialog" parent="android:Theme.Translucent.NoTitleBar">
         <item name="android:windowAnimationStyle">@style/MenuSheetAnim</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">@color/pet_accent</item>
+        <item name="android:colorControlHighlight">@color/pet_ripple</item>
+        <item name="android:textColorPrimary">@color/pet_text</item>
+        <item name="android:textColorSecondary">@color/pet_muted</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 
     <style name="MenuSheetAnim" parent="android:Animation">

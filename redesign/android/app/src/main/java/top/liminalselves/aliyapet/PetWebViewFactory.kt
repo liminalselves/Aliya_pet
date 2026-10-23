@@ -13,6 +13,7 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import kotlin.math.roundToInt
 
 /**
  * 共享 WebView 工厂：同一套 ui/dist 前端跑在 App 内与悬浮窗两个容器里。
@@ -49,10 +50,13 @@ object PetWebViewFactory {
         val web = WebView(context)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true // localStorage：设置/台词状态
-        // 钉死文字缩放：textZoom 默认跟随系统字体大小（MIUI 大字体=125），
+        // Activity follows accessibility text size; the fitted overlay keeps stable geometry.
+        // 悬浮窗钉死文字缩放（MIUI 大字体=125），
         // 会把全部 CSS 字号放大（气泡 14px→17.5px）。CSS text-size-adjust 管不到
         // textZoom，只能在 native 端钉 100。
-        web.settings.textZoom = 100
+        web.settings.textZoom = if (context is android.app.Activity) {
+            (context.resources.configuration.fontScale * 100).roundToInt()
+        } else 100
         web.settings.mediaPlaybackRequiresUserGesture = false
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.webChromeClient = object : WebChromeClient() {

@@ -1,0 +1,215 @@
+/* Android-only design system. Desktop keeps the original tea-night tokens.
+   Never paint a page background without the explicit Activity container marker. */
+:root[data-platform="android"] {
+  color-scheme: light;
+  --al-font: -apple-system, BlinkMacSystemFont, "Roboto", "Noto Sans", "Microsoft YaHei", system-ui, sans-serif;
+  --al-font-serif: var(--al-font);
+  --al-bg-0: #F8F6FC;
+  --al-bg-1: #F3EFFA;
+  --al-bg-2: #FFFFFF;
+  --al-bg-3: #EDE7F7;
+  --al-bg-4: #E6DDF3;
+  --al-surface-header: #F8F6FC;
+  --al-surface-page: #F8F6FC;
+  --al-surface-card: #FFFFFF;
+  --al-surface-card-strong: #FFFFFF;
+  --al-surface-card-focus: #F3EFFA;
+  --al-surface-code: #F3EFFA;
+  --al-overlay-chip: #EDE7F7;
+  --al-overlay-chip-hover: #E6DDF3;
+  --al-backdrop: rgba(48, 42, 64, .24);
+  --al-text-1: #302A40;
+  --al-text-2: #726A80;
+  --al-text-3: #726A80;
+  --al-accent: #7962AB;
+  --al-accent-strong: #695198;
+  --al-accent-soft: #EDE7F7;
+  --al-accent-deep: #695198;
+  --al-accent-emphasis: #695198;
+  --al-on-accent: #FFFFFF;
+  --al-on-accent-muted: #F3EFFA;
+  --al-on-accent-hover: rgba(255, 255, 255, .12);
+  --al-accent-2: #7962AB;
+  --al-accent-2-strong: #695198;
+  --al-accent-2-soft: #F3EFFA;
+  --al-lavender: #B9A7DE;
+  --al-gold: #7962AB;
+  --al-line: #E6E0F0;
+  --al-line-strong: #D8CDE8;
+  --al-hover-fill: #F3EFFA;
+  --al-active-fill: #EDE7F7;
+  --al-selection: #E6DDF3;
+  --al-scrollbar: #B9A7DE;
+  --al-success: #466D58;
+  --al-warning: #865E28;
+  --al-danger: #AB465B;
+  --al-r-s: 12px;
+  --al-r-m: 18px;
+  --al-r-l: 24px;
+  --al-shadow-1: 0 1px 3px rgba(48, 42, 64, .04);
+  --al-shadow-2: 0 4px 18px rgba(48, 42, 64, .06);
+  --al-shadow-accent: none;
+  --al-focus-ring: 0 0 0 3px rgba(121, 98, 171, .3);
+  --al-ease: cubic-bezier(.23, 1, .32, 1);
+  --al-ease-in: cubic-bezier(.23, 1, .32, 1);
+  --al-ease-spring: cubic-bezier(.32, .72, 0, 1);
+  --al-t-fast: 120ms;
+  --al-t-med: 220ms;
+  --al-t-out: 140ms;
+  --al-space-1: 4px;
+  --al-space-2: 8px;
+  --al-space-3: 12px;
+  --al-space-4: 16px;
+  --al-space-6: 24px;
+  --al-touch: 48px;
+}
+
+html[data-platform="android"], html[data-platform="android"] body {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html[data-platform="android"][data-container="activity"],
+html[data-platform="android"][data-container="activity"] body { background: var(--al-bg-0); }
+/* Both DOM layers and the WebView surface must remain transparent in overlay mode. */
+html[data-platform="android"][data-container="overlay"],
+html[data-platform="android"][data-container="overlay"] body { background: transparent !important; }
+html[data-platform="android"] :is(button, input, textarea, select, summary, .sw) {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+html[data-platform="android"] :is(button, summary, .sw) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+html[data-platform="android"] :is(input, textarea, select) { font-size: 16px; }
+html[data-platform="android"] :is(button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--al-accent);
+  outline-offset: 3px;
+}
+html[data-platform="android"] :is(.gal-content, .records-list, #app, .control-body) { overscroll-behavior: contain; }
+html[data-platform="android"] :is(.gal-content, .message-text, .sub, .hint, .about, .control-session) { overflow-wrap: anywhere; }
+html[data-platform="android"] :is(.gal-content, .message-text, .sub, .hint, .about) { user-select: text; -webkit-user-select: text; }
+
+/* Main scene: a quiet top caption and a low, compact composer, not a dashboard. */
+html[data-platform="android"] body.android-main #stage { inset: 64px 0 24px; }
+html[data-platform="android"] body.android-main.chat-open #stage { bottom: calc(var(--chat-composer-height, 120px) + 16px); }
+html[data-platform="android"][data-container="activity"] .android-home-heading { display: block; position: fixed; inset: 16px 76px auto 24px; pointer-events: none; z-index: 2; font: 600 22px/1.2 var(--al-font); letter-spacing: -.4px; color: var(--al-text-1); }
+html[data-platform="android"] .android-home-heading small { display: block; margin-top: 5px; font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--al-text-2); }
+html[data-platform="android"] #dialogue-bubble { font-size: 15px; letter-spacing: 0; box-shadow: var(--al-shadow-1); animation: none; }
+html[data-platform="android"] body.android-main #dialogue-bubble { top: 12%; }
+html[data-platform="android"] body.android-main .chat-shell { inset: 76px 16px 12px; max-width: 560px; }
+html[data-platform="android"] body.android-main #chat-ui { font-size: 14px; line-height: 1.55; }
+html[data-platform="android"] body.android-main .gal-panel { border-top-color: var(--al-line); box-shadow: none; }
+html[data-platform="android"] body.android-main[data-chat-layout="reply"] .gal-panel { max-height: min(38%, calc(100% - var(--chat-composer-height, 120px))); }
+html[data-platform="android"] body.android-main[data-chat-layout="setup"] .gal-panel { max-height: 64%; border-radius: var(--al-r-l); }
+html[data-platform="android"] body.android-main .gal-content { padding: 20px; font-size: 15px; line-height: 1.65; }
+html[data-platform="android"] body.android-main .gal-content:has(> h2) { padding-top: 56px; }
+html[data-platform="android"] body.android-main #chat-ui button { min-width: 44px; min-height: var(--al-touch); border-radius: var(--al-r-s); transition: transform 120ms var(--al-ease); }
+html[data-platform="android"] body.android-main #chat-ui button:active:not(:disabled) { transform: scale(.97); }
+html[data-platform="android"] body.android-main #chat-ui .close-panel { top: 6px; right: 8px; width: 44px; height: 44px; min-height: 44px; line-height: 44px; border-radius: 50%; }
+html[data-platform="android"] body.android-main .chat-composer { padding: 12px 12px 4px; border-color: var(--al-line); border-radius: 0 0 var(--al-r-l) var(--al-r-l); box-shadow: var(--al-shadow-1); transition: none; }
+html[data-platform="android"] body.android-main .chat-shell.composer-only .chat-composer { border-radius: var(--al-r-l); }
+html[data-platform="android"] body.android-main .chat-composer textarea { min-height: 36px; padding: 4px; font-size: 16px; line-height: 24px; }
+html[data-platform="android"] body.android-main .composer-toolbar { gap: 0; font-size: 12px; }
+html[data-platform="android"] body.android-main .composer-toolbar button { padding-inline: 8px !important; }
+html[data-platform="android"] body.android-main #chat-ui .send { min-width: 56px; border-radius: 16px; }
+html[data-platform="android"] body.android-main .chat-status { white-space: normal; overflow-wrap: anywhere; }
+html[data-platform="android"] body.android-main .gal-content form.manual { flex-wrap: wrap; }
+html[data-platform="android"] body.android-main .gal-content form.manual input { flex-basis: 160px; }
+html[data-platform="android"] body.android-main .session-row { min-width: 0; margin-inline: 0; }
+html[data-platform="android"] body.android-main .gal-content .muted-note { font-size: 13px; }
+html[data-platform="android"] body.android-main .gal-footer { font-size: 12px; }
+html[data-platform="android"] body.android-main .gal-footer.show { height: auto; min-height: 32px; }
+/* Frequent text/page/list changes stay still while Live2D is rendering. */
+html[data-platform="android"] :is(.gal-content.fade-in, .gal-content.stagger-in > *, .gal-page-in, .gal-text-in, .tw-reveal, #app.enter > *, .records-shell.enter, .records-list.swap-in, .record-message, .record-day) { animation: none !important; }
+html[data-platform="android"] .unread-dot::after { animation: none; }
+
+/* Settings: inset grouped cards, generous touch rows, an accessible native-like switch. */
+html[data-platform="android"] body.platform-android { font-size: 16px; line-height: 1.5; }
+html[data-platform="android"] body.platform-android #app { padding: 0 max(16px, calc((100% - 640px) / 2)) 32px; scroll-padding-top: 80px; }
+html[data-platform="android"] body.platform-android .mobile-topbar { margin: 0 0 24px; padding: 8px 0; gap: 8px; background: var(--al-bg-0); border: 0; }
+html[data-platform="android"] body.platform-android .mobile-topbar .back { width: 48px; height: 48px; border-radius: 16px; color: var(--al-accent); background: var(--al-bg-3); }
+html[data-platform="android"] body.platform-android .mobile-topbar .title { font: 650 26px/1.3 var(--al-font); letter-spacing: -.5px; }
+html[data-platform="android"] body.platform-android h2 { margin: 28px 16px 10px; font: 600 13px/1.4 var(--al-font); letter-spacing: .02em; }
+html[data-platform="android"] body.platform-android h2::before { display: none; }
+html[data-platform="android"] body.platform-android .card { border: 1px solid var(--al-line); border-radius: var(--al-r-l); padding: 4px 16px; box-shadow: none; }
+html[data-platform="android"] body.platform-android .row { min-height: 64px; padding-block: 16px; }
+html[data-platform="android"] body.platform-android :is(.sub, .hint, .about) { font-size: 13px; line-height: 1.6; }
+html[data-platform="android"] body.platform-android button.act { min-height: var(--al-touch); padding: 12px 8px; font-size: 14px; border-color: transparent; background: var(--al-bg-1); overflow-wrap: anywhere; transition: transform 120ms var(--al-ease); }
+html[data-platform="android"] body.platform-android button.act.active { background: var(--al-accent); }
+html[data-platform="android"] body.platform-android .card .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+html[data-platform="android"] body.platform-android .sw { width: 52px; height: 48px; }
+html[data-platform="android"] body.platform-android .sw input { display: block; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+html[data-platform="android"] body.platform-android .sw i { inset: 9px 0; pointer-events: none; transition: none; }
+html[data-platform="android"] body.platform-android .sw i::after { top: 3px; left: 3px; width: 24px; height: 24px; background: #FFFFFF; transition: transform 160ms var(--al-ease); }
+html[data-platform="android"] body.platform-android .sw input:checked + i::after { left: 3px; transform: translateX(22px); }
+html[data-platform="android"] body.platform-android .slider-row { min-width: 0; flex-wrap: wrap; gap: 8px; }
+html[data-platform="android"] body.platform-android .slider-row button { width: 48px; height: 48px; border-radius: 16px; transition: transform 120ms var(--al-ease); }
+html[data-platform="android"] body.platform-android .slider-row input[type="range"] { min-width: 80px; height: 48px; background: transparent; box-shadow: none; touch-action: pan-y; }
+html[data-platform="android"] body.platform-android .slider-row input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--al-bg-3); }
+html[data-platform="android"] body.platform-android .slider-row input[type="range"]::-webkit-slider-thumb { margin-top: -8px; width: 22px; height: 22px; box-shadow: none; }
+html[data-platform="android"] body.platform-android .num { min-height: 48px; width: 72px; box-sizing: border-box; font-size: 16px; }
+
+/* Records: stable reading surface; replay controls never rely on hover. */
+html[data-platform="android"] body.android-records { font-size: 16px; }
+html[data-platform="android"] body.android-records .records-header { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 8px; padding: 12px 16px; background: var(--al-bg-0); }
+html[data-platform="android"] body.android-records .records-heading h1 { font-size: 20px; letter-spacing: -.3px; }
+html[data-platform="android"] body.android-records .records-heading h1::before { display: none; }
+html[data-platform="android"] body.android-records .records-side { display: contents; }
+html[data-platform="android"] body.android-records .records-session { grid-column: 2 / -1; grid-row: 2; text-align: left; }
+html[data-platform="android"] body.android-records .records-title { max-width: 100%; font-size: 14px; }
+html[data-platform="android"] body.android-records .records-meta { font-size: 12px; }
+html[data-platform="android"] body.android-records .records-refresh { grid-column: 3; grid-row: 1; width: 48px; height: 48px; border: 0; background: var(--al-bg-3); }
+html[data-platform="android"] body.android-records .records-back { width: 48px; height: 48px; background: var(--al-bg-3); color: var(--al-accent); border-radius: 16px; }
+html[data-platform="android"] body.android-records .records-list { padding: 20px max(16px, calc((100% - 720px) / 2)) 80px; scroll-behavior: auto; }
+html[data-platform="android"] body.android-records .record-message { max-width: 94%; padding: 12px 16px; margin-block: 12px; font-size: 15px; box-shadow: none; transition: none; }
+html[data-platform="android"] body.android-records .record-user { background: var(--al-bg-3); border-color: transparent; }
+html[data-platform="android"] body.android-records .record-message header { gap: 4px 12px; }
+html[data-platform="android"] body.android-records .record-message header strong { font-size: 13px; letter-spacing: 0; }
+html[data-platform="android"] body.android-records .record-message header time { font-size: 12px; }
+html[data-platform="android"] body.android-records .record-replay { opacity: 1; min-height: 44px; padding-inline: 12px; font-size: 13px; color: var(--al-accent); }
+html[data-platform="android"] body.android-records :is(.records-status, .records-status.show) { max-height: none; transition: opacity 120ms var(--al-ease); font-size: 13px; overflow-wrap: anywhere; }
+html[data-platform="android"] body.android-records .records-status:empty { padding: 0; }
+html[data-platform="android"] body.android-records :is(.record-day, .records-truncated) { font-size: 12px; letter-spacing: 0; }
+html[data-platform="android"] body.android-records .records-empty h2 { font-size: 20px; }
+html[data-platform="android"] body.android-records .records-empty p { font-size: 14px; }
+html[data-platform="android"] body.android-records .records-open-chat { min-height: 48px; font-size: 15px; }
+html[data-platform="android"] body.android-records .records-tobottom { width: 48px; height: 48px; background: var(--al-bg-2); }
+html[data-platform="android"] body.android-records .record-skeleton i { background: var(--al-bg-3); animation: al-fade-in 220ms var(--al-ease); }
+html[data-platform="android"] body.android-records .message-text .msk-draw-card:has(img) .msk-draw-btn { opacity: 1; width: 44px; height: 44px; }
+html[data-platform="android"] body.android-records .message-text .msk-draw-image { max-width: 100%; }
+
+html[data-platform="android"] .agent-control-drawer { font-size: 15px; }
+html[data-platform="android"] .agent-control-drawer header { padding: 16px; }
+html[data-platform="android"] .agent-control-drawer h2::before { display: none; }
+html[data-platform="android"] .agent-control-drawer :is(.control-close, .control-retry, nav button) { min-height: 48px; min-width: 44px; }
+html[data-platform="android"] .agent-control-drawer nav { background: var(--al-bg-3); }
+html[data-platform="android"] .agent-control-drawer nav button { white-space: normal; font-size: 13px; }
+html[data-platform="android"] .agent-control-drawer .control-session { font-size: 13px; }
+html[data-platform="android"] .agent-control-drawer .control-body.swap { animation: none; }
+
+@media (max-width: 380px) {
+  html[data-platform="android"] body.android-main .chat-shell { inset-inline: 8px; }
+  html[data-platform="android"] body.android-main .composer-toolbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-platform="android"] body.android-main .composer-toolbar .chat-status { grid-column: 1 / -1; order: 2; }
+  html[data-platform="android"] body.android-main .composer-toolbar .send { margin: 0; grid-column: 3; }
+  html[data-platform="android"] body.android-main .composer-toolbar .close-window { grid-column: 4; }
+  html[data-platform="android"] body.platform-android .card .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-height: 480px) {
+  html[data-platform="android"][data-container="activity"] .android-home-heading { display: none; }
+  html[data-platform="android"] body.android-main .chat-shell { top: 8px; }
+  html[data-platform="android"] body.android-main[data-chat-layout="setup"] .gal-panel { max-height: 100%; }
+  html[data-platform="android"] body.android-main #stage { top: 8px; }
+}
+/* Touch must not retain desktop hover paint/scale after a tap. */
+@media (hover: none), (pointer: coarse) {
+  html[data-platform="android"] body.platform-android button.act:hover:not(.active) { background: var(--al-bg-1); border-color: transparent; }
+  html[data-platform="android"] body.android-main #chat-ui button:hover { background: transparent; }
+  html[data-platform="android"] body.android-main #chat-ui .send:hover { background: var(--al-accent) !important; }
+  html[data-platform="android"] body.android-main #chat-ui .chat-launcher:hover { transform: translateX(-50%) scale(var(--launcher-k, 1)); box-shadow: var(--al-shadow-1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-platform="android"] *, html[data-platform="android"] *::before, html[data-platform="android"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

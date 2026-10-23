@@ -1,6 +1,7 @@
 package top.liminalselves.aliyapet
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -71,11 +72,15 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         super.onCreate(savedInstanceState)
         exitRequested = false
         val density = resources.displayMetrics.density
-        root = FrameLayout(this)
+        root = FrameLayout(this).apply {
+            // Only the Activity paints a page background; overlay WebViews stay transparent.
+            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.pet_background))
+        }
         web = createWebView()
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         menuBtn = android.widget.ImageButton(this).apply {
             setImageResource(R.drawable.ic_menu_dots)
+            setColorFilter(ContextCompat.getColor(this@MainActivity, R.color.pet_accent))
             scaleType = android.widget.ImageView.ScaleType.CENTER
             setPadding(0, 0, 0, 0)
             minimumWidth = 0
@@ -84,7 +89,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
             contentDescription = getString(R.string.menu_title)
             setOnClickListener { showMenuSheet() }
         }
-        val size = (44 * density).roundToInt()
+        val size = (48 * density).roundToInt()
         root.addView(menuBtn, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.END).apply {
             topMargin = (10 * density).roundToInt()
             marginEnd = (12 * density).roundToInt()
@@ -98,8 +103,8 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
             insets
         }
         androidx.core.view.WindowInsetsControllerCompat(window, root).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
         }
         @Suppress("DEPRECATION")
         run {
@@ -229,23 +234,43 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         val dialog = Dialog(this, R.style.MenuSheetDialog)
         menuDialog = dialog
         val view = layoutInflater.inflate(R.layout.menu_sheet, null) as MenuSheetLayout
+        val density = resources.displayMetrics.density
         ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, (12 * resources.displayMetrics.density).roundToInt() + bars.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left, v.paddingTop, bars.right, (12 * density).roundToInt() + bars.bottom)
             insets
         }
+        view.findViewById<View>(R.id.menu_overlay).contentDescription =
+            "${getString(R.string.menu_overlay)}，${getString(R.string.menu_overlay_sub)}"
         dialog.setContentView(view)
-        view.onDismissed = { dialog.dismiss() }
+        view.onDismissed = {
+            // The dragged surface is already off-screen; don't play a second window exit.
+            dialog.window?.setWindowAnimations(0)
+            dialog.dismiss()
+        }
+        dialog.setOnDismissListener {
+            menuDialog = null
+            menuBtn.requestFocus()
+        }
+        // Android's animation accessibility setting must cover both window and drag motion.
+        if (!ValueAnimator.areAnimatorsEnabled() || Settings.Global.getFloat(contentResolver, Settings.Global.WINDOW_ANIMATION_SCALE, 1f) == 0f) {
+            dialog.window?.setWindowAnimations(0)
+        }
         dialog.show()
+        dialog.setCanceledOnTouchOutside(true)
+        ViewCompat.requestApplyInsets(view)
         dialog.window?.apply {
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(this, false)
             setGravity(Gravity.BOTTOM)
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setLayout(minOf(resources.displayMetrics.widthPixels, (560 * density).roundToInt()), ViewGroup.LayoutParams.WRAP_CONTENT)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply { dimAmount = 0.35f }
+            attributes = attributes.apply { dimAmount = 0.24f }
             @Suppress("DEPRECATION")
             run { navigationBarColor = ContextCompat.getColor(this@MainActivity, R.color.pet_surface) }
-            androidx.core.view.WindowInsetsControllerCompat(this, view).isAppearanceLightNavigationBars = false
+            androidx.core.view.WindowInsetsControllerCompat(this, view).apply {
+                isAppearanceLightStatusBars = true
+                isAppearanceLightNavigationBars = true
+            }
         }
         val actions = mapOf(
             R.id.menu_settings to "open-settings",

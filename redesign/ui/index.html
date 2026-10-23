@@ -2,8 +2,9 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<!-- 悬浮窗小窗 WebView 必须钉住 CSS 像素比例，否则气泡等 DOM 元素尺寸漂移 -->
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<!-- Native Activity owns system/IME insets; overlay keeps the transparent base. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<script src="/android-theme.js"></script>
 <title>Aliya Pet</title>
 <style>
   /* 只保留 JS 加载前必须生效的透明基底；气泡/贴边样式见 src/pet.css */
@@ -12,11 +13,13 @@
     background: transparent;
     -webkit-user-select: none; user-select: none;
   }
+  .android-home-heading { display: none; }
   #stage { position: fixed; inset: 0; }
   canvas { display: block; width: 100%; height: 100%; }
 </style>
 </head>
 <body>
+<header class="android-home-heading">Aliya<small>陪伴，就在此刻</small></header>
 <div id="stage"></div>
 <!-- Cubism Core 6.0.1（Emscripten，异步初始化，main.ts 会轮询就绪） -->
 <script src="/core/live2dcubismcore.js"></script>
