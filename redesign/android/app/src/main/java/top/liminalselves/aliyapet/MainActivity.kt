@@ -5,6 +5,8 @@ import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -120,7 +122,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
                 current.evaluateJavascript("""
                     (() => {
                         const dialog = document.querySelector('dialog[open]');
-                        if (dialog) { dialog.close(); return true; }
+                        if (dialog) { if (dialog.dispatchEvent(new Event('cancel', { cancelable: true }))) dialog.close(); return true; }
                         return window.__pet?.handleBack?.() ?? false;
                     })()
                 """.trimIndent()) { handled ->
@@ -194,34 +196,70 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         super.onDestroy()
     }
 
+    /**
+     * 子页面（设置/记录）从右侧滑入、返回时滑出（系统导航的标准方向）。
+     * 新页先完全不透明盖住下层再开始位移，避免透明 WebView 首帧露出桌宠闪一下；
+     * 下层页面在滑入结束后才隐藏，滑出开始前先恢复可见。
+     */
     private fun openPage(url: String) {
         val current = pages.lastOrNull()
         if (current?.tag == url) return
-        current?.visibility = View.INVISIBLE
-        current?.onPause()
         val page = createWebView()
         page.tag = url
         page.setBackgroundColor(ContextCompat.getColor(this, R.color.pet_background))
         pages.add(page)
         root.addView(page, FrameLayout.LayoutParams(-1, -1))
-        menuBtn.visibility = View.GONE
         page.loadUrl(url)
+        hideMenuButton()
+        val width = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        page.translationX = width * 0.28f
+        page.alpha = 0f
+        page.animate()
+            .translationX(0f).alpha(1f)
+            .setDuration(PAGE_IN_MS)
+            .setInterpolator(DecelerateInterpolator(2f))
+            .withEndAction {
+                if (pages.lastOrNull() !== page) return@withEndAction
+                current?.visibility = View.INVISIBLE
+                current?.onPause()
+            }
+            .start()
     }
 
-    private fun closePage() {
+    private fun closePage(animate: Boolean = true) {
         val page = pages.removeLastOrNull() ?: return
-        root.removeView(page)
-        page.destroy()
         val current = pages.lastOrNull() ?: web
         current.visibility = View.VISIBLE
         current.onResume()
         current.requestFocus()
         current.evaluateJavascript("window.dispatchEvent(new Event('focus'))", null)
-        if (pages.isEmpty()) menuBtn.visibility = View.VISIBLE
+        if (pages.isEmpty()) showMenuButton()
+        val finish = { root.removeView(page); page.destroy() }
+        if (!animate) { page.animate().cancel(); finish(); return }
+        page.animate().cancel()
+        page.animate()
+            .translationX(page.width * 0.22f).alpha(0f)
+            .setDuration(PAGE_OUT_MS)
+            .setInterpolator(AccelerateInterpolator(1.5f))
+            .withEndAction(finish)
+            .start()
     }
 
     private fun closeAllPages() {
-        while (pages.isNotEmpty()) closePage()
+        // 多层一起关：只给最上层播滑出，其余直接移除，避免层层叠播。
+        while (pages.size > 1) closePage(animate = false)
+        closePage()
+    }
+
+    private fun hideMenuButton() {
+        menuBtn.animate().cancel()
+        menuBtn.animate().alpha(0f).setDuration(PAGE_OUT_MS).withEndAction { menuBtn.visibility = View.GONE }.start()
+    }
+
+    private fun showMenuButton() {
+        menuBtn.animate().cancel()
+        menuBtn.visibility = View.VISIBLE
+        menuBtn.animate().alpha(1f).setDuration(PAGE_IN_MS).start()
     }
 
     private fun showMenuSheet() {
@@ -333,6 +371,9 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         }
     }
 }
+
+private const val PAGE_IN_MS = 240L
+private const val PAGE_OUT_MS = 180L
 
 object ShellBridgeHostDefaults {
     fun openUrl(ctx: android.content.Context, url: String) {

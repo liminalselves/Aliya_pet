@@ -1,6 +1,7 @@
 /**
- * 设置窗口样式：分组卡片 + 发线分隔的统一布局。
- * 视觉 token 全部取自 styles/tokens.css；此处只排布局与控件形态。
+ * 设置窗口：系统设置式分组列表。
+ * 组题 = 卡片外的小号说明字；卡片内是发线分隔的行；单独操作按钮渲染成带箭头的列表行，
+ * 动作/表情/情绪是等宽栅格的轻量按钮。视觉 token 全部取自 styles/tokens.css。
  */
 @import './styles/tokens.css';
 
@@ -12,6 +13,8 @@ html, body {
   color: var(--al-text-1);
   font-family: var(--al-font);
   font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -19,120 +22,176 @@ html, body {
 #app {
   height: 100%;
   overflow-y: auto;
-  padding: 10px 14px 28px;
+  padding: 6px 16px 32px;
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: var(--al-bg-4) transparent;
+  scrollbar-color: var(--al-scrollbar) transparent;
 }
 #app::-webkit-scrollbar { width: 6px; }
-#app::-webkit-scrollbar-thumb { background: var(--al-bg-4); border-radius: 3px; }
+#app::-webkit-scrollbar-thumb { background: var(--al-scrollbar); border-radius: 3px; }
 
-/* 窗口/页面进入：各分区依次上浮淡入（级联 30-50ms 阶梯），预创建窗 show 出来的硬切不再生硬。
-   级联挂在子项而非整页：整页平移 + 子项平移叠加会双重位移。 */
-#app.enter > * { animation: al-rise-in var(--al-t-med) var(--al-ease) both; }
-#app.enter > *:nth-child(2) { animation-delay: .035s; }
-#app.enter > *:nth-child(3) { animation-delay: .07s; }
-#app.enter > *:nth-child(4) { animation-delay: .105s; }
-#app.enter > *:nth-child(5) { animation-delay: .14s; }
-#app.enter > *:nth-child(6) { animation-delay: .175s; }
-#app.enter > *:nth-child(7) { animation-delay: .21s; }
-#app.enter > *:nth-child(8) { animation-delay: .245s; }
-#app.enter > *:nth-child(n+9) { animation-delay: .28s; }
-@media (prefers-reduced-motion: reduce) { #app.enter > * { animation: none; } }
+/* 进入：各分区依次上浮淡入；级联挂在子项而非整页，避免双重位移。 */
+#app.enter > * { --al-rise: 8px; animation: al-rise-in var(--al-t-slow) var(--al-ease) both; }
+#app.enter > *:nth-child(2) { animation-delay: .03s; }
+#app.enter > *:nth-child(3) { animation-delay: .06s; }
+#app.enter > *:nth-child(4) { animation-delay: .09s; }
+#app.enter > *:nth-child(5) { animation-delay: .12s; }
+#app.enter > *:nth-child(6) { animation-delay: .15s; }
+#app.enter > *:nth-child(7) { animation-delay: .18s; }
+#app.enter > *:nth-child(8) { animation-delay: .21s; }
+#app.enter > *:nth-child(n+9) { animation-delay: .24s; }
+/* Android 子页由原生容器整页滑入，网页级联再叠一层就是双重位移 */
+body.platform-android #app.enter > * { animation: none; }
 
 /* ---- 分组 ---- */
-/* 组题用衬线 + 腮红小菱标，弃宽字距灰字小标（AI 模板感来源）。 */
 h2 {
-  font-family: var(--al-font-serif);
-  font-size: 13px;
-  color: var(--al-text-2);
-  margin: 24px 6px 9px;
+  margin: 22px 4px 8px;
+  color: var(--al-text-3);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  line-height: 1;
 }
-h2::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin: 0 8px 1px 0;
-  background: var(--al-accent);
-  transform: rotate(45deg);
-  border-radius: 1.5px;
-}
-h2:first-child { margin-top: 6px; }
+h2:first-child { margin-top: 12px; }
 
 .card {
   background: var(--al-bg-2);
-  border: 1px solid var(--al-line);
-  border-radius: var(--al-r-l);
-  padding: 2px 14px;
-  box-shadow: var(--al-shadow-1);
+  border-radius: var(--al-r-m);
+  padding: 0 14px;
+  box-shadow: inset 0 0 0 1px var(--al-line);
 }
 
-/* 行：卡片内发线分隔，末行无线 */
+/* 行：卡片内发线分隔 */
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--al-line);
+  gap: 14px;
+  min-height: 48px;
+  padding: 11px 0;
+  box-sizing: border-box;
 }
-.row:last-child { border-bottom: 0; }
-.row .label { flex: 1; min-width: 0; }
-.row .sub { display: block; color: var(--al-text-3); font-size: 11px; margin-top: 3px; line-height: 1.5; }
+.card > * + .row { border-top: 1px solid var(--al-line); }
+.row .label { flex: 1; min-width: 0; color: var(--al-text-1); }
+/* 滑块行：标签只占自身宽度，剩余空间全给滑块（否则窄屏下标签被挤成竖排） */
+.row:has(.slider-row) .label { flex: none; white-space: nowrap; }
+.row.inactive { opacity: .4; pointer-events: none; }
+.row { transition: opacity var(--al-t-med) var(--al-ease); }
+.row .sub { display: block; margin-top: 3px; color: var(--al-text-3); font-size: 11.5px; line-height: 1.5; }
 
-/* 卡片内的非行内容（按钮栅格/宽按钮/说明） */
-.card .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 0 4px; }
-.card .grid:last-child { padding-bottom: 12px; }
-.card .hint { color: var(--al-text-3); font-size: 11px; margin: 12px 0 0; line-height: 1.5; }
-.card .hint:first-child { margin-top: 10px; }
+/* 卡片内栅格（动作/表情/情绪）与小节说明 */
+.card .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 6px;
+  padding: 12px 0;
+}
+.card .hint {
+  margin: 0;
+  padding: 12px 0 0;
+  color: var(--al-text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.card .hint + .grid { padding-top: 8px; }
+.card > * + .hint { border-top: 1px solid var(--al-line); }
 
-/* ---- 按钮 ---- */
+/* ---- 栅格按钮 ---- */
 button.act {
-  padding: 9px 0;
-  border: 1px solid var(--al-line-strong);
-  border-radius: 10px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--al-r-s);
   background: var(--al-bg-3);
   color: var(--al-text-1);
   cursor: pointer;
-  font-size: 12px;
-  font-family: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
   transition: background var(--al-t-fast) var(--al-ease),
-    border-color var(--al-t-fast) var(--al-ease),
-    transform var(--al-t-fast) var(--al-ease),
-    box-shadow var(--al-t-fast) var(--al-ease);
+    color var(--al-t-fast) var(--al-ease),
+    transform var(--al-t-fast) var(--al-ease);
 }
-button.act:hover { background: var(--al-bg-4); border-color: var(--al-accent-strong); }
+button.act:hover { background: var(--al-bg-4); }
 button.act:active { transform: scale(0.97); }
-button.act:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
-button.act:disabled { opacity: 0.45; cursor: default; }
-button.act:disabled:hover { background: var(--al-bg-3); border-color: var(--al-line-strong); }
-
-/* 选中态（情绪高亮）：主色实底，不做渐变与发光。 */
-button.act.active {
-  border-color: var(--al-accent);
-  background: var(--al-accent);
-  color: var(--al-on-accent);
-  font-weight: 600;
-  box-shadow: var(--al-shadow-accent);
+/* 触发类按钮「已发出」：底部一道腮红短线由中间展开再淡去 */
+button.act { position: relative; overflow: hidden; }
+button.act::before {
+  content: ''; position: absolute; left: 30%; right: 30%; bottom: 0; height: 2px; border-radius: 1px;
+  background: var(--al-accent); opacity: 0; transform: scaleX(.2);
 }
-button.act.active:hover { background: var(--al-accent-strong); border-color: var(--al-accent-strong); }
+button.act.sent::before { animation: act-sent .7s var(--al-ease) forwards; }
+@keyframes act-sent { 0% { opacity: 1; transform: scaleX(.2); } 45% { opacity: 1; transform: scaleX(1); } 100% { opacity: 0; transform: scaleX(1); } }
+button.act:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+button.act:disabled { opacity: 0.4; cursor: default; }
+button.act:disabled:hover { background: var(--al-bg-3); }
 
-button.wide { width: 100%; margin: 6px 0 12px; }
-.card .wide:last-child { margin-bottom: 12px; }
+/* 选中态（当前情绪）：腮红淡底 + 腮红字，比实底更安静 */
+button.act.active {
+  background: var(--al-accent-soft);
+  color: var(--al-accent-strong);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--al-accent) 45%, transparent);
+}
+button.act.active:hover { background: color-mix(in srgb, var(--al-accent) 20%, transparent); }
+
+/* 行内小按钮（如悬浮窗权限「去开启」） */
+.row button.act { flex: none; height: 30px; padding: 0 14px !important; border-radius: var(--al-r-pill); }
+
+/* ---- 单独操作：渲染成可点的列表行（标签左对齐 + 右侧细箭头） ---- */
+button.act.wide {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: calc(100% + 28px);
+  height: auto;
+  min-height: 46px;
+  margin: 0 -14px;
+  padding: 0 38px 0 14px;
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--al-text-1);
+  font-size: 13px;
+  text-align: left;
+}
+button.act.wide::after {
+  content: '';
+  position: absolute;
+  right: 19px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -4px;
+  border-top: 1.5px solid var(--al-text-3);
+  border-right: 1.5px solid var(--al-text-3);
+  transform: rotate(45deg);
+  transition: transform var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease);
+}
+button.act.wide:hover { background-color: var(--al-hover-fill); }
+button.act.wide:hover::after { border-color: var(--al-text-2); transform: translateX(2px) rotate(45deg); }
+button.act.wide:active { transform: none; background-color: var(--al-press-fill); }
+button.act.wide:disabled:hover { background-color: transparent; }
+button.act.wide:focus-visible { box-shadow: inset var(--al-focus-ring); }
+button.act.wide.sent { color: var(--al-accent-strong); transition: color .1s; }
+/* 列表行满宽（悬停底色铺满卡片），分隔线用背景渐变画一条内缩 1px 硬线，不占伪元素 */
+.card > * + button.act.wide {
+  background-image: linear-gradient(var(--al-line), var(--al-line));
+  background-size: calc(100% - 28px) 1px;
+  background-position: 14px 0;
+  background-repeat: no-repeat;
+}
+body.platform-android .card > * + button.act.wide { background-size: calc(100% - 32px) 1px; background-position: 16px 0; }
+.card > button.act.wide:first-child { border-top-left-radius: var(--al-r-m); border-top-right-radius: var(--al-r-m); }
+.card > button.act.wide:last-child { border-bottom-left-radius: var(--al-r-m); border-bottom-right-radius: var(--al-r-m); }
 
 /* ---- 开关 ---- */
-.sw { position: relative; width: 42px; height: 24px; flex: none; cursor: pointer; }
-.sw input { display: none; }
+.sw { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; }
+.sw input { position: absolute; inset: 0; z-index: 1; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
 .sw i {
   position: absolute;
   inset: 0;
   border-radius: var(--al-r-pill);
   background: var(--al-bg-4);
-  box-shadow: inset 0 0 0 1px var(--al-line-strong);
-  transition: background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease);
+  transition: background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-fast) var(--al-ease);
 }
 .sw i::after {
   content: '';
@@ -141,131 +200,179 @@ button.wide { width: 100%; margin: 6px 0 12px; }
   left: 3px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--al-r-pill);
   background: var(--al-text-2);
-  box-shadow: var(--al-shadow-1);
-  transition: left var(--al-t-med) var(--al-ease-spring), background var(--al-t-med) var(--al-ease);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  transition: transform var(--al-t-med) var(--al-ease-spring), width var(--al-t-fast) var(--al-ease), background var(--al-t-med) var(--al-ease);
 }
-.sw input:checked + i {
-  background: var(--al-accent);
-  box-shadow: none;
-}
-.sw input:checked + i::after { left: 21px; background: var(--al-on-accent); }
+.sw:hover i { background: #3d3a37; }
+.sw input:checked + i { background: var(--al-accent); }
+.sw input:checked + i::after { transform: translateX(16px); background: #fffaf7; }
+/* 按住时滑块微微拉长（iOS 式按压反馈） */
+.sw input:active + i::after { width: 22px; }
+.sw input:checked:active + i::after { transform: translateX(12px); }
 .sw input:focus-visible + i { box-shadow: var(--al-focus-ring); }
 
 /* ---- 滑块行 ---- */
 .slider-row { display: flex; align-items: center; gap: 8px; }
 .slider-row button {
+  display: grid;
+  place-items: center;
   width: 26px;
   height: 26px;
   flex: none;
-  border: 1px solid var(--al-line-strong);
-  border-radius: var(--al-r-s);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
   background: var(--al-bg-3);
-  color: var(--al-text-1);
+  color: var(--al-text-2);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
+  font: 500 15px/1 var(--al-font);
+  transition: background var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
 }
-.slider-row button:hover { background: var(--al-bg-4); }
-.slider-row button:active { transform: scale(0.92); }
+.slider-row button:hover { background: var(--al-bg-4); color: var(--al-text-1); }
+.slider-row button:active { transform: scale(0.9); }
+.slider-row button:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 
-/* 滑块轨道保持单色，避免用渐变模拟进度。 */
+/* 轨道：已行程段主色实填（同一断点硬切，不是渐变过渡；--fill 由 settings-page.ts 写入） */
 .slider-row input[type='range'] {
   flex: 1;
+  min-width: 0;
+  height: 4px;
+  margin: 0 2px;
   appearance: none;
   -webkit-appearance: none;
-  height: 4px;
   border-radius: 2px;
-  background: var(--al-bg-4);
-  box-shadow: inset 0 0 0 1px var(--al-line);
+  background: linear-gradient(to right, var(--al-accent) var(--fill, 0%), var(--al-bg-4) var(--fill, 0%));
   cursor: pointer;
 }
 .slider-row input[type='range']::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--al-accent);
+  background: #fffaf7;
   border: 0;
-  box-shadow: 0 0 0 4px var(--al-accent-soft);
-  transition: box-shadow var(--al-t-fast) var(--al-ease);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  transition: transform var(--al-t-fast) var(--al-ease);
 }
-.slider-row input[type='range']:hover::-webkit-slider-thumb {
-  box-shadow: 0 0 0 6px var(--al-accent-soft);
-}
-.slider-row input[type='range']:focus-visible {
-  outline: none;
-  box-shadow: var(--al-focus-ring);
-}
+.slider-row input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.slider-row input[type='range']:active::-webkit-slider-thumb { transform: scale(1.2); }
+.slider-row input[type='range']:focus-visible { outline: none; }
+.slider-row input[type='range']:focus-visible::-webkit-slider-thumb { box-shadow: var(--al-focus-ring); }
 .slider-row input[type='range']::-moz-range-thumb {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--al-accent);
+  background: #fffaf7;
   border: 0;
-  box-shadow: 0 0 0 4px var(--al-accent-soft);
 }
-.slider-row .val { width: 40px; flex: none; text-align: right; color: var(--al-text-2); font-variant-numeric: tabular-nums; }
+.slider-row .val { width: 38px; flex: none; text-align: right; color: var(--al-text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-/* ---- 数字输入 ---- */
-.num {
-  width: 52px;
-  background: var(--al-bg-1);
-  border: 1px solid var(--al-line-strong);
-  border-radius: var(--al-r-s);
-  color: var(--al-text-1);
-  padding: 4px 8px;
-  font-size: 12px;
-  font-family: inherit;
+/* ---- 步进器：− 数值 + 一体胶囊 ---- */
+.stepper { display: flex; align-items: center; flex: none; height: 30px; border-radius: var(--al-r-pill); background: var(--al-bg-3); }
+.stepper button {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--al-text-2); font: 500 15px/1 var(--al-font); cursor: pointer;
+  transition: background var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
 }
-.num:focus { outline: none; border-color: var(--al-accent); box-shadow: 0 0 0 3px var(--al-accent-soft); }
+.stepper button:hover { background: var(--al-bg-4); color: var(--al-text-1); }
+.stepper button:active { transform: scale(.88); }
+.stepper button:disabled { opacity: .3; cursor: default; }
+.stepper button:disabled:hover { background: transparent; }
+.stepper button:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.num {
+  width: 36px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: var(--al-r-xs);
+  background: transparent;
+  color: var(--al-text-1);
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  transition: background var(--al-t-fast) var(--al-ease), box-shadow var(--al-t-fast) var(--al-ease);
+}
+.num::-webkit-inner-spin-button, .num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.num:focus { outline: none; background: var(--al-bg-1); box-shadow: inset 0 0 0 1px var(--al-accent); }
 
 /* ---- 关于 ---- */
-.about { color: var(--al-text-3); font-size: 11px; line-height: 1.9; padding: 10px 0 2px; }
-.about b { color: var(--al-text-1); font-family: var(--al-font-serif); font-size: 12.5px; }
+.about { padding: 14px 0; color: var(--al-text-3); font-size: 12px; line-height: 1.8; }
+.about b { color: var(--al-text-1); font-family: var(--al-font-serif); font-size: 15px; font-weight: 600; margin-right: 4px; }
 
-/* ---------- Android 移动端适配 ---------- */
+/* ---------- Android ---------- */
 body.platform-android { font-size: 15px; }
-body.platform-android #app { padding: 0 12px 36px; }
+body.platform-android #app { padding: 0 16px 40px; }
 .mobile-topbar { display: none; }
 body.platform-android .mobile-topbar {
   display: flex;
   align-items: center;
+  gap: 4px;
   position: sticky;
   top: 0;
   z-index: 30;
-  margin: 0 -12px 10px;
-  padding: 8px 4px;
-  background: var(--al-bg-1);
-  border-bottom: 1px solid var(--al-line);
+  height: 56px;
+  margin: 0 -16px 4px;
+  padding: 0 8px;
+  background: var(--al-bg-0);
+  box-shadow: 0 1px 0 var(--al-line);
 }
 .mobile-topbar .back {
+  display: grid;
+  place-items: center;
   width: 44px;
   height: 44px;
   padding: 0;
   border: none;
+  border-radius: 50%;
   background: none;
   color: var(--al-text-1);
-  font-size: 30px;
-  line-height: 1;
+  font-size: 0;
   cursor: pointer;
-  text-align: center;
+  transition: background var(--al-t-fast) var(--al-ease);
 }
-.mobile-topbar .title { font-family: var(--al-font-serif); font-size: 17px; color: var(--al-text-1); padding-left: 2px; }
-body.platform-android h2 { margin: 24px 6px 10px; font-size: 13px; }
-body.platform-android .card { border-radius: 18px; padding: 4px 16px; }
-body.platform-android .row { padding: 15px 0; }
-body.platform-android .row .sub { font-size: 12px; }
-body.platform-android .sw { width: 50px; height: 30px; }
-body.platform-android .sw i::after { top: 4px; left: 4px; width: 22px; height: 22px; }
-body.platform-android .sw input:checked + i::after { left: 24px; }
-body.platform-android button.act { padding: 13px 0; font-size: 14px; border-radius: 14px; }
+.mobile-topbar .back::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  margin-left: 4px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+.mobile-topbar .back:active { background: var(--al-press-fill); }
+.mobile-topbar .title { font-size: 17px; font-weight: 600; color: var(--al-text-1); }
+body.platform-android h2 { margin: 26px 4px 10px; font-size: 13px; }
+body.platform-android .card { border-radius: var(--al-r-l); padding: 0 16px; }
+body.platform-android .row { min-height: 56px; padding: 13px 0; }
+body.platform-android .row .sub { font-size: 12.5px; }
+body.platform-android .sw { width: 48px; height: 28px; }
+body.platform-android .sw i::after { width: 22px; height: 22px; }
+body.platform-android .sw input:checked + i::after { transform: translateX(20px); }
+body.platform-android .sw input:active + i::after { width: 26px; }
+body.platform-android .sw input:checked:active + i::after { transform: translateX(16px); }
+body.platform-android button.act { height: 42px; font-size: 14px; border-radius: 10px; }
+body.platform-android .card .grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+body.platform-android button.act.wide { min-height: 54px; width: calc(100% + 32px); margin: 0 -16px; padding-left: 16px; font-size: 15px; border-radius: 0; }
+body.platform-android .card > button.act.wide:first-child { border-top-left-radius: var(--al-r-l); border-top-right-radius: var(--al-r-l); }
+body.platform-android .card > button.act.wide:last-child { border-bottom-left-radius: var(--al-r-l); border-bottom-right-radius: var(--al-r-l); }
+body.platform-android .row button.act { height: 36px; font-size: 13.5px; }
 body.platform-android .slider-row { gap: 10px; }
-body.platform-android .slider-row button { width: 38px; height: 38px; font-size: 18px; }
-body.platform-android .slider-row input[type='range'] { height: 6px; border-radius: 3px; }
+body.platform-android .slider-row button { width: 36px; height: 36px; font-size: 18px; }
 body.platform-android .slider-row input[type='range']::-webkit-slider-thumb { width: 22px; height: 22px; }
-body.platform-android .num { width: 64px; padding: 9px; font-size: 14px; }
-body.platform-android .card .grid { gap: 10px; }
+body.platform-android .stepper { height: 40px; }
+body.platform-android .stepper button { width: 40px; height: 40px; font-size: 18px; }
+body.platform-android .num { width: 44px; height: 40px; font-size: 15px; }
+body.platform-android .about { font-size: 13px; }
+@media (hover: none) {
+  button.act:hover { background: var(--al-bg-3); }
+  button.act.wide:hover { background-color: transparent; }
+  button.act.active:hover { background: var(--al-accent-soft); }
+  button.act:active { background: var(--al-bg-4); }
+  button.act.wide:active { background-color: var(--al-press-fill); }
+}

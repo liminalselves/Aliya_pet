@@ -205,6 +205,11 @@ class RecordsView {
         this.showEmpty('还没有聊天记录', '在聊天窗口和 Aliya 说点什么吧。');
         return;
       }
+      if (mode === 'manual' && signature === this.signature && this.hasContent) {
+        this.setStatus('已是最新', 'info', true);
+        if (stickToBottom) this.pinBottom();
+        return;
+      }
       if (mode !== 'manual' && signature === this.signature && this.hasContent) {
         // 数据未变：不重渲染，已有 DOM（含事件绑定）原样保留，只按触发原因归位滚动。
         if (stickToBottom) this.pinBottom();
@@ -399,7 +404,7 @@ class RecordsView {
 
   private async replayMessage(sessionId: string, messageId: string, button: HTMLButtonElement): Promise<void> {
     button.disabled = true;
-    this.setStatus('正在打开对话框……');
+    button.classList.add('busy');
     try {
       localStorage.setItem(CONTROL_REQUEST_KEY, JSON.stringify({ sessionId, messageId, action: 'replay', at: Date.now() }));
       if (platform === 'tauri') {
@@ -407,11 +412,14 @@ class RecordsView {
         await invoke('show_chat');
       }
       if (platform === 'android') shellAction('open-chat');
-      this.setStatus('已在对话框中重新播放。', 'info', true);
+      button.textContent = '已播放';
+      button.classList.add('done');
+      window.setTimeout(() => { button.textContent = '重新播放'; button.classList.remove('done'); }, 1600);
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : '重新播放失败，请重试。', 'error', true);
     } finally {
       button.disabled = false;
+      button.classList.remove('busy');
     }
   }
 

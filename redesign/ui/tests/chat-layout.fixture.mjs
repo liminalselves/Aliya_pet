@@ -90,7 +90,7 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
   if (Math.max(...textPanels)-Math.min(...textPanels)>2) errors.push('逐字播放期间面板高度改变: '+JSON.stringify(textPanels));
   phase = 'emoji'; view.showPage(7,true); await frames(12); view.typewriter?.finish(); await frames(6);
   const emojiHeight = nativeHeight;
-  if (emojiHeight > 260 || emojiHeight < 170) errors.push('独立表情页高度异常: '+emojiHeight);
+  if (emojiHeight > 280 || emojiHeight < 170) errors.push('独立表情页高度异常: '+emojiHeight);
   phase = 'card'; view.showPage(8,true); await frames(10); view.typewriter?.finish(); await frames(6);
   phase = 'short';
   view.segments[0].innerHTML='<p>短句回复。</p>';view.showPage(0,true);await frames(8);view.typewriter?.finish();await frames(6);

@@ -32,7 +32,8 @@ export class DialogueBubble {
   /** 播放一次完整台词会话（覆盖进行中的会话）。 */
   async play(resolved: ResolvedDialogue): Promise<void> {
     if (resolved.pages.length === 0) return;
-    this.cancel();
+    // 打断旧会话时不先隐藏：旧气泡直接换成新台词（走翻页淡入），避免「消失一帧再弹出」的闪烁。
+    this._sessionToken++;
     const token = ++this._sessionToken;
     this._active = true;
 
@@ -73,11 +74,22 @@ export class DialogueBubble {
     this._hide(true);
   }
 
+  /** 首次出现播放弹入（display 切换重放 CSS 动画）；已显示时只换文字并淡入，不重弹整个气泡。 */
   private _show(text: string): void {
     if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+    const visible = this._el.style.display !== 'none' && !this._el.classList.contains('closing');
     this._el.classList.remove('closing');
     this._el.textContent = text;
-    this._el.style.display = 'block';
+    if (visible) {
+      this._el.classList.remove('turn');
+      void this._el.offsetWidth;
+      this._el.classList.add('turn');
+    } else {
+      this._el.classList.remove('turn');
+      this._el.style.display = 'none';
+      void this._el.offsetWidth;
+      this._el.style.display = 'block';
+    }
   }
 
   /** immediate=true 立即消失；否则先播 .closing 淡出再隐藏。 */

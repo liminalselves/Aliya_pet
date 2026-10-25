@@ -15,29 +15,61 @@
         android:layout_marginBottom="10dp"
         android:background="@drawable/sheet_handle" />
 
-    <TextView
+    <LinearLayout
         android:id="@+id/menu_chat"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
         android:foreground="?attr/selectableItemBackground"
-        android:text="@string/menu_chat"
-        android:textSize="16sp"
-        android:textColor="@color/pet_text" />
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:background="@drawable/menu_chip"
+            android:src="@drawable/ic_menu_chat"
+            android:contentDescription="@string/menu_chat" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="@string/menu_chat"
+            android:textColor="@color/pet_text"
+            android:textSize="16sp"
+            android:letterSpacing="0.01" />
+    </LinearLayout>
 
-    <TextView
+    <LinearLayout
         android:id="@+id/menu_records"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
         android:foreground="?attr/selectableItemBackground"
-        android:text="@string/menu_records"
-        android:textSize="16sp"
-        android:textColor="@color/pet_text" />
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:background="@drawable/menu_chip"
+            android:src="@drawable/ic_menu_records"
+            android:contentDescription="@string/menu_records" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="@string/menu_records"
+            android:textColor="@color/pet_text"
+            android:textSize="16sp"
+            android:letterSpacing="0.01" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/menu_settings"
@@ -155,7 +187,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:text="@string/menu_quit"
-            android:textColor="#D96A77"
+            android:textColor="@color/pet_danger"
             android:textSize="16sp"
             android:letterSpacing="0.01" />
     </LinearLayout>

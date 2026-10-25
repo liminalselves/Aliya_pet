@@ -285,10 +285,10 @@ test('聊天只测自然页高，不累计旧窗口高度或滚动填充；测�
   view.panel = { hidden: false, getBoundingClientRect() { assert.equal(measuring, true); return { height: naturalHeight }; } };
   view.composer = { hidden: false, getBoundingClientRect: () => ({ height: 64 }) };
   view.content = { get scrollHeight() { throw new Error('不能叠加视口滚动高度'); } };
-  assert.equal(view.measureContentHeight(), 166);
+  assert.equal(view.measureContentHeight(), 174);
   assert.equal(measuring, false);
   naturalHeight = 202;
-  assert.equal(view.measureContentHeight(), 272);
+  assert.equal(view.measureContentHeight(), 280);
   assert.equal(measuring, false);
   view.panel.hidden = true;
   assert.equal(view.measureContentHeight(), 70);
@@ -358,7 +358,7 @@ test('原生布局请求串行且仅保留最新目标，逐字播放不取消�
   h.view.typewriter = { typing: true }; h.view.reportLayout();
   await h.view.layoutTask;
   assert.equal(h.calls.at(-1).contentHeight, 220);
-  assert.equal(h.styles.get('--chat-panel-height'), '150px');
+  assert.equal(h.styles.get('--chat-panel-height'), '142px');
   h.view.typewriter = null; h.view.reportLayout(9999); await h.view.layoutTask;
   assert.equal(h.calls.at(-1).contentHeight, 330);
 });
@@ -373,7 +373,7 @@ test('忙碌状态提示和停止按钮显隐后重新上报聊天高度', () =>
   view.changed();
   view.controller.busy = false;
   view.changed();
-  assert.deepEqual(measured, [['等待回应…', false], ['', true]]);
+  assert.deepEqual(measured, [['Aliya 正在想', false], ['', true]]);
 });
 
 function playbackHarness() {

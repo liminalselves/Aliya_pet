@@ -56,7 +56,7 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   max-width: min(82%, 300px);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  padding: 10px 16px;
+  padding: 9px 15px 10px;
   border-radius: var(--al-r-l);
   border: 1px solid var(--al-line-strong);
   background: var(--al-surface-card-strong);
@@ -64,9 +64,9 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   font-family: var(--al-font-serif);
   font-size: 14px;
   font-weight: 500;
-  line-height: 1.55;
+  line-height: 1.6;
   text-align: center;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   box-shadow: var(--al-shadow-2);
   pointer-events: none;
   white-space: pre-wrap;
@@ -96,6 +96,10 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   from { opacity: 0; scale: 0.92; translate: 0 4px; }
 }
 
+/* 翻页/被新台词打断：气泡不重弹，只让文字淡入（opacity 走独立动画，不动 transform/scale） */
+#dialogue-bubble.turn { animation: bubble-turn var(--al-t-med) var(--al-ease); }
+@keyframes bubble-turn { from { opacity: .35; } }
+
 /* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切；出场加速。 */
 #dialogue-bubble.closing {
   opacity: 0;
@@ -124,5 +128,8 @@ body.overlay-wrap #dialogue-bubble {
 }
 
 body.android-main { background:var(--al-bg-0); }
-body.android-main #stage { inset:56px 0 20px; }
-body.android-main.chat-open #stage { bottom:calc(var(--chat-composer-height, 88px) + 12px); }
+/* 舞台让出输入框位置：用单行输入框的固定高度，不跟随多行输入逐行变化
+   （画布每帧按舞台尺寸重算，跟随 --chat-composer-height 会让角色随打字一跳一跳）；
+   开关聊天时平滑过渡，角色缓缓上移/回落而不是瞬间跳位。 */
+body.android-main #stage { inset:56px 0 20px; transition:bottom var(--al-t-slow) var(--al-ease); }
+body.android-main.chat-open #stage { bottom:116px; }

@@ -6,27 +6,26 @@ body { margin: 0; overflow: hidden; background: var(--al-bg-0); color: var(--al-
 button { font: inherit; }
 
 /* 壳：平铺纸色，层次靠发线与留白 */
-.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: var(--al-bg-0); }
+.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--al-bg-0); }
 /* 窗口/页面进入：整壳纯淡入（不带位移）。记录列表自身有错落入场/钉底滚动，
    壳级再平移就是双重位移——用户看到的「开记录窗口抽一下」。 */
 .records-shell.enter { animation:al-fade-in var(--al-t-med) var(--al-ease); }
+.android-records .records-shell.enter { animation:none; }
 
 /* ---------- 头部：紧凑工具条 ---------- */
-.records-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px 11px 18px; border-bottom: 1px solid var(--al-line); background: var(--al-bg-1); }
-.records-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
-.records-logo { display: grid; place-items: center; width: 33px; height: 33px; flex: none; border-radius: 11px; color: var(--al-accent); background: color-mix(in srgb, var(--al-accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--al-accent) 26%, transparent); }
-/* 拉丁小标不再以宽字距灰字呈现（AI 模板感来源）；视觉重心交给衬线标题与腮红菱标。 */
-.records-kicker { display: none; }
-.records-heading h1 { margin: 1px 0 0; font-family: var(--al-font-serif); font-size: 16px; line-height: 1.25; font-weight: 600; letter-spacing: .02em; }
-.records-heading h1::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 9px 1px 1px; background: var(--al-accent); transform: rotate(45deg); border-radius: 1.5px; }
-.records-side { display: flex; align-items: center; gap: 12px; flex: none; }
-.records-session { min-width: 0; text-align: right; }
-.records-title { display: block; max-width: 230px; overflow: hidden; color: var(--al-accent-strong); font-family: var(--al-font-serif); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* 头部：左标题 + 会话副标，右侧图标按钮；底边一道细线即可，不做色块与徽标 */
+.records-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--al-line); background: var(--al-bg-0); }
+.records-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.records-logo, .records-kicker { display: none; }
+.records-heading h1 { margin: 0; font-size: 15px; line-height: 1.25; font-weight: 600; }
+.records-side { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; }
+.records-session { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.records-title { display: block; max-width: min(220px, 34vw); overflow: hidden; color: var(--al-text-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .records-title:empty { display: none; }
-.records-meta { display: block; color: var(--al-text-3); font-size: 10.5px; letter-spacing: .03em; }
+.records-meta { display: block; color: var(--al-text-4); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .records-meta:empty { display: none; }
-.records-refresh { display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-bg-3); color: var(--al-text-2); cursor: pointer; transition: color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
-.records-refresh:hover { color: var(--al-accent); background: var(--al-bg-4); border-color: color-mix(in srgb, var(--al-accent) 45%, transparent); }
+.records-refresh { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--al-r-s); background: transparent; color: var(--al-text-3); cursor: pointer; transition: color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.records-refresh:hover { color: var(--al-text-1); background: var(--al-hover-fill); }
 .records-refresh:active { transform: scale(.94); }
 .records-refresh:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 .records-refresh:disabled { cursor: default; opacity: .55; }
@@ -34,8 +33,10 @@ button { font: inherit; }
 @keyframes records-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 状态条：仅在有内容时占位 ---------- */
-.records-status { max-height: 0; padding: 0 24px; overflow: hidden; color: var(--al-text-3); font-size: 11px; text-align: center; opacity: 0; transition: max-height var(--al-t-med) var(--al-ease), padding var(--al-t-med) var(--al-ease), opacity var(--al-t-med) var(--al-ease); }
-.records-status.show { max-height: 42px; padding: 6px 24px; opacity: 1; }
+/* 状态提示：浮在列表上方的小胶囊，不占布局（展开收起会把整列消息顶下去） */
+.records-status { position: absolute; top: 64px; left: 50%; z-index: 3; max-width: calc(100% - 48px); padding: 6px 14px; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-pill); background: var(--al-bg-3); box-shadow: var(--al-shadow-2); color: var(--al-text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; pointer-events: none; transform: translate(-50%, -6px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease); }
+.records-status.show { opacity: 1; transform: translate(-50%, 0); }
+.records-status:empty { visibility: hidden; }
 .records-status[data-kind="error"] { color: var(--al-danger); }
 
 /* ---------- 消息列：居中阅读栏，宽窗不再半边空 ---------- */
@@ -47,12 +48,13 @@ button { font: inherit; }
 .records-list::-webkit-scrollbar-thumb:hover { background: var(--al-text-3); background-clip: content-box; border: 2px solid transparent; }
 
 /* 日期分隔：细线夹标签 */
-.record-day { display: flex; align-items: center; gap: 14px; margin: 22px 0 12px; color: var(--al-text-3); font-family: var(--al-font-serif); font-size: 11px; letter-spacing: .1em; user-select: none; }
-.record-day:first-child { margin-top: 2px; }
-.record-day::before, .record-day::after { content: ''; flex: 1; height: 1px; background: var(--al-line); }
+/* 日期：居中小胶囊，不拉通线 */
+.record-day { display: flex; justify-content: center; margin: 24px 0 12px; user-select: none; }
+.record-day:first-child { margin-top: 4px; }
+.record-day { color: var(--al-text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
-/* ---------- 消息气泡 ---------- */
-.record-message { position: relative; width: fit-content; max-width: min(76%, 620px); margin: 7px 0; padding: 9px 13px 10px; overflow-wrap: anywhere; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); box-shadow: var(--al-shadow-1); font-family: var(--al-font-serif); transition: border-color var(--al-t-med) var(--al-ease), background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
+/* ---------- 消息气泡：Aliya 用衬线台词，用户用黑体；靠底色区分，不靠描边 ---------- */
+.record-message { position: relative; width: fit-content; max-width: min(78%, 620px); margin: 6px 0; padding: 10px 14px 11px; overflow-wrap: anywhere; border: 0; border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-xs); background: var(--al-bg-2); font-family: var(--al-font-serif); font-size: 14px; line-height: 1.75; transition: background var(--al-t-med) var(--al-ease), box-shadow var(--al-t-med) var(--al-ease); }
 /* 消息与日期分隔统一入场：首批加载错落浮现（30-50ms 阶梯）；第 9 项起共用最大延迟，长记录不拖尾。 */
 .records-list:not(.no-anim) .record-message, .records-list:not(.no-anim) .record-day { animation:al-rise-in var(--al-t-med) var(--al-ease) both; }
 .records-list:not(.no-anim) > *:nth-child(2) { animation-delay: .035s; }
@@ -63,54 +65,59 @@ button { font: inherit; }
 .records-list:not(.no-anim) > *:nth-child(7) { animation-delay: .21s; }
 .records-list:not(.no-anim) > *:nth-child(8) { animation-delay: .245s; }
 .records-list:not(.no-anim) > *:nth-child(n+9) { animation-delay: .28s; }
-.record-message:hover { border-color: var(--al-line-strong); }
-.record-message header { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; font-family: var(--al-font); }
-.record-message header strong { color: var(--al-accent-emphasis); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; }
-.record-message header time { color: var(--al-text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.record-message header { display: flex; align-items: center; gap: 8px; min-height: 18px; margin-bottom: 2px; font-family: var(--al-font); line-height: 1.4; }
+.record-message header strong { color: var(--al-accent); font-size: 12px; font-weight: 600; }
+.record-message header time { color: var(--al-text-4); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* 重播：平时收起，悬停/聚焦气泡时浮现 */
-.record-replay { margin-left: auto; padding: 1px 9px; border: 1px solid transparent; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 10px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.record-replay { margin: -2px -6px -2px auto; height: 22px; padding: 0 8px; border: 0; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease); }
 .record-message:hover .record-replay, .record-message:focus-within .record-replay { opacity: 1; }
-.record-replay:hover { color: var(--al-accent-strong); background: var(--al-accent-soft); border-color: var(--al-line); }
+.record-replay:hover { color: var(--al-text-1); background: var(--al-hover-fill); }
+.record-replay.busy { opacity: 1; color: var(--al-text-3); cursor: progress; }
+.record-replay.done { opacity: 1; color: var(--al-success); }
 .record-replay:active { transform: scale(.94); }
 .record-replay:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 .record-replay:disabled { opacity: .45; cursor: default; }
 
 /* 用户侧：瞳紫淡染，与 Aliya 的腮红名字相对。 */
-.record-user { margin-left: auto; border-color: color-mix(in srgb, var(--al-accent-2) 28%, transparent); border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); background: color-mix(in srgb, var(--al-accent-2) 8%, var(--al-bg-2)); }
-.record-user:hover { border-color: color-mix(in srgb, var(--al-accent-2) 40%, transparent); }
-.record-user header strong { color: var(--al-accent-2-strong); }
+/* 用户侧：右对齐，瞳紫淡底，正文黑体（区分谁在说话） */
+.record-user { margin-left: auto; border-radius: var(--al-r-l) var(--al-r-xs) var(--al-r-l) var(--al-r-l); background: var(--al-accent-2-soft); font-family: var(--al-font); font-size: 13.5px; }
+/* 用户消息不占头部行：时间浮在气泡左外侧，悬停才显示 */
+.record-user header { position: absolute; right: calc(100% + 8px); bottom: 6px; min-height: 0; margin: 0; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease); }
+.record-user:hover header, .record-user:focus-within header { opacity: 1; }
+.record-user header strong { display: none; }
+@media (hover: none) { .record-user header { position: static; opacity: 1; justify-content: flex-end; margin-bottom: 2px; } }
 
-/* 上下文分界：胶囊虚线 */
-.record-system { width: fit-content; margin: 16px auto; padding: 4px 15px; border-style: dashed; border-color: var(--al-line-strong); border-radius: var(--al-r-pill); background: color-mix(in srgb, var(--al-bg-2) 62%, transparent); box-shadow: none; color: var(--al-text-3); font-size: 11px; text-align: center; }
-.record-system:hover { border-color: var(--al-line-strong); }
+/* 上下文分界：细线夹文字 */
+.record-system { display: flex; align-items: center; gap: 12px; width: 100%; max-width: none; margin: 18px 0; padding: 0; border-radius: 0; background: none; color: var(--al-text-3); font-family: var(--al-font); font-size: 11.5px; }
+.record-system::before, .record-system::after { content: ''; flex: 1; height: 1px; background: var(--al-line-strong); }
 .record-system header { display: none; }
 
 /* 定位目标高亮 */
-.record-target { border-color: var(--al-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--al-accent) 20%, transparent), var(--al-shadow-2); scroll-margin-block: 40vh; }
+.record-target { box-shadow: 0 0 0 1.5px var(--al-accent); scroll-margin-block: 40vh; }
 .record-target:focus { outline: none; }
 
-.records-truncated { width: fit-content; margin: 0 auto 16px; padding: 4px 15px; border: 1px solid var(--al-line); border-radius: var(--al-r-pill); background: color-mix(in srgb, var(--al-bg-2) 68%, transparent); color: var(--al-text-3); font-size: 10.5px; text-align: center; }
+.records-truncated { width: fit-content; margin: 0 auto 16px; padding: 4px 12px; border-radius: var(--al-r-pill); background: var(--al-bg-2); color: var(--al-text-3); font-size: 11px; text-align: center; }
 
-/* ---------- 骨架屏（首次加载） ---------- */
-.record-skeleton { width: var(--w, 50%); max-width: 460px; margin: 10px 0; padding: 11px 13px; border: 1px solid var(--al-line); border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-s); background: var(--al-surface-card); }
-.record-skeleton.right { margin-left: auto; border-radius: var(--al-r-l) var(--al-r-s) var(--al-r-l) var(--al-r-l); }
-.record-skeleton i { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--al-bg-3) 25%, color-mix(in srgb, var(--al-text-3) 26%, var(--al-bg-3)) 50%, var(--al-bg-3) 75%); background-size: 200% 100%; animation: record-shimmer 1.25s linear infinite; }
-.record-skeleton i + i { width: 64%; margin-top: 8px; }
-@keyframes record-shimmer { from { background-position: 180% 0; } to { background-position: -20% 0; } }
+/* ---------- 骨架屏（首次加载）：纯明暗呼吸，不用扫光渐变 ---------- */
+.record-skeleton { width: var(--w, 50%); max-width: 460px; margin: 10px 0; padding: 12px 14px; border-radius: var(--al-r-l); border-top-left-radius: var(--al-r-xs); background: var(--al-bg-2); animation: record-skeleton 1.4s var(--al-ease-inout) infinite alternate; }
+.record-skeleton.right { margin-left: auto; border-radius: var(--al-r-l) var(--al-r-xs) var(--al-r-l) var(--al-r-l); animation-delay: .2s; }
+.record-skeleton i { display: block; height: 9px; border-radius: 5px; background: var(--al-bg-4); }
+.record-skeleton i + i { width: 64%; margin-top: 9px; }
+@keyframes record-skeleton { from { opacity: .55; } to { opacity: 1; } }
 
 /* ---------- 空态 ---------- */
-.records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 5px; color: var(--al-text-3); text-align: center; }
-.records-empty svg { margin-bottom: 7px; color: color-mix(in srgb, var(--al-accent) 52%, transparent); }
-.records-empty h2 { margin: 0; color: var(--al-text-2); font-family: var(--al-font-serif); font-size: 15px; font-weight: 600; }
-.records-empty p { margin: 0 0 11px; font-size: 12px; }
-.records-open-chat { padding: 7px 19px; border: 1px solid color-mix(in srgb, var(--al-accent) 40%, transparent); border-radius: var(--al-r-pill); background: color-mix(in srgb, var(--al-accent) 13%, transparent); color: var(--al-accent); font-size: 12px; cursor: pointer; transition: background var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
-.records-open-chat:hover { background: color-mix(in srgb, var(--al-accent) 20%, transparent); border-color: color-mix(in srgb, var(--al-accent) 60%, transparent); }
+.records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--al-text-3); text-align: center; }
+.records-empty svg { margin-bottom: 8px; color: var(--al-text-4); }
+.records-empty h2 { margin: 0; color: var(--al-text-1); font-size: 15px; font-weight: 600; }
+.records-empty p { margin: 0 0 12px; font-size: 12.5px; }
+.records-open-chat { height: 32px; padding: 0 18px; border: 0; border-radius: var(--al-r-pill); background: var(--al-accent); color: var(--al-on-accent); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.records-open-chat:hover { background: var(--al-accent-strong); }
 .records-open-chat:active { transform: scale(.97); }
 .records-open-chat:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 
 /* ---------- 回到底部悬浮钮 ---------- */
-.records-tobottom { position: absolute; right: 22px; bottom: 20px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-2); cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease), color var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
+.records-tobottom { position: absolute; right: 22px; bottom: 20px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--al-line-strong); border-radius: 50%; background: var(--al-bg-3); box-shadow: var(--al-shadow-2); color: var(--al-text-2); cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease), color var(--al-t-fast) var(--al-ease), border-color var(--al-t-fast) var(--al-ease); }
 .records-tobottom.show { opacity: 1; pointer-events: auto; transform: none; }
 .records-tobottom:hover { color: var(--al-accent); border-color: color-mix(in srgb, var(--al-accent) 50%, transparent); }
 .records-tobottom:active { transform: scale(.92); }
@@ -180,8 +187,14 @@ button { font: inherit; }
 .android-records .records-header { gap:8px; padding:8px; }
 .android-records .records-logo, .android-records .records-kicker { display:none; }
 .android-records .records-brand { flex:1; }
-.android-records .records-title { max-width:100px; }
-.records-back { flex:none; width:40px; height:44px; border:0; border-radius:var(--al-r-s); background:transparent; color:var(--al-text-1); font-size:28px; cursor:pointer; }
+.android-records .records-title { max-width:42vw; }
+.android-records .records-status { top:68px; }
+.android-records .records-tobottom { right:16px; bottom:16px; width:44px; height:44px; }
+.records-back { display:grid; place-items:center; flex:none; width:44px; height:44px; margin-left:-8px; border:0; border-radius:50%; background:transparent; color:var(--al-text-1); font-size:0; cursor:pointer; }
+.records-back::before { content:''; width:10px; height:10px; margin-left:4px; border-left:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(45deg); }
+.records-back:active { background:var(--al-press-fill); }
+.android-records .records-header { height:56px; padding:0 8px 0 12px; }
+.android-records .records-session { flex-direction:column; align-items:flex-end; gap:0; }
 .records-back:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 .android-records .records-refresh { width:44px; height:44px; }
 .android-records .record-message { max-width:94%; }

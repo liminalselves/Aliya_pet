@@ -9,23 +9,24 @@
 #chat-ui * { box-sizing:border-box; }
 #chat-ui [hidden] { display:none!important; }
 #chat-ui button,#chat-ui input,#chat-ui textarea { font:inherit; font-family:var(--al-font); }
-#chat-ui button { cursor:pointer; color:inherit; background:transparent; border:0; border-radius:6px; padding:3px 7px; transition:background var(--al-t-fast) var(--al-ease); }
+#chat-ui button { cursor:pointer; color:inherit; background:transparent; border:0; border-radius:var(--al-r-xs); padding:3px 7px; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease); }
 #chat-ui button:hover { background:var(--al-hover-fill); }
+#chat-ui button:active { background:var(--al-press-fill); }
 #chat-ui button:disabled { opacity:.5; cursor:default; }
 #chat-ui button:focus-visible,#chat-ui textarea:focus-visible,#chat-ui input:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 
 /* ---- 内嵌入口（pet 脚下的小药丸） ---- */
 /* --launcher-k 由 pet-app 逐帧写入：入口随模型缩放等比（origin 取底边，向上生长）。
    每条 transform 链都必须带上 scale(var(--launcher-k,1))，否则悬停/按下/入场动画会把缩放冲掉。 */
-.chat-launcher { position:absolute; bottom:8px; left:50%; transform:translateX(-50%) scale(var(--launcher-k,1)); transform-origin:50% 100%; display:flex; align-items:center; gap:6px; padding:6px 15px; border-radius:var(--al-r-pill); border:1px solid var(--al-line-strong); background:var(--al-bg-2); color:var(--al-text-2); font:12px/1 var(--al-font); letter-spacing:.1em; cursor:pointer; pointer-events:auto; box-shadow:var(--al-shadow-1); transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease); }
-.chat-launcher svg { display:block; flex:none; }
-.chat-launcher:hover { background:var(--al-bg-4); border-color:var(--al-accent-strong); color:var(--al-accent-strong); transform:translateX(-50%) translateY(-1px) scale(var(--launcher-k,1)); box-shadow:var(--al-shadow-2); }
+.chat-launcher { position:absolute; bottom:8px; left:50%; transform:translateX(-50%) scale(var(--launcher-k,1)); transform-origin:50% 100%; display:flex; align-items:center; gap:6px; height:30px; padding:0 14px 0 12px; border-radius:var(--al-r-pill); border:1px solid var(--al-line-strong); background:var(--al-bg-2); color:var(--al-text-1); font:500 12.5px/1 var(--al-font); letter-spacing:.02em; cursor:pointer; pointer-events:auto; box-shadow:var(--al-shadow-2); transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease); }
+.chat-launcher svg { display:block; flex:none; color:var(--al-accent); }
+.chat-launcher:hover { background:var(--al-bg-3); border-color:color-mix(in srgb, var(--al-accent) 50%, transparent); transform:translateX(-50%) translateY(-1px) scale(var(--launcher-k,1)); }
 .chat-launcher:active { transform:translateX(-50%) scale(calc(var(--launcher-k,1) * .96)); }
 .chat-launcher:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 .chat-launcher.open { background:var(--al-accent); border-color:var(--al-accent); color:var(--al-on-accent); box-shadow:var(--al-shadow-accent); }
 /* 内嵌模式（Android/web）下 #chat-ui button 基础样式优先级更高，需要覆盖回来 */
-#chat-ui .chat-launcher { border:1px solid var(--al-line-strong); background:var(--al-bg-2); padding:6px 15px; }
-#chat-ui .chat-launcher:hover { background:var(--al-bg-4); }
+#chat-ui .chat-launcher { border:1px solid var(--al-line-strong); background:var(--al-bg-2); padding:0 14px 0 12px; border-radius:var(--al-r-pill); }
+#chat-ui .chat-launcher:hover { background:var(--al-bg-3); }
 #chat-ui .chat-launcher.open,#chat-ui .chat-launcher.open:hover { background:var(--al-accent); color:var(--al-on-accent); }
 /* 独立 chat 原生窗口由 pet 下方按钮开关；这里不能再出现第二个备用入口。 */
 body.chat-window #chat-ui .chat-launcher { display:none!important; }
@@ -35,23 +36,22 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .chat-launcher:not([hidden]) { animation:launcher-in var(--al-t-med) var(--al-ease); }
 @keyframes launcher-in { from { opacity:0; transform:translateX(-50%) translateY(6px) scale(var(--launcher-k,1)); } }
 
-/* chat-shell 把回复与输入框组成一张贴着模型脚底的卡片；不再在透明大窗口里上下分散。
-   底锚布局：输入框永远压在窗口底边（= pet 脚线，见 chat_window.rs 底边恒定契约），
-   面板出现/收起/换页只向上生长，透明余量留在顶部，输入框纹丝不动。
-   container-type 让字号随窗口宽度自适应（chat 宽 = pet 宽 × 1.18，档位变化大）。 */
-.chat-shell { position:absolute; inset:0 8px 6px; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-end; container-type:inline-size; }
+/* 底锚布局：输入框永远压在窗口底边（= pet 脚线，见 chat_window.rs 底边恒定契约），
+   回复面板是输入框上方的独立卡片，出现/收起/换页只向上生长，输入框的位置与形状永不改变
+   （两卡拼接时输入框圆角会随面板显隐形变，是闪烁源）。
+   卡间距 8px 与 view.ts PANEL_GAP 同步。container-type 让字号随窗口宽度自适应。 */
+.chat-shell { position:absolute; inset:0 8px 6px; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-end; gap:8px; container-type:inline-size; }
 
 /* ---- 回复/连接面板 ---- */
-/* 透明窗内面板带 6% 微透让桌面隐约透气；角色被面板挡住时透出的不该是角色本体。
-   顶边一线腮红包边：茶夜主题的签名细节，像别在卡片上的一枚书签。 */
-.gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - 52px); border:1px solid var(--al-line-strong); border-bottom:0; border-top:1px solid color-mix(in srgb, var(--al-accent) 55%, transparent); border-radius:var(--al-r-m) var(--al-r-m) 0 0; background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; }
-/* 连接/会话/历史屏需要完整高度；回复页只有一句，内容决定高度但至少保持可读。 */
-.chat-shell.with-panel .gal-panel { min-height:min(96px,calc(100% - 52px)); }
+.gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - var(--chat-composer-height,52px) - 8px); border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; transform-origin:50% 100%; }
+.chat-shell.with-panel .gal-panel { min-height:min(88px,calc(100% - var(--chat-composer-height,52px) - 8px)); }
 /* 关闭钮自带底色圆片浮在内容上（同生图重生成按钮的处理），内容区不再为它预留右侧全高 padding。 */
-.close-panel { position:absolute; top:5px; right:6px; z-index:2; width:22px; height:22px; padding:0!important; border-radius:50%!important; background:var(--al-overlay-chip)!important; color:var(--al-text-2); font-size:14px; line-height:22px; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
+.close-panel { position:absolute; top:8px; right:8px; z-index:2; display:grid!important; place-items:center; width:22px; height:22px; padding:0!important; border-radius:50%!important; background:transparent!important; color:var(--al-text-3); opacity:.8; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),opacity var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
+.close-panel svg { display:block; }
+.gal-panel:hover .close-panel { opacity:1; }
 .close-panel:hover { background:var(--al-overlay-chip-hover)!important; color:var(--al-text-1); }
 .close-panel:active { transform:scale(.88); }
-.gal-content { flex:1; min-height:0; padding:12px 12px 10px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font-serif); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content { flex:1; min-height:0; padding:14px 34px 10px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font-serif); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
 .gal-content::selection,.message-text::selection { background:var(--al-selection); }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
 .gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
@@ -89,7 +89,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 /* 逐字播放：原子元素隐藏时保留占位（布局稳定），揭示时整块淡入微浮 */
 .tw-atomic { visibility:hidden; }
 .tw-reveal { --al-rise:2px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
-.gal-page-in { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
+.gal-page-in { --al-rise:3px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
 
 /* 内容淡入：整屏内容替换（连接/会话/记录/加载占位）统一轻上浮淡入。 */
 .gal-content.fade-in { animation:al-rise-in var(--al-t-med) var(--al-ease); }
@@ -105,23 +105,28 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 /* 「正在输入」落定后正文的揭示淡入（与逐字播放的原子揭示互补：先整体就位，再逐字冒出）。 */
 .gal-text-in { animation:al-rise-in var(--al-t-med) var(--al-ease); }
 
-.gal-content h2 { font-size:13.5px; margin:0 0 6px; letter-spacing:.04em; }
+.gal-content h2 { font-size:14px; margin:0 0 6px; }
 .gal-content p { margin:0 0 7px; }
 .gal-content details { margin-top:10px; }
 .gal-content summary { cursor:pointer; color:var(--al-text-2); }
 .gal-content .muted-note { color:var(--al-text-3); font-size:11px; margin:2px 0; }
 /* 加载占位与会话行同高（占位就是列表第 0 项，列表落地同位替换、窗口量高不跳）。 */
-.gal-content .loading-note { display:flex; align-items:center; gap:8px; min-height:44px; padding:7px 8px; margin:0; border-bottom:1px solid var(--al-line); }
-/* 呼吸点：加载是唯一等待态时的注意件（同未读点的 al-pulse-ring 语言） */
-.gal-content .loading-note::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--al-accent); animation:typing-pulse 1.15s ease-in-out infinite; }
+.gal-content .loading-note { display:flex; align-items:center; gap:8px; min-height:44px; padding:7px 0; margin:0; font-family:var(--al-font); }
+.gal-content .loading-note::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--al-accent); animation:al-breathe 1.15s ease-in-out infinite; }
+/* 连接屏标题与说明：控件语境用黑体，台词才用衬线 */
+.gal-content h2 { font-family:var(--al-font); font-weight:600; }
+.gal-content .muted-note, .gal-content details, .gal-content .auth-status { font-family:var(--al-font); }
+.gal-content .auth-status:not(:empty) { margin-top:6px; color:var(--al-danger); font-size:11.5px; }
 
 /* 按钮分级：主操作玉绿色药丸（与发送一致），次要 ghost 淡边框，避免满屏裸文字按钮。 */
-.gal-content .btn-primary { background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill)!important; padding:4px 14px!important; font-weight:600; box-shadow:var(--al-shadow-accent); transition:background var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
+.gal-content .btn-primary { height:28px; background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill)!important; padding:0 14px!important; font-family:var(--al-font)!important; font-size:12px!important; font-weight:600; transition:background var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
 .gal-content .btn-primary:hover { background:var(--al-accent-strong)!important; }
 .gal-content .btn-primary:active { transform:scale(.96); }
 /* #chat-ui button 的 ID 规则会压过这里的 border/radius，必须 !important。 */
-.gal-content .ghost { border:1px solid var(--al-line-strong)!important; border-radius:var(--al-r-pill)!important; padding:3px 11px!important; font-size:.92em; color:var(--al-text-2); transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
-.gal-content .ghost:hover { border-color:var(--al-accent-strong)!important; background:var(--al-hover-fill); color:var(--al-accent-strong); }
+.gal-content .ghost { height:28px; border:0!important; border-radius:var(--al-r-pill)!important; padding:0 12px!important; background:var(--al-bg-3)!important; font-family:var(--al-font)!important; font-size:12px!important; color:var(--al-text-2); transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
+.gal-content .ghost:hover { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+.reply-error { font-family:var(--al-font); }
+.reply-error p { margin:0 0 10px; color:var(--al-text-2); font-size:12.5px; line-height:1.6; }
 .gal-content .ghost:active { transform:scale(.96); }
 .auth-actions { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
 .gal-content form.manual { display:flex; gap:6px; margin:6px 0 0; }
@@ -140,85 +145,90 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content article .who-user { color:var(--al-accent-2); }
 .session-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; padding-top:9px; border-top:1px solid var(--al-line); }
 .gal-content article small { color:var(--al-text-3); }
-.session-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; width:100%; text-align:left; border-bottom:1px solid var(--al-line)!important; border-radius:var(--al-r-s); padding:7px 8px!important; margin:0 -8px; transition:background var(--al-t-fast) var(--al-ease); }
+.session-row { display:flex; flex-wrap:wrap; align-items:center; gap:3px 8px; width:calc(100% + 16px); text-align:left; border-radius:var(--al-r-s)!important; padding:8px 8px!important; margin:0 -8px 2px; font-family:var(--al-font); font-size:13px; color:var(--al-text-1); transition:background var(--al-t-fast) var(--al-ease); }
 .session-row:hover { background:var(--al-hover-fill); }
 .session-row:active { background:var(--al-active-fill); }
-.session-row small { flex-basis:100%; color:var(--al-text-3); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.session-row small { flex-basis:100%; color:var(--al-text-3); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .unread-dot { position:relative; width:5px; height:5px; border-radius:50%; background:var(--al-gold); }
 /* 呼吸涟漪：会话列表里「有新消息」的等待性提醒（Magic UI pulsating 思路的纯 CSS 版） */
 .unread-dot::after { content:''; position:absolute; inset:-3px; border-radius:50%; border:1px solid var(--al-gold); animation:al-pulse-ring 1.8s var(--al-ease) infinite; }
-.gal-footer { display:flex; flex:none; align-items:center; gap:10px; height:0; padding:0 12px; overflow:hidden; opacity:0; color:var(--al-text-3); font-size:10px; transition:opacity var(--al-t-med) var(--al-ease); }
-.gal-footer.show { height:25px; padding:3px 12px 6px; opacity:1; }
-.page-hint { flex:1; letter-spacing:.05em; }
+.gal-footer { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:10px; height:0; padding:0 16px; overflow:hidden; opacity:0; color:var(--al-text-4); font-size:10.5px; font-variant-numeric:tabular-nums; transition:opacity var(--al-t-med) var(--al-ease); }
+.gal-footer.show { height:24px; padding:0 16px 8px; opacity:1; }
+.page-hint { display:flex; align-items:center; gap:6px; }
+/* 本页播完：提示变亮，前面一枚小三角轻轻呼吸，示意可点 */
 .page-hint.blink { color:var(--al-text-2); }
+.page-hint.blink::before { content:''; width:0; height:0; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4.5px solid var(--al-accent); animation:al-breathe 1.6s ease-in-out infinite; }
 
 /* ---- 输入区 ---- */
-/* 输入框常显时是一块不透明贴脚底栏：角色在身后游走不能透字，半透明只在面板上方叠层时用。 */
-.chat-composer { position:relative; width:100%; flex:none; padding:4px 8px 2px; border:1px solid var(--al-line-strong); border-radius:0 0 var(--al-r-m) var(--al-r-m); background:var(--al-bg-2); pointer-events:auto; box-shadow:var(--al-shadow-2); transition:border-color var(--al-t-fast) var(--al-ease),box-shadow var(--al-t-fast) var(--al-ease),border-radius var(--al-t-med) var(--al-ease),background var(--al-t-fast) var(--al-ease); }
-.chat-shell.with-panel .chat-composer { background:var(--al-surface-card); }
-.chat-composer:focus-within { border-color:var(--al-accent); box-shadow:var(--al-focus-ring),var(--al-shadow-2); }
-/* 独立透明窗底部只有 6px 留白，外投影会被原生窗口裁成方形黑边。
-   桌面卡片使用已有描边区分层级；焦点环收在卡片内部，不向透明区扩散。 */
+/* 输入框是常驻锚点：一张独立的不透明卡片（角色在身后游走不能透字），任何状态下
+   位置、圆角、边框都不变；回复面板显隐只影响上方。两行结构：
+   上行 = 输入框 + 停止/发送（手指/视线落点一致）；下行 = 导航链接 + 状态 + 关闭。 */
+.chat-composer { position:relative; width:100%; flex:none; padding:6px 6px 4px 12px; border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-bg-2); pointer-events:auto; box-shadow:var(--al-shadow-2); transition:border-color var(--al-t-fast) var(--al-ease); }
+.chat-composer:focus-within { border-color:color-mix(in srgb, var(--al-accent) 60%, var(--al-line-strong)); }
+/* 独立透明窗底部只有 6px 留白，外投影会被原生窗口裁成方形黑边，桌面卡片只靠描边分层。 */
 body.chat-window .gal-panel,
 body.chat-window .chat-composer { box-shadow:none; }
-body.chat-window .chat-composer:focus-within { box-shadow:inset 0 0 0 1px var(--al-accent); }
-/* 只有输入框时是一枚贴脚的紧凑药丸；回复/连接面板出现时与上方面板无缝连成卡片。
-   不加入场动画：输入框是常驻锚点，每次面板收起都重放动画会闪/抖。 */
-.chat-shell.composer-only .chat-composer { border-radius:var(--al-r-m); }
-.chat-composer textarea { display:block; width:100%; height:26px; max-height:64px; overflow-y:auto; resize:none; color:var(--al-text-1); background:none; border:0; padding:2px 3px; line-height:21px; font-size:clamp(11.5px,4cqw,13px); transition:opacity var(--al-t-fast) var(--al-ease); }
-.chat-composer textarea::placeholder { color:var(--al-text-3); }
+.composer-row { display:flex; align-items:flex-end; gap:6px; }
+.chat-composer textarea { display:block; flex:1; min-width:0; height:26px; max-height:64px; margin:0; overflow-y:auto; resize:none; color:var(--al-text-1); background:none; border:0; padding:2px 0; line-height:22px; font-size:clamp(12px,4cqw,13.5px); scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; transition:opacity var(--al-t-fast) var(--al-ease); }
+.chat-composer textarea::placeholder { color:var(--al-text-3); transition:color var(--al-t-fast) var(--al-ease); }
+.chat-composer textarea:focus::placeholder { color:var(--al-text-4); }
+/* 卡片已有焦点描边，textarea 不再叠方形焦点环。 */
+#chat-ui .chat-composer textarea:focus-visible { box-shadow:none; }
 /* 连接/会话屏只禁用不隐藏（卡片常驻不撕裂），降透明度示意暂不可输入。 */
-.chat-composer textarea:disabled { opacity:.45; cursor:default; }
-.composer-toolbar { display:flex; gap:1px; align-items:center; font-size:10px; color:var(--al-text-3); }
-.composer-toolbar button { padding:1px 5px!important; }
-/* 导航与发送操作固定同一行；等待/错误提示独占下一行，不挤走发送键。 */
-body.chat-window .composer-toolbar { display:grid; grid-template-columns:repeat(4,max-content) minmax(0,1fr) repeat(3,max-content); }
-body.chat-window .composer-toolbar button { grid-row:1; white-space:nowrap; }
-body.chat-window .composer-toolbar .stop { grid-column:6; }
-body.chat-window .composer-toolbar .send { grid-column:7; }
-body.chat-window .composer-toolbar .close-window { grid-column:8; }
-body.chat-window .chat-status { grid-row:2; grid-column:1 / -1; min-width:0; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-body.chat-window .chat-status:empty { display:none; }
-/* 卡片已有焦点描边，避免 textarea 的方形外环再压住输入区。 */
-body.chat-window #chat-ui .chat-composer textarea:focus-visible { box-shadow:none; }
-/* 当前页锁定完整高度：逐字播放与页脚提示只改变内容，不再推动卡片边界。 */
-body.chat-window .chat-shell .gal-panel { flex:none; height:var(--chat-panel-height,auto); min-height:96px; max-height:calc(100% - var(--chat-composer-height,52px)); }
-/* 临时自然量高：解除旧视口/锁高，不累计 scrollHeight 的视口填充或溢出。 */
-body.chat-window #chat-ui.layout-measuring .gal-panel { height:auto; min-height:96px; max-height:none; }
-body.chat-window #chat-ui.layout-measuring .gal-content { flex:none; overflow:visible; }
-/* 忙碌态动态件（停止按钮/状态文案）出现得太硬，统一纯淡入（行内小件不带位移）。 */
-.composer-toolbar .stop:not([hidden]) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
+.chat-composer textarea:disabled { opacity:.5; cursor:default; }
+
+/* 发送/停止：同一位置的圆形图标键，busy 时停止键在发送键左侧淡入 */
+#chat-ui .send, #chat-ui .stop { display:grid; place-items:center; flex:none; width:26px; height:26px; padding:0!important; border-radius:50%; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),opacity var(--al-t-fast) var(--al-ease)!important; }
+#chat-ui .send { background:var(--al-accent)!important; color:var(--al-on-accent)!important; }
+#chat-ui .send:hover { background:var(--al-accent-strong)!important; }
+#chat-ui .send:active, #chat-ui .stop:active { transform:scale(.88); }
+/* 输入为空/不可发送时灰化（JS 维护 disabled + composer.empty） */
+#chat-ui .send:disabled, #chat-ui .chat-composer.empty .send { opacity:1; background:var(--al-bg-4)!important; color:var(--al-text-4)!important; cursor:default; }
+#chat-ui .stop { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+#chat-ui .stop:hover { background:var(--al-overlay-chip-hover)!important; }
+#chat-ui .stop:not([hidden]) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
+
+.composer-toolbar { display:flex; align-items:center; gap:2px; min-height:22px; margin:3px 0 0 -6px; font-size:11px; color:var(--al-text-3); }
+.composer-toolbar button { height:22px; padding:0 6px!important; color:var(--al-text-3); white-space:nowrap; }
+.composer-toolbar button:hover { color:var(--al-text-1); }
+.composer-toolbar button:disabled { opacity:.4; }
+.composer-toolbar svg { display:block; }
+.chat-status { flex:1; min-width:0; margin:0 4px 0 6px; overflow:hidden; color:var(--al-text-3); font-size:11px; text-align:right; white-space:nowrap; text-overflow:ellipsis; }
 .chat-status:not(:empty) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
-.composer-toolbar .session-config { color:var(--al-text-2); border:1px solid transparent; border-radius:var(--al-r-s); }
-.composer-toolbar .session-config:hover { color:var(--al-accent-strong); background:var(--al-accent-soft); border-color:var(--al-line); }
-.composer-toolbar .session-config:focus-visible { color:var(--al-accent-strong); border-color:var(--al-accent); }
-.composer-toolbar .session-config:disabled { opacity:.5; cursor:default; }
-.chat-status { margin-left:auto; font-size:9.5px; }
-.send { background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill); padding:1px 10px!important; font-weight:600; box-shadow:var(--al-shadow-accent); transition:background var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
-.send:hover { background:var(--al-accent-strong)!important; }
-.send:active { transform:scale(.94); }
-.close-window { font-size:12px; padding:0 6px!important; }
+/* 等待回应时状态文字前一枚呼吸点，和面板里的「正在输入」同语言 */
+.chat-composer.busy .chat-status::before { content:''; display:inline-block; width:5px; height:5px; margin:0 6px 1px 0; border-radius:50%; background:var(--al-accent); vertical-align:middle; animation:al-breathe 1.15s ease-in-out infinite; }
+.chat-composer.errored .chat-status { color:var(--al-danger); }
+#chat-ui .close-window { display:grid; place-items:center; flex:none; width:22px; height:22px; padding:0!important; border-radius:50%; }
+
+/* 当前页锁定完整高度：逐字播放与页脚提示只改变内容，不再推动卡片边界。 */
+body.chat-window .chat-shell .gal-panel { flex:none; height:var(--chat-panel-height,auto); min-height:88px; max-height:calc(100% - var(--chat-composer-height,52px) - 8px); }
+/* 临时自然量高：解除旧视口/锁高，不累计 scrollHeight 的视口填充或溢出。 */
+body.chat-window #chat-ui.layout-measuring .gal-panel { height:auto; min-height:88px; max-height:none; }
+body.chat-window #chat-ui.layout-measuring .gal-content { flex:none; overflow:visible; }
+/* 内嵌模式（Android/web）同样按页锁高：view.ts lockEmbeddedPanel 量出本页自然高写入变量；
+   max-height 仍按可用空间钳制，超高页在锁定高度内滚动。量高时解除约束取自然高。 */
+body:not(.chat-window) .chat-shell .gal-panel { flex:none; height:var(--chat-panel-height,auto); }
+body:not(.chat-window) #chat-ui.layout-measuring .gal-panel { height:auto; max-height:none; }
+body:not(.chat-window) #chat-ui.layout-measuring .gal-content { flex:none; overflow:visible; }
 .message-text { white-space:normal; }
-/* 面板与输入框的入场互斥：shell-enter（整窗重现）已在壳级负责输入框，
-   这里只在非 shell-enter 时给面板播入场——两者叠加就是用户视频里的双重闪动。 */
-.chat-shell:not(.shell-enter) .gal-panel:not([hidden]) { --al-rise:10px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
-/* 收起动画：与窗口补间（底边恒定、顶边下滑）同向收缩，加速离场，淡出时禁止交互。
-   hidden 由 JS 在动画结束后补上（见 view.ts hidePanelAnimated）。 */
-.gal-panel.leaving { --al-sink:8px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
-/* 聊天整体入场（窗口重现/启动器点开）：一次性 class，由 view.ts 在关→开跳变时挂上，
-   面板日常显隐不触发——避免输入框反复重放（旧 gal-in 挂在 composer-only 的教训）。
-   面板自身的入场已覆盖面板，这里只补输入框。 */
-.chat-shell.shell-enter .chat-composer { --al-rise:10px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
-/* 聊天整体退出：×/返回先播整体下沉淡出再真正关窗/收回启动器（见 view.ts close）。
-   规则置于 shell-enter 之后：退出优先于入场。 */
+
+/* ---- 进出场 ----
+   面板入场：从输入框方向（底部）轻微上浮+淡入；收起：下沉淡出。输入框是锚点不参与。
+   shell-enter（整窗重现）时面板和输入框一起上浮，互斥规则避免双重位移。 */
+.chat-shell:not(.shell-enter) .gal-panel:not([hidden]) { --al-rise:8px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
+/* hidden 由 JS 在动画结束后补上（见 view.ts hidePanelAnimated）。 */
+.gal-panel.leaving { --al-sink:6px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
+.chat-shell.shell-enter .gal-panel:not([hidden]),
+.chat-shell.shell-enter .chat-composer { --al-rise:10px; animation:al-rise-in var(--al-t-med) var(--al-ease) both; }
+.chat-shell.shell-enter .gal-panel:not([hidden]) { animation-delay:.04s; }
+/* 整体退出：规则置于 shell-enter 之后，退出优先于入场。 */
 .chat-shell.shell-exit .gal-panel,.chat-shell.shell-exit .chat-composer { --al-sink:8px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
 
 /* 「正在输入」三点：明暗脉冲（不用上下跳动——回弹类动效与本主题气质不符） */
-.typing-dots { display:flex; gap:5px; align-items:center; justify-content:center; padding:16px 0; }
-.typing-dots i { width:6px; height:6px; border-radius:50%; background:var(--al-accent); animation:typing-pulse 1.15s ease-in-out infinite; }
+.typing-dots { display:flex; gap:5px; align-items:center; padding:12px 0 8px; }
+.typing-dots i { width:6px; height:6px; border-radius:50%; background:var(--al-accent); animation:al-breathe 1.15s ease-in-out infinite; }
 .typing-dots i:nth-child(2) { animation-delay:.16s; }
 .typing-dots i:nth-child(3) { animation-delay:.32s; }
-@keyframes typing-pulse { 0%,60%,100% { opacity:.3; transform:scale(.82); } 30% { opacity:1; transform:scale(1); } }
 
 /* ---- 消息排版 ---- */
 .message-text pre { white-space:pre; overflow:auto; background:var(--al-surface-code); border:1px solid var(--al-line); padding:7px 9px; border-radius:var(--al-r-s); font-size:.92em; }
@@ -242,23 +252,41 @@ body.chat-window #chat-ui.layout-measuring .gal-content { flex:none; overflow:vi
 .mfm-shake { display:inline-block; animation:mfm-shake .4s linear infinite; }
 
 body.chat-mobile .chat-shell { inset:0 8px 8px; }
-body.chat-mobile .gal-panel { max-height:calc(100% - 52px); }
-/* The native activity resizes the WebView to the real IME and system-bar insets. */
-body.android-main .chat-shell { inset:60px 12px 12px; max-width:560px; margin-inline:auto; justify-content:flex-end; }
-body.android-main .gal-panel { max-height:calc(100% - var(--chat-composer-height, 88px)); }
-body.android-main[data-chat-layout="reply"] .gal-panel { max-height:min(52%, calc(100% - var(--chat-composer-height, 88px))); }
-body.android-main[data-chat-layout="setup"] .gal-panel { border-bottom:1px solid var(--al-line-strong); border-radius:var(--al-r-m); max-height:100%; }
-body.android-main .gal-content { padding:16px; font-size:14px; }
-body.android-main #chat-ui button { min-height:40px; }
-body.android-main #chat-ui .close-panel { width:36px; height:36px; min-height:36px; }
-body.android-main .chat-composer { padding:8px 10px 4px; }
-body.android-main .chat-composer textarea { height:34px; max-height:92px; font-size:16px; line-height:24px; }
-body.android-main .composer-toolbar { flex-wrap:wrap; gap:2px; font-size:12px; }
-body.android-main .chat-status:not(:empty) { flex-basis:100%; order:2; font-size:11px; }
-body.android-main .send { margin-left:auto; min-width:56px; }
-body.android-main .close-window { min-width:36px; }
-body.android-main .session-row { padding-block:12px!important; }
-body.android-main .session-row small { font-size:12px; }
+/* Android 主界面：原生 Activity 已按 IME/系统栏 inset 缩放 WebView。
+   回复卡最多占半屏，角色始终露出上半身；设置/会话屏可占满。 */
+body.android-main .chat-shell { inset:60px 12px 12px; max-width:560px; margin-inline:auto; gap:10px; }
+body.android-main .gal-panel { max-height:calc(100% - var(--chat-composer-height, 88px) - 10px); }
+body.android-main[data-chat-layout="reply"] .gal-panel { max-height:min(52%, calc(100% - var(--chat-composer-height, 88px) - 10px)); }
+body.android-main .gal-content { padding:18px 44px 12px 18px; font-size:15px; line-height:1.7; }
+body.android-main #chat-ui .close-panel { top:8px; right:8px; width:36px; height:36px; }
+body.android-main .chat-composer { padding:10px 8px 6px 16px; border-radius:20px; }
+body.android-main .composer-row { gap:8px; }
+body.android-main .chat-composer textarea { height:36px; max-height:112px; padding:6px 0; font-size:16px; line-height:24px; }
+body.android-main #chat-ui .send, body.android-main #chat-ui .stop { width:36px; height:36px; }
+body.android-main #chat-ui .send svg { width:16px; height:16px; }
+body.android-main .composer-toolbar { min-height:36px; margin:4px 0 0 -10px; gap:0; font-size:13.5px; }
+body.android-main .composer-toolbar button { height:36px; padding:0 10px!important; }
+body.android-main .chat-status { font-size:12.5px; }
+body.android-main #chat-ui .close-window { width:36px; height:36px; }
+body.android-main .session-row { padding-block:12px!important; font-size:15px; }
+body.android-main .session-row small { font-size:12.5px; }
+body.android-main .gal-content .btn-primary, body.android-main .gal-content .ghost { height:40px; padding:0 18px!important; font-size:14px!important; }
 body.android-main .gal-content input { min-height:44px; font-size:16px; }
-body.android-main #chat-ui .chat-launcher { min-height:44px; bottom:16px; font-size:14px; }
+body.android-main #chat-ui .chat-launcher { height:44px; bottom:16px; padding:0 20px 0 16px; font-size:14px; }
+/* 触屏没有 hover：按下即时反馈，不留粘滞悬停色 */
+@media (hover:none) {
+  #chat-ui button:hover { background:transparent; }
+  #chat-ui .send:hover { background:var(--al-accent)!important; }
+  .session-row:hover { background:transparent; }
+  .gal-content .ghost:hover { background:var(--al-bg-3)!important; color:var(--al-text-2); }
+  .gal-content .btn-primary:hover { background:var(--al-accent)!important; }
+  .close-panel { opacity:1; }
+  .close-panel:hover { background:transparent!important; color:var(--al-text-3); }
+  .close-panel:active { background:var(--al-overlay-chip-hover)!important; }
+  #chat-ui .chat-launcher:hover { background:var(--al-bg-2); border-color:var(--al-line-strong); transform:translateX(-50%) scale(var(--launcher-k,1)); }
+  #chat-ui .chat-launcher:active { background:var(--al-bg-3); }
+  #chat-ui .stop:hover { background:var(--al-bg-4)!important; }
+  .composer-toolbar button:hover { color:var(--al-text-3); }
+  .composer-toolbar button:active { color:var(--al-text-1); }
+}
 @media(prefers-reduced-motion:reduce) { #chat-ui * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }

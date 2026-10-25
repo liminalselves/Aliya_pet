@@ -1,5 +1,5 @@
 /**
- * MSK 托管配置抽屉：与设置页同源的「茶夜」暖暗风格（token 见 ../../styles/tokens.css）。
+ * MSK 托管配置抽屉：与设置页同源的「暮石」风格（token 见 ../../styles/tokens.css）。
  */
 @import '../../styles/tokens.css';
 
@@ -10,29 +10,30 @@
 .agent-control-drawer.closing::backdrop { opacity:0; transition:opacity var(--al-t-out) var(--al-ease-in); }
 @media(prefers-reduced-motion:reduce) { .agent-control-drawer[open],.agent-control-drawer.closing,.agent-control-drawer::backdrop { animation:none!important; transition:none!important; } }
 
-.agent-control-drawer header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 20px 14px; }
+.agent-control-drawer header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 16px 12px 20px; }
 .agent-control-drawer header small { display:none; }
-.agent-control-drawer h2 { margin:3px 0 0; font-family:var(--al-font-serif); font-size:19px; font-weight:600; color:inherit; letter-spacing:.02em; }
-.agent-control-drawer h2::before { content:''; display:inline-block; width:7px; height:7px; margin:0 10px 2px 0; background:var(--al-accent); transform:rotate(45deg); border-radius:1.5px; }
-.agent-control-drawer .control-session { margin:4px 0 0; color:var(--al-text-2); font-size:12px; overflow-wrap:anywhere; }
+.agent-control-drawer h2 { margin:0; font-size:16px; font-weight:600; color:inherit; }
+.agent-control-drawer .control-session { margin:2px 0 0; color:var(--al-text-3); font-size:12px; overflow-wrap:anywhere; }
 
-.agent-control-drawer button { color:inherit; font:inherit; cursor:pointer; transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease); }
+.agent-control-drawer button { color:inherit; font:inherit; cursor:pointer; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease); }
 .agent-control-drawer button:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 
-.agent-control-drawer .control-close { align-self:flex-start; width:32px; height:32px; flex:none; border:1px solid var(--al-line-strong); border-radius:50%; background:transparent; color:var(--al-text-2); font-size:20px; line-height:1; }
-.agent-control-drawer .control-close:hover { background:var(--al-bg-3); color:var(--al-accent-strong); border-color:var(--al-accent-strong); }
+.agent-control-drawer .control-close { display:grid; place-items:center; width:32px; height:32px; flex:none; border:0; border-radius:50%; background:transparent; color:var(--al-text-3); font-size:20px; line-height:1; }
+.agent-control-drawer .control-close:hover { background:var(--al-hover-fill); color:var(--al-text-1); }
 
-/* 分段式页签：轨道 + 选中胶囊 */
-.agent-control-drawer nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; margin:0 16px 10px; padding:4px; background:var(--al-bg-0); border:1px solid var(--al-line); border-radius:var(--al-r-m); }
-.agent-control-drawer nav button { padding:7px 2px; border:0; border-radius:var(--al-r-s); background:none; color:var(--al-text-2); font-size:12px; white-space:nowrap; }
-.agent-control-drawer nav button:hover { background:var(--al-bg-3); color:var(--al-text-1); }
-.agent-control-drawer nav button[aria-pressed=true] { color:var(--al-on-accent); font-weight:600; background:var(--al-accent); box-shadow:var(--al-shadow-accent); }
-.agent-control-drawer nav button[aria-pressed=true]:hover { background:var(--al-accent-strong); }
+/* 页签：下划线式，选中项文字变亮 + 底部一道腮红短线 */
+.agent-control-drawer nav { display:flex; gap:2px; margin:0 12px; overflow-x:auto; scrollbar-width:none; }
+.agent-control-drawer nav::-webkit-scrollbar { display:none; }
+.agent-control-drawer nav button { position:relative; flex:none; height:36px; padding:0 10px; border:0; border-radius:var(--al-r-s) var(--al-r-s) 0 0; background:none; color:var(--al-text-3); font-size:13px; white-space:nowrap; }
+.agent-control-drawer nav button::after { content:''; position:absolute; left:10px; right:10px; bottom:0; height:2px; border-radius:1px; background:var(--al-accent); transform:scaleX(0); transition:transform var(--al-t-med) var(--al-ease); }
+.agent-control-drawer nav button:hover { color:var(--al-text-1); }
+.agent-control-drawer nav button[aria-pressed=true] { color:var(--al-text-1); font-weight:600; }
+.agent-control-drawer nav button[aria-pressed=true]::after { transform:scaleX(1); }
 
-.agent-control-drawer .control-status { flex:none; padding:0 20px 10px; color:var(--al-accent-strong); font-size:12px; }
+.agent-control-drawer .control-status { flex:none; padding:10px 20px; color:var(--al-accent-strong); font-size:12px; }
 .agent-control-drawer .control-status:empty { display:none; }
-.agent-control-drawer .control-retry { align-self:flex-start; margin:0 20px 10px; border:1px solid var(--al-line-strong); border-radius:var(--al-r-s); padding:5px 12px; background:var(--al-bg-3); }
-.agent-control-drawer .control-retry:hover { background:var(--al-bg-4); border-color:var(--al-accent-strong); }
+.agent-control-drawer .control-retry { align-self:flex-start; margin:0 20px 10px; height:30px; padding:0 14px; border:0; border-radius:var(--al-r-pill); background:var(--al-bg-3); }
+.agent-control-drawer .control-retry:hover { background:var(--al-bg-4); }
 
 .agent-control-drawer .control-body { flex:1; min-height:0; border-top:1px solid var(--al-line); }
 /* 面板切换/重载时内容区整体淡入：iframe 内容是远端异步替换的，纯淡入盖住硬切。 */
@@ -43,4 +44,9 @@
 .agent-control-frame { display:block; width:100%; height:100%; border:0; opacity:0; transition:opacity var(--al-t-med) var(--al-ease); }
 .agent-control-frame.ready { opacity:1; }
 
-@media(min-width:700px) { .agent-control-drawer nav { grid-template-columns:repeat(8,minmax(0,1fr)); } }
+
+/* 连接中：状态行前一枚呼吸点；远端面板就绪前内容区不留白（底色与面板配置色一致） */
+.agent-control-drawer .control-status.loading::before { content:''; display:inline-block; width:5px; height:5px; margin:0 8px 1px 0; border-radius:50%; background:var(--al-accent); vertical-align:middle; animation:al-breathe 1.15s ease-in-out infinite; }
+.agent-control-drawer .control-status { color:var(--al-text-3); }
+.agent-control-drawer .control-status.error { color:var(--al-danger); }
+.agent-control-drawer .control-body { background:var(--al-bg-0); }

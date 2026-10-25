@@ -212,11 +212,14 @@ Aliya_web 相同。
   gal-content 为 user-select:none：可选文本时快速连点会触发浏览器
   双击选词/三击选段，选区反复重建既吞点击（曾表现为文本页
   「点不动」）又闪高亮；划选复制去记录窗口（非 replying 态仍可选）。
-  页脚提示行显示「▼ 点击继续 n/N」。播放等
+  页脚提示行显示「点击继续 n/N」。播放等
   渲染 settled 再开始（表情表/生图状态首轮查询完成），之后的生图状态
-  更新只静态刷新当前页。面板样式为贴附式：顶部紫色名牌条，窗口锚定
-  Live2D 可见矩形并覆盖角色下半部；输入框和回复共用 `chat-shell` 连成
-  一张卡片，外窗高度随 composer/reply/setup 状态收放；量高补上
+  更新只静态刷新当前页。窗口锚定 Live2D 可见矩形并覆盖角色下半部；
+  回复卡与输入框是 `chat-shell` 内两张独立卡片（间距 8px = view.ts
+  `PANEL_GAP`，输入框形状永不随面板显隐变化）。每页播放前锁定本页完整
+  高度，逐字揭示不改卡片尺寸：Windows 经 `set_chat_layout` 让外窗单步
+  落定，Android/web 由 `lockEmbeddedPanel` 写 `--chat-panel-height` 并用
+  WAAPI 补间翻页高度；外窗高度随 composer/reply/setup 状态收放；量高补上
   gal-content 滚动溢出量（面板被 max-height 钳住时不会越量越矮），
   生图/附图解码完成再补量。记录/会话/连接屏不分页不逐字。
 - 表演走「表演指令协议」（`PERFORMANCE.md`）：send 请求携带表情/动作清单

@@ -136,6 +136,14 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
   notifyPetAction({ action, ...extra });
 }
 
+/** 触发类按钮的即时反馈：桌宠在另一个窗口执行，按钮本身短暂确认「已发出」。 */
+function pulse(button: HTMLElement): void {
+  button.classList.remove('sent');
+  void button.offsetWidth;
+  button.classList.add('sent');
+  window.setTimeout(() => button.classList.remove('sent'), 700);
+}
+
 // ---------- UI 构建 ----------
 
 const app = document.getElementById('app')!;
@@ -233,12 +241,20 @@ function paintSliderFill(slider: HTMLInputElement): void {
   slider.style.setProperty('--fill', `${pct}%`);
 }
 
+/** 台词间隔只在随机台词开启时有意义：关闭时整行降透明并禁止交互。 */
+let speechRow: HTMLElement | null = null;
+function syncSpeechRow(): void {
+  speechRow?.classList.toggle('inactive', !settings.randomSpeech);
+  speechRow?.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button').forEach(el => { el.tabIndex = settings.randomSpeech ? 0 : -1; });
+}
+
 function refreshControls(): void {
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
   if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
   if (refs.speechMinutes)
     refs.speechMinutes.value = String(settings.randomSpeechMinutes);
+  syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
@@ -261,14 +277,14 @@ function refreshControls(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = ACTION_LABELS[name] ?? name;
-    b.addEventListener('click', () => trayAction('play-action', { name }));
+    b.addEventListener('click', () => { trayAction('play-action', { name }); pulse(b); });
     grid.appendChild(b);
   }
   box.appendChild(grid);
   const speech = document.createElement('button');
   speech.className = 'act wide';
   speech.textContent = '随机说一句';
-  speech.addEventListener('click', () => trayAction('random-speech'));
+  speech.addEventListener('click', () => { trayAction('random-speech'); pulse(speech); });
   box.appendChild(speech);
 }
 
@@ -298,16 +314,14 @@ function refreshMoodHighlight(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = label;
-    b.addEventListener('click', () =>
-      trayAction('express', { name, duration: 8 })
-    );
+    b.addEventListener('click', () => { trayAction('express', { name, duration: 8 }); pulse(b); });
     exprGrid.appendChild(b);
   }
   box.appendChild(exprGrid);
   const clearExpr = document.createElement('button');
   clearExpr.className = 'act wide';
   clearExpr.textContent = '恢复默认表情';
-  clearExpr.addEventListener('click', () => trayAction('clear-expression'));
+  clearExpr.addEventListener('click', () => { trayAction('clear-expression'); pulse(clearExpr); });
   box.appendChild(clearExpr);
 
   // 情绪（持续心境）
@@ -322,7 +336,11 @@ function refreshMoodHighlight(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = MOOD_LABELS[name] ?? name;
-    b.addEventListener('click', () => trayAction('set-mood', { name }));
+    b.addEventListener('click', () => {
+      trayAction('set-mood', { name });
+      currentMood = name;
+      refreshMoodHighlight();
+    });
     moodButtons.set(name, b);
     moodGrid.appendChild(b);
   }
@@ -356,27 +374,51 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '随机台词',
     '每隔一段时间主动说一句话',
     () => settings.randomSpeech,
-    (v) => update({ randomSpeech: v })
+    (v) => { update({ randomSpeech: v }); syncSpeechRow(); }
   );
   const row = document.createElement('div');
   row.className = 'row';
+  speechRow = row;
   const lab = document.createElement('div');
   lab.className = 'label';
-  lab.textContent = '台词间隔（分钟）';
+  lab.textContent = '台词间隔';
+  const labSub = document.createElement('span');
+  labSub.className = 'sub';
+  labSub.textContent = '单位：分钟，1–120';
+  lab.appendChild(labSub);
+  // 步进器：− 数值 +，避免裸数字框里输错被静默改回
+  const stepper = document.createElement('div');
+  stepper.className = 'stepper';
+  const dec = document.createElement('button');
+  dec.type = 'button'; dec.textContent = '−'; dec.setAttribute('aria-label', '减少间隔');
+  const inc = document.createElement('button');
+  inc.type = 'button'; inc.textContent = '+'; inc.setAttribute('aria-label', '增加间隔');
   const num = document.createElement('input');
   num.className = 'num';
   num.type = 'number';
+  num.inputMode = 'numeric';
   num.min = '1';
   num.max = '120';
   num.value = String(settings.randomSpeechMinutes);
-  num.addEventListener('change', () => {
-    const v = Math.min(Math.max(Number(num.value) || 5, 1), 120);
-    num.value = String(v);
-    update({ randomSpeechMinutes: v });
-  });
+  num.setAttribute('aria-label', '台词间隔（分钟）');
+  const commitMinutes = (v: number) => {
+    const clamped = Math.min(Math.max(Math.round(v) || settings.randomSpeechMinutes, 1), 120);
+    num.value = String(clamped);
+    dec.disabled = clamped <= 1;
+    inc.disabled = clamped >= 120;
+    if (clamped !== settings.randomSpeechMinutes) update({ randomSpeechMinutes: clamped });
+  };
+  num.addEventListener('change', () => commitMinutes(Number(num.value)));
+  num.addEventListener('keydown', (e) => { if (e.key === 'Enter') num.blur(); });
+  dec.addEventListener('click', () => commitMinutes(settings.randomSpeechMinutes - 1));
+  inc.addEventListener('click', () => commitMinutes(settings.randomSpeechMinutes + 1));
+  dec.disabled = settings.randomSpeechMinutes <= 1;
+  inc.disabled = settings.randomSpeechMinutes >= 120;
+  stepper.append(dec, num, inc);
   refs.speechMinutes = num;
   row.appendChild(lab);
-  row.appendChild(num);
+  row.appendChild(stepper);
+  syncSpeechRow();
   box.appendChild(row);
 }
 
@@ -479,9 +521,10 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refs.batterySaver = addBatterySaverSwitch(box);
 }
 
-// ---- 聊天 ----
+// ---- 聊天 ----（偏好开关与下方 Misskey 连接状态共用一张卡片）
+const chatBox = section('聊天');
 {
-  const box = section('聊天');
+  const box = chatBox;
   refs.showGeneratedImages = switchRow(
     box,
     '显示生成配图',
@@ -600,7 +643,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
 
 // ---- 聊天（Misskey 连接状态；鉴权与会话选择仍在聊天窗口内完成）----
 {
-  const box = section('聊天');
+  const box = chatBox;
   const statusRow = document.createElement('div');
   statusRow.className = 'row';
   const statusLab = document.createElement('div');
