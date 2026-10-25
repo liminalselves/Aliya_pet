@@ -306,7 +306,7 @@ function snapHarness(pos=[40,300],snap=true) {
   cancel(){this.cancelled=true}
  }
  const api={currentMonitor:async()=>mon,PhysicalPosition:class{constructor(x,y){this.x=x;this.y=y}}};
- const {PetApp}=load('pet-app',{'@tauri-apps/api/window':api,'./settings':{saveSettings:s=>saved.push({...s})}},{
+ const {PetApp}=load('pet-app',{'./desktop-window':api,'./settings':{saveSettings:s=>saved.push({...s})}},{
   KeyframeEffect,Animation,document:{body,documentElement:{},timeline:{}},
   window:{matchMedia:()=>({matches:reduced})},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
   requestAnimationFrame:fn=>rafQ.push(fn),

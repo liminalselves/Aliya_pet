@@ -44,7 +44,7 @@ test('macOS merged configuration retains all four full windows and applies only 
 
 test('common/Windows config keeps installer targets, ICO resources, hooks and window behavior', () => {
   assert.equal(common.app.macOSPrivateApi, true, 'Tauri 2.11 checks common Cargo features against this macOS-only option');
-  assert.equal(common.bundle.macOS, undefined);
+  assert.deepEqual(common.bundle.macOS, { minimumSystemVersion: '14.4', signingIdentity: '-' });
   assert.equal(common.bundle.active, true);
   assert.equal(common.bundle.targets, 'all');
   assert.deepEqual(new Set(common.bundle.icon), new Set(['icons/tray.ico', 'icons/icon.png', 'icons/icon.icns']));

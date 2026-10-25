@@ -94,8 +94,10 @@ Tauri 的 `beforeBuildCommand` 与 `beforeDevCommand` 会先运行
 ### 配置与原生集成约定
 
 - Tauri 自动把 `src-tauri/tauri.macos.conf.json` 合并到 `tauri.conf.json`：
-  `minimumSystemVersion: "14.4"`、`signingIdentity: "-"`、`targets: ["app", "dmg"]`，
-  公共配置启用 `app.macOSPrivateApi: true`（只作用于 macOS）。
+  `targets: ["app", "dmg"]` 与 macOS 图标；公共配置中的 `macOS` 子项固定
+  `minimumSystemVersion: "14.4"`、`signingIdentity: "-"`（Windows 构建忽略它），
+  并启用 `app.macOSPrivateApi: true`（只作用于 macOS）。将最低版本放在公共配置是为了让
+  直接运行 `cargo test` 的 `generate_context!()` 与 Tauri CLI 的平台合并结果一致。
 - 合并采用 JSON Merge Patch：**数组整体替换**，不是逐元素合并。macOS overlay 不声明
   `app.windows`，完整继承 `pet`、`chat`、`settings`、`records` 四个窗口；`bundle.icon`
   则整体替换为 ICNS + PNG。修改 overlay 时不要只写一个窗口。

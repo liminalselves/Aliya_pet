@@ -14,7 +14,7 @@ function load(name, imports = {}, globals = {}) {
   return exports;
 }
 
-function harness({ platform = 'browser', touchDevice = false } = {}) {
+function harness({ platform = 'browser', touchDevice = false, desktopOS = 'unknown' } = {}) {
   let now = 0, area = 'body', speaking = false;
   const globals = { performance: { now: () => now } };
   const recognizer = load('interaction/petting-recognizer', {}, globals);
@@ -39,7 +39,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: name => { actions.push(name); return true; } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
-  const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
+  const { PetApp } = load('pet-app', { './platform': { platform, desktopOS, isTouchDevice: touchDevice,
     androidShell: () => ({ setInteracting: value => shellCalls.push(value) }) } }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
   const app = Object.create(PetApp.prototype);
@@ -74,6 +74,36 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
       service.onPointerMove(ctx(400 + 40 * Math.sin(i / 60 * Math.PI * 2))); service.tick(1000 / 60); } },
   };
 }
+
+test('macOS Control+点击走抚摸且松开 Control 不变成拖动，结束/取消/失焦均释放命中锁', () => {
+  for (const end of ['up', 'cancel', 'blur']) {
+    const h = harness({ platform: 'tauri', desktopOS: 'macos' }); h.area('head');
+    h.canvasEvents.pointerdown(h.event({ ctrlKey: true }));
+    assert.equal(h.app._controlPetting, true);
+    assert.equal(h.service.petting.state, 'pressed');
+    assert.equal(h.app._dragCandidate, false);
+    assert.equal(h.masks.at(-1).interacting, true);
+    for (let i = 1; i <= 90; i++) {
+      h.advance(1000 / 60);
+      h.canvasEvents.pointermove(h.event({ ctrlKey: false, clientX: 400 + 40 * Math.sin(i / 60 * Math.PI * 2) }));
+    }
+    assert.equal(h.service.petting.state, 'petting');
+    assert.equal(h.app._dragging, false);
+    if (end === 'up') h.canvasEvents.pointerup(h.event({ ctrlKey: false, buttons: 0 }));
+    if (end === 'cancel') h.canvasEvents.pointercancel(h.event());
+    if (end === 'blur') h.windowEvents.blur();
+    assert.equal(h.app._controlPetting, false);
+    assert.equal(h.app._activePointerId, null);
+    assert.equal(h.masks.at(-1).interacting, false);
+    assert.equal(h.app._leftDown, false);
+    assert.equal(h.lines.length, 0, '辅助点击不触发普通点击台词');
+  }
+  const windows = harness({ platform: 'tauri', desktopOS: 'windows' }); windows.area('head');
+  windows.canvasEvents.pointerdown(windows.event({ ctrlKey: true }));
+  assert.equal(windows.app._controlPetting, false);
+  assert.equal(windows.service.petting.state, 'inactive');
+  assert.equal(windows.app._dragCandidate, true);
+});
 
 test('八连点后的冷却仍有低幅反馈，耳朵共享限频且不续台词或高强度动作', () => {
   for (const area of ['body', 'head', 'hand', 'tablet', 'ear_left', 'ear_right']) {

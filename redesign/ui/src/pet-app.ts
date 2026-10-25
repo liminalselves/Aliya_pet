@@ -24,12 +24,13 @@ import {
 } from './settings';
 import {
   platform,
+  desktopOS,
   androidShell,
   isAndroidOverlay,
 } from './platform';
 
 /** Tauri 窗口句柄（浏览器环境为 null，拖动退化为不可用）。 */
-type TauriWindow = import('@tauri-apps/api/window').Window;
+type TauriWindow = import('./desktop-window').Window;
 type ShellAction = { action: string; value?: boolean; name?: string; duration?: number };
 
 /**
@@ -93,7 +94,7 @@ export class PetApp {
     paused: this._paused || !this._running,
   }));
 
-  // Tauri 窗口拖动
+  // 桌面单位：Windows 为物理像素，macOS 为稳定的逻辑 points；与渲染 DPR 分离。
   private _tauriWindow: TauriWindow | null = null;
   private _winPhysX = 0;
   private _winPhysY = 0;
@@ -131,7 +132,7 @@ export class PetApp {
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
   private _glContextLost = false;
 
-  // 鼠标穿透命中掩码（Windows 壳）：低频把渲染结果缩成占用表上报给 Rust
+  // 桌面壳鼠标穿透命中掩码：低频把渲染结果缩成占用表上报给 Rust
   private _hitMaskCanvas: HTMLCanvasElement | null = null;
   private _hitMaskCtx: CanvasRenderingContext2D | null = null;
   private _hitMaskData: Uint8Array = new Uint8Array(0);
@@ -152,6 +153,8 @@ export class PetApp {
   private _dragging = false;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
+  /** macOS Control+主键的辅助点击，在 Control 提前松开后仍保持同一手势。 */
+  private _controlPetting = false;
   private _touchTapCandidate = false;
   private _downScreenX = 0;
   private _downScreenY = 0;
@@ -264,7 +267,7 @@ export class PetApp {
     this._resizeCanvas();
 
     // Tauri 环境探测（浏览器 dev 下静默降级）
-    import('@tauri-apps/api/window')
+    import('./desktop-window')
       .then((m) => {
         this._tauriWindow = m.getCurrentWindow();
         // 启动即暖窗口位置缓存：否则首次拖动的前几帧会把窗口拉向 (0,0)
@@ -409,7 +412,7 @@ export class PetApp {
    * 这是尺寸上限，不是位置钳制，窗口位置仍可在工作区之外。
    */
   private _scaleLimitsFrom(
-    mon: import('@tauri-apps/api/window').Monitor | null,
+    mon: import('./desktop-window').Monitor | null,
     baseW: number,
     baseH: number
   ): { minS: number; maxS: number } | null {
@@ -518,8 +521,8 @@ export class PetApp {
    */
   private async _deviceScaleRange(): Promise<{ minS: number; maxS: number }> {
     try {
-      const m = await import('@tauri-apps/api/window');
-      let mon: import('@tauri-apps/api/window').Monitor | null = null;
+      const m = await import('./desktop-window');
+      let mon: import('./desktop-window').Monitor | null = null;
       try {
         mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
       } catch {
@@ -580,9 +583,9 @@ export class PetApp {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
       this._queueWindowGeometry(async () => {
           if (revision !== this._windowSettingsRevision) return;
-          const m = await import('@tauri-apps/api/window');
+          const m = await import('./desktop-window');
           // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
-          let mon: import('@tauri-apps/api/window').Monitor | null = null;
+          let mon: import('./desktop-window').Monitor | null = null;
           try {
             mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
           } catch {
@@ -659,7 +662,7 @@ export class PetApp {
   }
 
   /** IPC 拒绝不能证明 Win32 副作用未发生；所有位置写入用读回确认统一处理。 */
-  private async _setWindowPositionVerified(position: import('@tauri-apps/api/window').PhysicalPosition): Promise<void> {
+  private async _setWindowPositionVerified(position: import('./desktop-window').PhysicalPosition): Promise<void> {
     const win = this._tauriWindow;
     if (!win) throw new Error('Pet window unavailable');
     try { await win.setPosition(position); }
@@ -796,7 +799,7 @@ export class PetApp {
           if (!p || typeof p.action !== 'string') return;
           this.onShellAction(p);
         }),
-        // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
+        // Rust 全局光标广播（桌面单位）：光标不在窗口上时视线也要跟随
         listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
           if (Number.isFinite(e.payload.x) && Number.isFinite(e.payload.y)) {
@@ -938,7 +941,7 @@ export class PetApp {
     const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
     this._windowPositionKind = 'reset';
     this._queueWindowGeometry(async () => {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       if (revision !== this._windowPositionRevision) return;
       const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
       if (!mon || revision !== this._windowPositionRevision) return;
@@ -996,7 +999,7 @@ export class PetApp {
     this._cancelSnapAnimation();
     const token = this._snapAnimToken;
     const pendingMove = this._windowMoveTask;
-    import('@tauri-apps/api/window')
+    import('./desktop-window')
       .then(async (m) => {
         await pendingMove;
         await this._windowSettingsTask;
@@ -1036,7 +1039,7 @@ export class PetApp {
       .catch(error => { console.warn('Failed to finish pet drag', error); });
   }
 
-  /** 持久化桌面窗口位置（物理 px）。 */
+  /** 持久化桌面窗口位置（Windows 物理 px / macOS points）。 */
   private _persistDesktopPos(): void {
     if (this._dragging || this._windowResizeRecovery || this._windowGeometryError) return;
     this._settings.posX = this._winPhysX;
@@ -1291,8 +1294,10 @@ export class PetApp {
         // 合成事件/非常规指针没有 active pointer，捕获失败不影响交互
       }
       const n0 = this._hitEventNorm(e);
+      this._controlPetting = desktopOS === 'macos' && e.pointerType === 'mouse' && e.button === 0 && e.ctrlKey;
       const isSecondary =
         e.button === 2 ||
+        this._controlPetting ||
         // 触摸端没有右键：按下头部抚摸区视为抚摸手势起点，
         // 其余区域的单指按住保留给拖动窗口
         (e.pointerType === 'touch' &&
@@ -1334,7 +1339,7 @@ export class PetApp {
       if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._dragThresholdPx) {
         this._touchTapCandidate = false;
       }
-      const ctx = this._ctx(e, (e.buttons & 2) !== 0);
+      const ctx = this._ctx(e, (e.buttons & 2) !== 0 || (this._controlPetting && (e.buttons & 1) !== 0));
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
 
@@ -1366,12 +1371,13 @@ export class PetApp {
     canvas.addEventListener('pointerup', (e) => {
       if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       this._coordination.activity();
-      const viaPetting = e.button === 2 || this._touchPetting;
+      const viaPetting = e.button === 2 || this._touchPetting || (this._controlPetting && e.button === 0);
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
       const ctx = this._ctx(e, viaPetting);
       const handled = this._interaction?.onPointerUp(ctx) ?? false;
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._touchPetting = false;
+      this._controlPetting = false;
       if (touchTap) {
         this._interaction?.petting.exitPettingMode('modeChanged');
         this._interaction?.onClick(ctx, false);
@@ -1447,6 +1453,7 @@ export class PetApp {
   private _cancelInteraction(): void {
     this._activePointerId = null;
     this._touchPetting = false;
+    this._controlPetting = false;
     this._touchTapCandidate = false;
     this._interaction?.cancel();
     this._coordination.activity();
@@ -1530,9 +1537,10 @@ export class PetApp {
     const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
     this._windowPositionKind = 'move';
     const task = this._queueWindowGeometry(async () => {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       if (revision !== this._windowPositionRevision) return;
-      const x = Math.round(this._winPhysX), y = Math.round(this._winPhysY);
+      const x = desktopOS === 'macos' ? this._winPhysX : Math.round(this._winPhysX);
+      const y = desktopOS === 'macos' ? this._winPhysY : Math.round(this._winPhysY);
       await this._setWindowPositionVerified(new m.PhysicalPosition(x, y));
       this._windowResizeRemainder = { x: 0, y: 0 };
     }, 'Failed to move pet window').finally(() => {

@@ -16,10 +16,10 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
         │  interaction/   抚摸/程序式反应/点击          │
         │  dialogue/behavior/settings                  │
         └───────────────┬──────────────┬──────────────┘
-                        │ WebView2     │ 系统 WebView
-                  ┌─────▼─────┐  ┌─────▼─────┐
-                  │ Tauri/Rust │  │ Kotlin    │
-                  │ src-tauri/ │  │ android/  │
+                         │ WebView2 / WKWebView │ 系统 WebView
+                   ┌─────▼─────────────┐  ┌─────▼─────┐
+                   │ Tauri/Rust       │  │ Kotlin    │
+                   │ Windows / macOS  │  │ android/  │
                   └───────────┘  └───────────┘
 ```
 
@@ -55,10 +55,10 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 
 `platform.ts` 暴露统一系统能力；页面入口根据容器选择导航与布局：
 
-| 能力               | tauri                                  | android                          | web        |
-| ------------------ | -------------------------------------- | -------------------------------- | ---------- |
-| 窗口/屏幕度量       | `@tauri-apps/api/window`               | `AndroidShell.getMetrics()`      | 不可用     |
-| 窗口移动/改尺寸/定位 | `window.setPosition/setSize`（物理px） | `AndroidShell.moveWindowBy/...`  | 不可用     |
+| 能力               | tauri（Windows / macOS）                 | android                          | web        |
+| ------------------ | ---------------------------------------- | -------------------------------- | ---------- |
+| 窗口/屏幕度量       | `desktop-window`；Windows 物理 px，macOS points | `AndroidShell.getMetrics()` | 不可用 |
+| 窗口移动/改尺寸/定位 | `desktop-window`；macOS 不混用 backing scale | `AndroidShell.moveWindowBy/...` | 不可用 |
 | 置顶               | `setAlwaysOnTop`                       | 悬浮窗天然置顶                    | 不可用     |
 | 键盘与焦点          | 系统窗口自然聚焦                       | Activity + IME insets；悬浮窗不聚焦 | 浏览器处理 |
 | 自启               | Rust `set_auto_start`（注册表）        | `AndroidShell.setAutoStart`      | 不可用     |
@@ -72,15 +72,16 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 ## 指针与互动
 
 - Pointer Events 驱动全部互动（桌面鼠标 + 触摸同一套逻辑）。
-- **桌面**：右键 = 抚摸（Windows 约定）；左键拖动 = 移动窗口，单击 = 区域互动。
+- **桌面**：右键 = 抚摸（Windows 约定）；macOS Control + 主键也作为辅助抚摸；左键拖动 = 移动窗口，单击 = 区域互动。
 - **触摸端**：单指按头部抚摸区 = 抚摸；其余区域拖动 = 移动窗口（免右键）。
 - 关键坑：canvas 必须 `touch-action: none`，否则触摸拖动被浏览器当作
   滚动手势吞掉（指针事件变 pointercancel）。
 
-## Windows 辅助窗口
+## Windows / macOS 辅助窗口
 
 - `chat`、`settings`、`records` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
   命令线程不动态 `build()` 第二个 WebView2，避免已确认的死锁。
+- macOS 使用 AppKit points 的原子窗口快照和 `NSWindow` child ordering；pet、chat 显示在普通 Spaces，应用采用菜单栏 accessory 模式、不显示 Dock 图标。关闭 pet/chat 只隐藏并保留状态，重新打开事件可恢复 pet。
 - `settings` 与 `records` 使用正常原生窗口，可移动、可调整大小；关闭请求被壳拦截
   为隐藏，下次打开保留页面实例。`chat` 仍是透明、无边框、锁定跟随 pet 的伴侣窗。
 - `records` 单独承载服务器时间线与托管配置的消息定位，避免长列表改变聊天伴侣窗
@@ -96,13 +97,13 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
   表情/情绪经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；情绪
   高亮由 pet 写共享 localStorage、设置页回前台刷新。
 
-## 双端差异（壳层职责）
+## 平台差异（壳层职责）
 
-| 能力            | Windows（Tauri）                            | Android（Kotlin）                    |
+| 能力            | Windows / macOS（Tauri）                    | Android（Kotlin）                    |
 | --------------- | ------------------------------------------- | ------------------------------------ |
-| 窗口形态        | 透明无边框置顶小窗（512×768 基准）            | App 内全屏 / TYPE_APPLICATION_OVERLAY |
+| 窗口形态        | Windows 透明无边框置顶；macOS 菜单栏 accessory、普通 Spaces | App 内全屏 / TYPE_APPLICATION_OVERLAY |
 | 菜单            | 系统托盘；左右键均展开菜单，显隐由菜单项控制     | 右上角 ⋮ 菜单 + 通知按钮               |
-| 悬浮窗触发      | 常驻小窗                                     | 退后台自动转悬浮窗（可关）             |
+| 悬浮窗触发      | Windows 常驻小窗；macOS 常驻桌宠             | 退后台自动转悬浮窗（可关）             |
 | 聊天            | `chat` 跟随 pet；`records` 为独立窗          | 主界面 ChatView + 记录/设置页面栈；悬浮无聊天 |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
-| 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |
+| 自启            | Windows 注册表 Run；macOS LaunchAgent 待接入 | BootReceiver (+ 悬浮窗权限门槛)        |

@@ -20,6 +20,9 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Wind
 # 它与公共 app.macOSPrivateApi 同步。PNG 解码只供 macOS 模板图标使用。
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2", features = ["image-png"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSScreen", "NSEvent", "NSGraphics", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSGeometry"] }
 
 [profile.release]
 panic = "abort"

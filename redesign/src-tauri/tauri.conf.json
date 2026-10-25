@@ -81,6 +81,10 @@
       "icons/icon.png",
       "icons/icon.icns"
     ],
+    "macOS": {
+      "minimumSystemVersion": "14.4",
+      "signingIdentity": "-"
+    },
     "windows": {
       "nsis": {
         "installerIcon": "icons/tray.ico",

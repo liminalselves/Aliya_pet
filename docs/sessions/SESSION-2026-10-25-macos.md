@@ -12,8 +12,8 @@
 ## 提交拆分与进度
 
 1. 构建基础：平台配置、图标、打包校验和 macOS CI（已实现并通过本地脚本/编译测试；安装包与远程 CI 尚待验证）。
-2. 桌面交互：命中策略、Retina 坐标、窗口生命周期、菜单栏与测试（待实施）。
-3. 系统能力：浏览器、登录自启、平台文案与失败回读测试（待实施）。
+2. 桌面交互：命中策略、Retina 坐标、窗口生命周期、菜单栏与测试（已实现并通过 Rust/UI 回归测试；GUI 待验收）。
+3. 系统能力：浏览器、登录自启、平台文案与失败回读测试（已实现并通过静态/单元测试；实际登录自启待验收）。
 4. 集成验证：双架构包、使用文档、实际检查与剩余验收项（待实施）。
 
 ## 验证记录
@@ -28,6 +28,9 @@
 - 编译暴露 Tauri 2.11 的 manifest 检查只读取公共依赖、不合并 target features。按已安装源码确认根因后，将 macOS 专用透明开关与 Cargo feature 成对放到公共配置；PNG 解码仍是 macOS target 依赖。这是构建约束适配，不改变平台功能范围。
 - 修正后 `cargo test --locked --quiet` 22 项通过（原生壳仍有待 macOS 接线的未使用变量警告，后续步骤处理）。
 - 修正透明配置后重跑 `npm run test:mac`，12 项全部通过；`git diff --check` 通过。
+- macOS 原生接线后：`cargo test --locked --quiet` 33 项通过，`cargo check --locked --quiet` 通过；共享 UI `npm test` 172 项通过，`npm run build` 通过。
+- 新增桌面适配测试：macOS points/Retina/负坐标/工作区/事件/置顶错误传播 7 项通过；Control+主键抚摸及取消路径纳入点击回归。
+- 本地尝试 `npm run tauri -- build --target aarch64-apple-darwin --bundles app --no-sign`：前端构建成功，但 Tauri CLI 报本机未安装目标（环境没有可用 `rustup`，仅 Homebrew Rust）；因此未声称本地 `.app` 构建通过。CI 使用 `dtolnay/rust-toolchain` 安装目标。
 
 ## 验收边界
 

@@ -4,7 +4,7 @@
 //! 一是打开零延迟、页面状态常驻；二是避开 Windows 下命令线程里 build()
 //! 第二个 WebView2 窗口死锁的问题（已实测）。show/hide 只切换可见性。
 //!
-//! 几何契约（物理像素）：
+//! 几何契约（Windows 物理像素 / macOS 桌面 points）：
 //! - chat 永远吸附在 pet 正下方、水平居中，像萝莉斯桌宠那样是模型的延伸；
 //!   尺寸按 pet 逻辑宽度推导（宽 = pet 宽 × 1.18，高 = 宽 × 0.62），
 //!   pet 切换尺寸时 chat 跟随缩放；
@@ -26,7 +26,7 @@
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use tauri::{PhysicalPosition, PhysicalSize};
 
 /// 模型可见矩形（屏幕物理像素），由前端显式上报。
@@ -84,6 +84,13 @@ pub struct ChatRuntime {
 }
 
 impl ChatRuntime {
+    fn remember_visibility(&mut self, open: bool) { self.open_before_pet_hide = open; }
+    fn take_restore(&mut self) -> bool { std::mem::take(&mut self.open_before_pet_hide) }
+    fn closed(&mut self) {
+        self.busy = false;
+        self.typing = false;
+        self.open_before_pet_hide = false;
+    }
     fn set_layout(&mut self, layout: ChatLayout, content_height: Option<u32>) {
         self.layout = layout;
         if let Some(height) = content_height.filter(|height| *height > 0) {
@@ -157,9 +164,11 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 pub fn on_pet_hidden(app: &AppHandle) {
     let open = chat_is_open(app);
     if let Ok(mut r) = app.state::<ChatRuntimeState>().lock() {
-        r.open_before_pet_hide = open;
+        r.remember_visibility(open);
     }
     if open {
+        #[cfg(target_os = "macos")]
+        if let Err(error) = crate::macos::parent_chat(app, false) { eprintln!("[chat] detach failed: {error}"); }
         if let Some(chat) = app.get_webview_window("chat") {
             let _ = chat.hide();
         }
@@ -171,13 +180,15 @@ pub fn on_pet_shown(app: &AppHandle) {
     let restore = app
         .state::<ChatRuntimeState>()
         .lock()
-        .map(|r| r.open_before_pet_hide)
+        .map(|mut r| r.take_restore())
         .unwrap_or(false);
     if !restore {
         return;
     }
     if let Some(chat) = app.get_webview_window("chat") {
         position_chat(app, app.state::<ChatAnchorState>().inner());
+        #[cfg(target_os = "macos")]
+        if let Err(error) = crate::macos::parent_chat(app, true) { eprintln!("[chat] attach failed: {error}"); }
         let _ = chat.show();
     }
 }
@@ -239,13 +250,19 @@ pub fn show_chat(
     anchor: State<ChatAnchorState>,
     runtime: State<ChatRuntimeState>,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if app.get_webview_window("pet").is_some_and(|w| !w.is_visible().unwrap_or(false)) {
+        crate::show_pet_window(&app)?;
+    }
     let win = app
         .get_webview_window("chat")
         .ok_or("chat 窗口未预创建")?;
-    let _ = win.unminimize();
+    win.unminimize().map_err(|e| e.to_string())?;
     position_chat(&app, &anchor);
-    let _ = win.show();
-    let _ = win.set_focus();
+    #[cfg(target_os = "macos")]
+    crate::macos::parent_chat(&app, true)?;
+    win.show().map_err(|e| e.to_string())?;
+    win.set_focus().map_err(|e| e.to_string())?;
     broadcast_open(&app, &runtime, true);
     Ok(())
 }
@@ -253,8 +270,10 @@ pub fn show_chat(
 /// 隐藏 chat 窗口（保留页面状态）；广播关闭状态并复位 busy/typing。
 #[tauri::command]
 pub fn hide_chat(app: AppHandle, runtime: State<ChatRuntimeState>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::macos::parent_chat(&app, false)?;
     if let Some(w) = app.get_webview_window("chat") {
-        let _ = w.hide();
+        w.hide().map_err(|e| e.to_string())?;
     }
     broadcast_open(&app, &runtime, false);
     Ok(())
@@ -348,6 +367,10 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
         WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } if label == "pet" => {
             position_chat(app, app.state::<ChatAnchorState>().inner());
         }
+        #[cfg(target_os = "macos")]
+        WindowEvent::ScaleFactorChanged { .. } if label == "chat" => {
+            position_chat(app, app.state::<ChatAnchorState>().inner());
+        }
         WindowEvent::Destroyed if label == "chat" => {
             broadcast_open(app, app.state::<ChatRuntimeState>().inner(), false);
         }
@@ -364,6 +387,9 @@ const FOOT_OFFSET_CSS: f64 = 56.0;
 fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let Some(chat) = app.get_webview_window("chat") else { return };
     let Some(pet) = current_anchor(app, anchor) else { return };
+    #[cfg(target_os = "macos")]
+    let scale = 1.0;
+    #[cfg(not(target_os = "macos"))]
     let scale = app.get_webview_window("pet").and_then(|pet| pet.scale_factor().ok()).unwrap_or(1.0);
     let (w_css, default_h_css) = chat_size_for_pet(pet.w as f64 / scale);
     let h_css = app
@@ -375,6 +401,14 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let h = (h_css * scale).round().max(1.0) as i32;
     let foot = (FOOT_OFFSET_CSS * scale).round() as i32;
     let (x, y) = chat_position(pet, w, h, foot, pet_monitor_work_area(app));
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = crate::macos::set_frame(&chat, crate::geometry::Rect {
+            x: x as f64, y: y as f64, width: w as f64, height: h as f64,
+        }) { eprintln!("[chat] set logical bounds failed: {error}"); }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     // 无变化不触碰窗口：每次 set_size/set_position 都会触发 webview 重合成。
     // 布局上报（翻页/打字/图片载入）、锚点同步、打开窗口大多带着未变的几何
     // 进来，照单全收就是用户看到的「刷新状态就闪」。chat 是无边框窗，
@@ -402,16 +436,24 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
             Err(error) => eprintln!("[chat] get window handle failed: {error}"),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         if need_size { let _ = chat.set_size(PhysicalSize::new(w as u32, h as u32)); }
         if need_pos { let _ = chat.set_position(PhysicalPosition::new(x, y)); }
+    }
     }
 }
 
 /// pet 所在显示器的工作区（物理像素）；取不到时返回 None（不做上下翻转避让）。
 fn pet_monitor_work_area(app: &AppHandle) -> Option<WorkRect> {
     let pet = app.get_webview_window("pet")?;
+    #[cfg(target_os = "macos")]
+    {
+        let wa = crate::macos::geometry(&pet).ok()?.monitor?.work_area;
+        Some(WorkRect { x: wa.x.round() as i32, y: wa.y.round() as i32, w: wa.width.round() as i32, h: wa.height.round() as i32 })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     let monitor = pet.current_monitor().ok().flatten()?;
     let wa = monitor.work_area();
     Some(WorkRect {
@@ -420,6 +462,7 @@ fn pet_monitor_work_area(app: &AppHandle) -> Option<WorkRect> {
         w: wa.size.width as i32,
         h: wa.size.height as i32,
     })
+    }
 }
 
 /// 优先用前端显式上报的锚点；从未上报时回退为原生查询 pet 窗口外接矩形。
@@ -429,7 +472,12 @@ fn current_anchor(app: &AppHandle, anchor: &ChatAnchorState) -> Option<PetAnchor
     // pet 是无边框窗口，Win32 GetWindowRect 一次取得原点和尺寸，避免混合两次查询。
     #[cfg(windows)]
     let result = pet.hwnd().map_err(|e| e.to_string()).and_then(|hwnd| read_window_rect(hwnd.0 as _));
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let result = crate::macos::geometry(&pet).map(|geometry| {
+        let r = geometry.outer;
+        PetAnchor { x: r.x.round() as i32, y: r.y.round() as i32, w: r.width.round() as i32, h: r.height.round() as i32 }
+    });
+    #[cfg(not(any(windows, target_os = "macos")))]
     let result = (|| -> Result<PetAnchor, String> {
         let pos = pet.outer_position().map_err(|e| e.to_string())?;
         let size = pet.inner_size().map_err(|e| e.to_string())?;
@@ -460,8 +508,7 @@ fn broadcast_open(app: &AppHandle, runtime: &ChatRuntimeState, open: bool) {
             .unwrap_or((false, false))
     } else {
         if let Ok(mut r) = runtime.lock() {
-            r.busy = false;
-            r.typing = false;
+            r.closed();
         }
         (false, false)
     };
@@ -481,6 +528,22 @@ fn chat_is_open(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pet_restore_consumes_saved_chat_visibility_and_user_close_cancels_it() {
+        let mut state = ChatRuntime::default();
+        assert!(!state.take_restore());
+        state.remember_visibility(true);
+        assert!(state.take_restore());
+        assert!(!state.take_restore(), "unrelated reopen must not bring back a closed chat");
+        state.remember_visibility(true);
+        state.busy = true; state.typing = true;
+        state.closed();
+        assert!(!state.take_restore());
+        assert!(!state.busy && !state.typing);
+        state.remember_visibility(false);
+        assert!(!state.take_restore());
+    }
 
     /// 模拟 pet 窗口：512x768 物理。
     const PET: PetAnchor = PetAnchor {
