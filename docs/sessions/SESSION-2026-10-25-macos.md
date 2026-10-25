@@ -71,3 +71,14 @@
 - Universal 产物：`npm run validate:mac -- ".../Aliya Pet.app"` 通过，确认 `arm64 + x86_64`、macOS 14.4、ad-hoc 签名。
 - DMG：`hdiutil verify` 通过，checksum 有效。
 - 未执行：应用 GUI 启动、`open`、复制到 Applications、登录自启/LaunchAgent、`launchctl`、Gatekeeper 放行、跨屏/Spaces/输入法实机操作。
+
+## osascript 实机启动记录（2026-10-26）
+
+用户授权启动已构建的 Universal `.app`，本轮使用 `/usr/bin/osascript` 控制，不执行自启动测试。
+
+- 通过 Finder AppleScript 打开：`redesign/src-tauri/target/universal-apple-darwin/release/bundle/macos/Aliya Pet.app`。
+- 启动等待 8 秒后，System Events 确认进程存在：`running=true`，应用窗口数 `1`，应用菜单项数 `7`。
+- 读取到桌宠窗口：标题 `Aliya Pet`，尺寸 `512×768`；说明 WebView 窗口已创建。
+- 读取到应用菜单包含 `About Aliya Pet`、`Hide Aliya Pet`、`Quit Aliya Pet` 等标准 macOS 菜单项。
+- 通过 `tell application "Aliya Pet" to quit` 退出；退出后 `aliya-pet` 进程不存在。
+- 未执行：登录自启、LaunchAgent、`launchctl`、安装到 Applications、Gatekeeper 放行、跨屏/Spaces/输入法验收。
