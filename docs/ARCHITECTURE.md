@@ -106,4 +106,4 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 悬浮窗触发      | Windows 常驻小窗；macOS 常驻桌宠             | 退后台自动转悬浮窗（可关）             |
 | 聊天            | `chat` 跟随 pet；`records` 为独立窗          | 主界面 ChatView + 记录/设置页面栈；悬浮无聊天 |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
-| 自启            | Windows 注册表 Run；macOS LaunchAgent 待接入 | BootReceiver (+ 悬浮窗权限门槛)        |
+| 自启            | Windows 注册表 Run；macOS 用户级 LaunchAgent | BootReceiver (+ 悬浮窗权限门槛)        |
