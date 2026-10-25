@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aliya Pet",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "identifier": "top.liminalselves.aliyapet",
   "build": {
     "beforeDevCommand": {
@@ -75,6 +75,16 @@
     "targets": "all",
     "icon": [
       "icons/tray.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/tray.ico",
+        "uninstallerIcon": "icons/tray.ico",
+        "languages": ["SimpChinese"]
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
   }
 }

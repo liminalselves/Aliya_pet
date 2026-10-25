@@ -703,7 +703,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const div = document.createElement('div');
   div.className = 'about';
   div.innerHTML =
-    `<b>Aliya Pet</b> v0.2.0（${platform === 'android' ? 'Android' : 'Windows'}）<br>` +
+    `<b>Aliya Pet</b> v${__APP_VERSION__}（${platform === 'android' ? 'Android' : 'Windows'}）<br>` +
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
@@ -711,7 +711,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   repo.className = 'act wide';
   repo.textContent = '打开项目仓库';
   repo.addEventListener('click', () => {
-    openUrl('https://github.com/w5731/Aliya_pet');
+    openUrl('https://github.com/liminalselves/Aliya_pet');
   });
   box.appendChild(repo);
 }

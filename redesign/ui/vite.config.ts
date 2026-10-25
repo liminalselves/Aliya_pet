@@ -1,10 +1,17 @@
 import { defineConfig } from 'vite';
 import path from 'path';
+import fs from 'fs';
+
+const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'));
 
 export default defineConfig({
   root: '.',
   base: '/',
   publicDir: 'assets',
+  define: {
+    // 构建期注入版本号，唯一来源为 ui/package.json（设置页「关于」展示）
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   server: {
     port: 5175,
     strictPort: true,

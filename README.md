@@ -4,7 +4,7 @@
 
 <!-- Badge Row 1: Core Info -->
 [![GitHub](https://img.shields.io/badge/GitHub-liminalselves%2FAliya__pet-181717?logo=github&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
-[![Version](https://img.shields.io/badge/version-3.0.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
 
 <!-- Badge Row 2: Platform -->
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
@@ -67,9 +67,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 | Node.js | Vite 8 要求 `^20.19.0 || >=22.12.0`；推荐 Node.js 24 LTS |
 | Rust + cargo | Windows 壳（Tauri） |
 | Android SDK | platform 36 + JDK 17/21（构建 APK） |
-| Live2D Cubism Web SDK | 5-r.5，需手动准备，见下 |
+| Live2D Cubism Web SDK | 5-r.5，已随仓库入库 |
 
-> **Live2D SDK 准备**：Cubism 组件有许可限制、不入库。请从 Live2D 官网下载 Cubism Web SDK 5-r.5，取其中的 `Framework/` 与 `Core/` 放到 `third_party/cubism-web-sdk/` 下，构建依赖其中的 `@framework/*` 别名与 `live2dcubismcore.js`。详见 `docs/BUILD.md`。
+> **Live2D SDK**：Cubism 组件（`third_party/cubism-web-sdk/`，仅 Framework + Core，约 1.3MB）已随仓库入库，clone 后即可构建，详见 `docs/BUILD.md`。
 
 ### Windows
 
@@ -89,8 +89,8 @@ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
 ```
 
 打包安装版：`cd redesign && npm run build`。Tauri 会先自动构建共享前端，
-默认连接 `https://misskey.liminalselves.top`（详见 `docs/BUILD.md`，含 SDK 依赖准备）。
-产物：`redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_*.exe`。
+默认连接 `https://misskey.liminalselves.top`（详见 `docs/BUILD.md`，SDK 已随仓库入库）。
+产物：`redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<版本>_x64-setup.exe`（另有同版本 MSI）。两种安装器均为简体中文，NSIS 安装器与卸载器使用 Aliya 图标。
 
 ### Android
 
@@ -108,7 +108,7 @@ gradlew.bat assembleDebug            # 或 assembleRelease
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先** `ui:build`。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
+> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先** `ui:build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
 
 ## 项目结构
 
@@ -130,7 +130,7 @@ redesign/                    # 重写版（当前主产品）
 ├── android/                 # Android 壳（Kotlin）：Activity / 悬浮窗服务 / JS 桥
 └── tools/                   # 动作 / 表情生成脚本（入库）与 CDP 调试脚本（未入库）
 
-third_party/cubism-web-sdk/  # Live2D Cubism Web SDK（Framework + Core，官方包，不入库）
+third_party/cubism-web-sdk/  # Live2D Cubism Web SDK（Framework + Core，已入库）
 docs/                        # 架构、构建、Android、聊天、动作接入等文档
 ```
 
@@ -140,7 +140,7 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 - **共享前端**：TypeScript + Vite；Pointer Events 统一桌面鼠标与触摸输入。
 - **Windows 壳**：Tauri 2 + WebView2，透明置顶窗、托盘、注册表自启；后台线程轮询光标位置实现透明区域鼠标穿透。
 - **Android 壳**：Kotlin + 系统 WebView（`WebViewAssetLoader` 提供同源资源），`MainActivity`（App 内）+ `PetOverlayService`（前台服务悬浮窗）+ `ShellBridge` JS 桥 + `BootReceiver` 自启。
-- **布局适配**：复刻旧版包围盒 fit 算法，避免官方 canvas fit 使角色缩小；渲染余量 1.22（按当前模型与自编动作实测）。
+- **布局适配**：按模型包围盒适配窗口；动作渲染余量与测量依据见 `docs/ACTIONS.md`。
 - **包名**：双端统一为 `top.liminalselves.aliyapet`。
 
 更多实现细节见 `docs/ARCHITECTURE.md`。
@@ -153,6 +153,8 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 | `docs/BUILD.md` | Windows / Android 构建、依赖与调试工具 |
 | `docs/ANDROID.md` | Android 壳设计（悬浮窗 / 前台服务 / JS 桥 / 权限） |
 | `docs/CHAT.md` | 聊天系统（Misskey 智能体、会话与八面板托管） |
+| `docs/PERFORMANCE.md` | 表演指令协议（`[[agent_cue]]`，AI 回复驱动表情/动作） |
+| `docs/INTERACTION.md` | 普通互动规则（操作约定、手势生命周期与互斥） |
 | `docs/ACTIONS.md` | 动作接入指南（自编动作工程约束 + 余量重新测量） |
 | `docs/MODEL.md` | 模型能力图谱（参数表 / 物理链 / 值域坑） |
 | `docs/AI-API.md` | PetAI 对外接口（表情 / 情绪 / 动作 / 视线 + 事件总线） |
@@ -160,13 +162,13 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 
 ## 动作库与资源
 
-- **动作库**：9 个动作（摇摆、点头、摇头、疑惑、挥手、伸展、生气、打哈欠、走路）是为当前 Aliya 模型自编的 motion3.json，由 `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。
+- **动作库**：10 个动作（摇摆、点头、摇头、疑惑、挥手、伸展、生气、打哈欠、开心雀跃、撒娇）是为当前 Aliya 模型自编的 motion3.json，由 `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。
 - **表情与情绪**：12 个 exp3.json 表情（`gen-expressions.py` 生成）+ 情绪引擎（心境 → 默认表情、动作选择加权、自然衰减），经 `window.petAI` 语义 API 暴露给 AI / 自动化（见 `docs/AI-API.md`）；设置窗口有对应的「表情与情绪」控制面板（表情预览 / 情绪切换，与 AI 共享状态源）。
 
 ## 许可与声明
 
 - 本仓库当前**未附带开源许可证文件**；使用与分发前请先与作者确认授权范围。
-- **Live2D Cubism SDK**（Core / Framework）受 Live2D 许可协议约束，不随本仓库分发，需自行从官网下载。
+- **Live2D Cubism SDK**（Core / Framework）随仓库提供，使用与分发须遵守 `third_party/cubism-web-sdk/` 内的许可及声明。
 - 本程序为**二创桌宠**，角色 Aliya 原创出自《彼方的她》（Liminal Selves），版权归原作者所有。
 
 ## English
@@ -222,9 +224,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 | Node.js | Vite 8 requires `^20.19.0 || >=22.12.0`; Node.js 24 LTS recommended |
 | Rust + cargo | Windows shell (Tauri) |
 | Android SDK | platform 36 + JDK 17/21 (APK build) |
-| Live2D Cubism Web SDK | 5-r.5, prepare manually (see below) |
+| Live2D Cubism Web SDK | 5-r.5, committed to the repo |
 
-> **Preparing the Live2D SDK**: the Cubism components are license-restricted and not committed. Download the Cubism Web SDK 5-r.5 from the Live2D website and place its `Framework/` and `Core/` under `third_party/cubism-web-sdk/`. The build depends on the `@framework/*` alias and `live2dcubismcore.js`. See `docs/BUILD.md`.
+> **Live2D SDK**: the Cubism components (`third_party/cubism-web-sdk/`, Framework + Core only, ~1.3MB) are committed to the repository — a plain clone is enough to build. See `docs/BUILD.md`.
 
 #### Windows
 
@@ -243,8 +245,8 @@ npm run dev -- http://127.0.0.1:3000
 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
 ```
 
-Release build: `cd redesign && npm run build`. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`, which also covers SDK setup).
-Artifact: `redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_*.exe`.
+Release build: `cd redesign && npm run build`. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`; the SDK is committed to the repo).
+Artifact: `redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<version>_x64-setup.exe` (plus an MSI of the same version). Both installers use Simplified Chinese; the NSIS installer and uninstaller use the Aliya icon.
 
 #### Android
 
@@ -262,7 +264,7 @@ gradlew.bat assembleDebug            # or assembleRelease
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `ui:build` first. On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
+> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `ui:build` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
 
 ### Project Structure
 
@@ -284,7 +286,7 @@ redesign/                    # The rewrite (current main product)
 ├── android/                 # Android shell (Kotlin): Activity / overlay service / JS bridge
 └── tools/                   # Motion/expression generators (committed) + CDP debug scripts (not committed)
 
-third_party/cubism-web-sdk/  # Live2D Cubism Web SDK (Framework + Core, official package, not committed)
+third_party/cubism-web-sdk/  # Live2D Cubism Web SDK (Framework + Core, committed)
 docs/                        # Architecture, build, Android, chat and motion-integration docs
 ```
 
@@ -294,7 +296,7 @@ docs/                        # Architecture, build, Android, chat and motion-int
 - **Shared frontend**: TypeScript + Vite; Pointer Events unify desktop mouse and touch input.
 - **Windows shell**: Tauri 2 + WebView2 — transparent always-on-top window, tray, registry auto-start; a background thread polls the cursor position for click-through over transparent areas.
 - **Android shell**: Kotlin + system WebView (`WebViewAssetLoader` serves same-origin assets), `MainActivity` (in-app) + `PetOverlayService` (foreground-service overlay) + `ShellBridge` JS bridge + `BootReceiver` auto-start.
-- **Layout adaptation**: replicates the legacy bounding-box fit algorithm to avoid the official canvas fit shrinking the character; render margin 1.22 (measured on the current model and self-authored motions).
+- **Layout adaptation**: fits the model's bounding box to the window. See `docs/ACTIONS.md` for motion render margins and measurement evidence.
 - **Package name**: unified as `top.liminalselves.aliyapet` on both platforms.
 
 See `docs/ARCHITECTURE.md` for more implementation details.
@@ -307,6 +309,8 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 | `docs/BUILD.md` | Windows / Android builds, dependencies and debug tooling |
 | `docs/ANDROID.md` | Android shell design (overlay / foreground service / JS bridge / permissions) |
 | `docs/CHAT.md` | Chat system (Misskey agent, sessions and eight-panel managed config) |
+| `docs/PERFORMANCE.md` | Performance-cue protocol (`[[agent_cue]]`, AI-reply-driven expressions/motions) |
+| `docs/INTERACTION.md` | Local interaction rules (gestures, lifecycles and mutual exclusion) |
 | `docs/ACTIONS.md` | Motion integration guide (self-authored motion constraints + re-measuring the margin) |
 | `docs/MODEL.md` | Model capability map (parameters / physics chains / value-range pitfalls) |
 | `docs/AI-API.md` | PetAI external API (expressions / emotion / motions / gaze + event bus) |
@@ -314,11 +318,11 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 
 ### Motion Library & Assets
 
-- **Motions**: the 9 motions under `redesign/ui/assets/live2d/aliya/motions/` (sway, nod, shake, doubt, wave, stretch, angry, yawn, walk) are motion3.json files authored for the current Aliya model, generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`).
+- **Motions**: the 10 motions under `redesign/ui/assets/live2d/aliya/motions/` (sway, nod, shake, doubt, wave, stretch, angry, yawn, cheerful bounce, shy sway) are motion3.json files authored for the current Aliya model, generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`).
 - **Expressions & emotion**: 12 exp3.json expressions (generated by `gen-expressions.py`) plus an emotion engine (mood → default expression, weighted motion selection, natural decay), exposed to AI/automation via the `window.petAI` semantic API (see `docs/AI-API.md`); the settings window has a matching "Expressions & Emotion" panel.
 
 ### License & Notices
 
 - This repository currently ships **without an open-source license file**; please confirm the scope of authorization with the author before use or distribution.
-- The **Live2D Cubism SDK** (Core / Framework) is governed by the Live2D license and is not distributed with this repository; download it from the official website yourself.
+- The **Live2D Cubism SDK** (Core / Framework) is included in this repository. Use and redistribution are subject to the licenses and notices under `third_party/cubism-web-sdk/`.
 - This program is a **fan-made (derivative) desktop pet**. The character Aliya originates from *Liminal Selves* (《彼方的她》); all rights belong to the original creators.

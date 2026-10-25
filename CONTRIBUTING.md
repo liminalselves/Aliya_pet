@@ -11,6 +11,7 @@
 ## 任务分支
 
 - 日常开发从 `develop` 拉出，命名 `feature/<主题>`、`fix/<问题>`、`docs/<主题>` 等
+- 发布准备从 `develop` 拉出 `release/<版本号>`（如 `release/v0.1.0`），完成后合回 `develop` 并走 PR 合入 `master`
 - 需要基于稳定版本的工作（如线上修复）从 `master` 拉出，合并回 `master` 后再同步进 `develop`
 - 任务分支保持短生命周期，合并后删除远端和本地分支
 

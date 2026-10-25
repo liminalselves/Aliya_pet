@@ -1,0 +1,150 @@
+name: release
+
+# 推送 v* 标签且指向 master 时：构建 Windows 安装包与 Android 签名 APK，附到 GitHub Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag-on-master:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 校验 tag 指向 master
+        run: |
+          git fetch origin master
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "tag ${GITHUB_REF_NAME} 在 master 上"
+          else
+            echo "::error::tag ${GITHUB_REF_NAME} 不在 master 分支上，跳过发布构建"
+            exit 1
+          fi
+      - name: 校验标签与包内版本一致
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          expected = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          versions = {}
+          for name in ('redesign/package.json', 'redesign/ui/package.json', 'redesign/src-tauri/tauri.conf.json'):
+              versions[name] = json.loads(Path(name).read_text(encoding='utf-8'))['version']
+          for name in ('redesign/package-lock.json', 'redesign/ui/package-lock.json'):
+              data = json.loads(Path(name).read_text(encoding='utf-8'))
+              versions[name] = data['version']
+              versions[name + ' root'] = data['packages']['']['version']
+          versions['Cargo.toml'] = tomllib.loads(Path('redesign/src-tauri/Cargo.toml').read_text(encoding='utf-8'))['package']['version']
+          android = Path('redesign/android/app/build.gradle.kts').read_text(encoding='utf-8')
+          versions['Android'] = re.search(r'versionName\s*=\s*"([^"]+)"', android).group(1)
+          for name, version in versions.items():
+              if version != expected:
+                  raise SystemExit(f'::error::{name}: {version} != tag version {expected}')
+          print(f'All package versions match tag: {expected}')
+          PY
+
+  build-windows:
+    needs: tag-on-master
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装依赖
+        run: npm ci
+        working-directory: redesign
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: redesign/ui
+      - name: 构建（NSIS + MSI）
+        run: npm run build
+        working-directory: redesign
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            redesign/src-tauri/target/release/bundle/nsis/*.exe
+            redesign/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  build-android:
+    needs: tag-on-master
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: 构建共享前端
+        run: |
+          npm ci
+          npm run build
+        working-directory: redesign/ui
+      - name: 写入签名配置
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::缺少签名 secrets：ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD（配置说明见 docs/BUILD.md）"
+            exit 1
+          fi
+          mkdir -p redesign/android/keystore
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > redesign/android/keystore/aliyapet-release.jks
+          {
+            echo "storeFile=keystore/aliyapet-release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > redesign/android/keystore.properties
+      - name: 构建 APK
+        working-directory: redesign/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --console=plain
+      - name: 整理产物
+        run: cp redesign/android/app/build/outputs/apk/release/app-release.apk "AliyaPet_${GITHUB_REF_NAME}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: AliyaPet_*.apk
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: 附到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            find dist -type f -print0 | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber -R "$GITHUB_REPOSITORY"
+          else
+            find dist -type f -print0 | xargs -0 gh release create "$GITHUB_REF_NAME" --generate-notes --title "Aliya Pet ${GITHUB_REF_NAME#v}" -R "$GITHUB_REPOSITORY"
+          fi

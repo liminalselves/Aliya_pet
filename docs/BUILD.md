@@ -17,8 +17,14 @@ Cubism Web SDK（官方包，只保留 Framework + Core，约 1.3MB）位于
 - `Framework/` —— 前端构建的 `@framework/*` 别名目标（tsconfig paths + vite alias）
 - `Core/live2dcubismcore.js` —— 闭源渲染内核，拷贝到 `ui/assets/core/` 随构建进 dist
 
-该目录暂不入库。换机器时从 Live2D 官网下载 Cubism SDK（Web），
-取其中的 `Framework/` 与 `Core/` 放到 `third_party/cubism-web-sdk/` 即可。
+该目录已入库（Framework 为开源代码、Core 许可允许随产品再分发），
+clone 后即可构建，无需手动准备。
+
+## 图标资源
+
+- Windows 窗口、托盘及安装包共用 `redesign/src-tauri/icons/tray.ico`（16–256px）；NSIS 的 `installerIcon` / `uninstallerIcon` 显式指向该文件。`build.rs` 监听图标变化，更新后运行正常发布构建即可重新嵌入。
+- Android 启动图标位于 `res/mipmap-*`；自适应前景保留底图完整构图，缩放到 108dp 画布中央的 72dp 区域，由系统应用遮罩。通知小图标为 `res/drawable/ic_notification.xml` 的单色 A。
+- 四个 Web 页面共用 `redesign/ui/assets/icon.png`。
 
 ## Windows（Tauri）
 
@@ -111,6 +117,27 @@ gradlew.bat assembleRelease
 丢失后无法为后续更新出同签名包，用户只能卸载重装（丢设置与 Misskey 授权）。
 debug 与 release 签名不同，从 debug 覆盖装 release 前必须先卸载。
 
+## 发布构建（GitHub Actions）
+
+推送 `v*` 标签且指向 master 时，`.github/workflows/release.yml` 自动：
+校验 tag 在 master 上且与各端包内版本一致 → 构建 Windows 安装包（NSIS + MSI）与 Android 签名 APK →
+附到对应 tag 的 GitHub Release（也可在 Actions 页下载 artifact）。
+
+Android 签名需在仓库 Settings → Secrets and variables → Actions 配置：
+
+| Secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `aliyapet-release.jks` 的 base64 |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
+| `ANDROID_KEY_ALIAS` | 密钥别名 |
+| `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+生成 base64（PowerShell）：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("aliyapet-release.jks"))
+```
+
 ## 调试工具（redesign/tools/）
 
 基于 CDP（Tauri 用 `--remote-debugging-port=9333`；Android 用
@@ -134,3 +161,8 @@ powershell -File tools/measure-cpu.ps1
 
 页面也支持 `?platform=android` 强制以 Android 模式运行（配合在控制台
 注入 mock 的 `window.AndroidShell` 可无真机验证 Android 分支）。
+
+可视化调试页在 `redesign/ui/tests/`（`npm run dev` 后直接访问）：
+`visual-regression.html`（关键交互逐帧对照）、
+`face-probe.html?transition=1`（表情切换逐帧）、
+`face-probe.html?expressions=1`（12 种表情对照）。
