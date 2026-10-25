@@ -160,7 +160,7 @@
       capture(`表情 ${name}`);
     }
 
-    for (const name of ['nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn', 'walk']) {
+    for (const name of ['nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn']) {
       reset();
       pet.playAction(name);
       step(45);
@@ -169,7 +169,7 @@
 
     reset();
     const expressions = pet.getExpressionNames().filter((name) => name !== 'neutral');
-    const actions = ['nod', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn', 'walk'];
+    const actions = ['nod', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn'];
     let maxMotionQueue = 0;
     let maxExpressionQueue = 0;
     for (let frame = 0; frame < 180; frame++) {

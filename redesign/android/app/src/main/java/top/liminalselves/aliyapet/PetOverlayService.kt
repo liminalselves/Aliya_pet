@@ -239,7 +239,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_pet_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.overlay_notif_title))
             .setContentText(getString(R.string.overlay_notif_text))
             .setContentIntent(contentPi)

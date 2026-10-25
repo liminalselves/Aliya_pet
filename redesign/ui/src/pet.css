@@ -4,6 +4,25 @@
  */
 @import './styles/tokens.css';
 
+/* 启动故障可见且可重试；不遮挡整窗，错误文本只以纯文本显示。 */
+.pet-startup-notice {
+  position: fixed;
+  inset: 8px 8px auto;
+  z-index: 100;
+  max-height: calc(100% - 16px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--al-line-strong);
+  border-radius: var(--al-r-m);
+  background: var(--al-surface-card-strong);
+  color: var(--al-text-1);
+  font: 12px/1.5 var(--al-font-serif);
+  overflow-wrap: anywhere;
+}
+.pet-startup-notice p { margin: 0 0 6px; }
+.pet-startup-notice button { cursor: pointer; }
+
 /* 贴边完成后短暂提示，不改变拖动中的视觉与命中区域。 */
 body::after {
   content: "";

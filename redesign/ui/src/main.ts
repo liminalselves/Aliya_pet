@@ -1,4 +1,5 @@
 import { PetApp } from './pet-app';
+import { showStartupNotice } from './startup-notice';
 import './pet.css';
 
 /**
@@ -29,17 +30,20 @@ function startWhenCoreReady(): void {
     '[pet] cubism core ready, version =',
     Live2DCubismCore.Version.csmGetVersion()
   );
-  const app = new PetApp();
-  app.initialize();
-  app.loadModel('/live2d/aliya/16.model3.json');
-  // 调试句柄（CDP 验证用）
-  (window as unknown as Record<string, unknown>).__pet = app;
-  // 安卓设置页（第二 WebView）经壳桥转发的实时设置
-  (window as unknown as Record<string, unknown>).__applySettingsFromAndroid = (
-    s: unknown
-  ) => {
-    if (s && typeof s === 'object') app.applySettings(s as never, false);
-  };
+  void (async () => {
+    const app = new PetApp();
+    if (!app.initialize()) throw new Error('WebGL2 初始化失败');
+    // 在异步加载之前暴露桥接入口，让启动期间的操作也能排队。
+    (window as unknown as Record<string, unknown>).__pet = app;
+    (window as unknown as Record<string, unknown>).__applySettingsFromAndroid = (s: unknown) => {
+      if (s && typeof s === 'object') app.applySettings(s as never, false);
+    };
+    await app.loadModel('/live2d/aliya/16.model3.json');
+  })().catch(error => {
+    console.error('[pet] startup failed', error);
+    showStartupNotice('pet-startup-error', '桌宠启动失败，请重新加载重试。', error,
+      async () => { window.location.reload(); });
+  });
 }
 
 startWhenCoreReady();

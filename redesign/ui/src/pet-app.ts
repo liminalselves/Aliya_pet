@@ -9,6 +9,7 @@ import { InteractionCoordinator, type SpeechSource } from './interaction/coordin
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
 import { HitAreas } from './interaction/hit-areas';
+import { showStartupNotice } from './startup-notice';
 import { InteractionService } from './interaction/interaction';
 import { PointerContext } from './interaction/petting-recognizer';
 import { BehaviorService } from './behavior';
@@ -23,13 +24,13 @@ import {
 } from './settings';
 import {
   platform,
-  isTouchDevice,
   androidShell,
   isAndroidOverlay,
 } from './platform';
 
 /** Tauri 窗口句柄（浏览器环境为 null，拖动退化为不可用）。 */
 type TauriWindow = import('@tauri-apps/api/window').Window;
+type ShellAction = { action: string; value?: boolean; name?: string; duration?: number };
 
 /**
  * 应用外壳：WebGL 画布、渲染循环（帧率上限）、模型装配与投影、
@@ -52,6 +53,12 @@ export class PetApp {
 
   // 逻辑层
   private _dialogue = new DialogueStore();
+  /** 监听先于资源加载；依赖模型/台词的操作在完整装配后按接收顺序执行。 */
+  private _pendingShellActions: ShellAction[] = [];
+  private _shellActionsReady = false;
+  private _settingsSyncTask: Promise<void> | null = null;
+  private _settingsSyncListeners = new Set<string>();
+  private _shellSyncNotice: HTMLElement | null = null;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
   private _interaction: InteractionService = null;
@@ -68,6 +75,17 @@ export class PetApp {
   private _chatView: ChatView | null = null;
   private _chatPerformance: ChatPerformance | null = null;
   private _windowSettingsRevision = 0;
+  /** 尺寸与位置必须成对完成；队列中尚未开始的旧请求可合并跳过。 */
+  private _windowSettingsTask: Promise<void> = Promise.resolve();
+  private _windowGeometryPending = 0;
+  private _windowGeometryRevision = 0;
+  private _windowPositionRevision = 0;
+  private _windowPositionKind: 'move' | 'reset' = 'move';
+  /** 原生 resize 已发生但补偿失败时保留债务；下一次用户操作先完成它，不盲目重试。 */
+  private _windowResizeRecovery: ((publish?: boolean) => Promise<void>) | null = null;
+  private _windowGeometryError: unknown = null;
+  /** 保留原生窗口整数坐标舍去的亚像素，避免反复缩放累积漂移。 */
+  private _windowResizeRemainder = { x: 0, y: 0 };
   private _coordination = new InteractionCoordinator(() => ({
     interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
     speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
@@ -81,6 +99,7 @@ export class PetApp {
   private _winPhysY = 0;
   private _scaleFactor = 1;
   private _metricsSynced = false;
+  private _chatAnchorRevision = 0;
   private _windowMoveTask: Promise<void> | null = null;
 
   /** 悬浮窗内容贴合模式：固定尺寸窗口 + 像素掩码穿透（透明区域不挡下层触摸）。 */
@@ -118,6 +137,8 @@ export class PetApp {
   private _hitMaskData: Uint8Array = new Uint8Array(0);
   private _hitMaskRows = 0;
   private _hitMaskLastMs = 0;
+  private _hitMaskSentMs = 0;
+  private _hitMaskGeometry = '';
   private _hitMaskSend: ((args: Record<string, unknown>) => void) | null = null;
   private _hitMaskInteracting = false;
 
@@ -125,6 +146,7 @@ export class PetApp {
   private _settings: PetSettings = loadSettings();
 
   // 指针状态
+  private _activePointerId: number | null = null;
   private _leftDown = false;
   private _dragCandidate = false;
   private _dragging = false;
@@ -147,12 +169,11 @@ export class PetApp {
   private static readonly _snapZonePx = 48;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.22。
-   * Aliya 自编动作（tools/gen-motions.py）实测最差帧：水平 maxX 0.374 /
-   * 垂直 maxY 0.517（模型单位，静态包围盒 0.636×1.011）；需求 水平 1.156 /
-   * 垂直 1.023，1.22 = 最差 1.156 × 1.05 安全余量（测量方法见 docs/ACTIONS.md）。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.30，不改变用户窗口缩放设置。
+   * 正式 Core 的新动作×表情×极端注视/切换矩阵：需求 1.222872，
+   * 乘 1.05 安全系数后需 1.284015，向上取 1.30（测量方法见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.22;
+  private static readonly _renderMarginRatio = 1.30;
   /** 聊天入口与脚底的固定间隙（CSS px）。 */
   private static readonly _launcherGapCss = 6;
 
@@ -251,7 +272,10 @@ export class PetApp {
         this._tauriWindow.onMoved(() => {
           if (!this._dragging && !this._windowMoveTask) this._syncWindowMetrics();
         }).catch(() => {});
-        this._tauriWindow.onScaleChanged(() => this._syncWindowMetrics()).catch(() => {});
+        this._tauriWindow.onScaleChanged(({ payload }) => {
+          this._scaleFactor = payload.scaleFactor;
+          this._syncWindowMetrics();
+        }).catch(() => {});
       })
       .catch(() => {
         this._tauriWindow = null;
@@ -276,6 +300,20 @@ export class PetApp {
   }
 
   public async loadModel(model3JsonUrl: string): Promise<void> {
+    this._shellActionsReady = false;
+    // 先尝试安装监听；IPC 故障不应阻断本地模型和互动。
+    try {
+      await this._wireSettingsSync();
+      this._shellSyncNotice?.remove();
+      this._shellSyncNotice = null;
+    } catch (error) {
+      console.error('[pet] shell event registration failed', error);
+      this._shellSyncNotice = showStartupNotice('pet-shell-sync-error',
+        '设置/托盘同步暂不可用，桌宠本地互动仍可使用。', error, async () => {
+          await this._wireSettingsSync();
+          this._shellSyncNotice = null;
+        });
+    }
     const response = await fetch(model3JsonUrl);
     const buffer = await response.arrayBuffer();
     const homeDir = model3JsonUrl.substring(
@@ -339,7 +377,6 @@ export class PetApp {
 
     this._initializeChat();
     this._wirePointerEvents();
-    this._wireSettingsSync();
     this._startLoop();
     console.log('[pet] model + logic layer ready');
 
@@ -358,6 +395,7 @@ export class PetApp {
 
     // 启动时全量应用设置（含窗口位置/缩放/置顶恢复）
     this.applySettings(this._settings, true);
+    this._flushPendingShellActions();
   }
 
   // ---------- 设置 ----------
@@ -496,7 +534,7 @@ export class PetApp {
     }
   }
 
-  /** 托盘「切换尺寸」：在百分比域循环 10%→50%→100%（档位由设备范围换算，不会越界）。 */
+  /** 托盘「切换尺寸」：在设备范围内按最小→中点→最大等步长循环。 */
   private async _cycleSize(): Promise<void> {
     const { minS, maxS } = await this._deviceScaleRange();
     const next = nextSizePreset(this._settings.scale, minS, maxS);
@@ -510,8 +548,13 @@ export class PetApp {
    */
   public applySettings(s: PetSettings, restoreWindow = false): void {
     this._cancelSnapAnimation();
+    // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
+    if (!restoreWindow && this._settings) s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
     this._settings = s;
+    const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
+    const restoredPosition = restoreWindow && s.posX != null && s.posY != null
+      ? { x: s.posX, y: s.posY } : null;
     saveSettings(s);
 
     // 行为层
@@ -535,8 +578,9 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
-      import('@tauri-apps/api/window')
-        .then(async (m) => {
+      this._queueWindowGeometry(async () => {
+          if (revision !== this._windowSettingsRevision) return;
+          const m = await import('@tauri-apps/api/window');
           // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
           let mon: import('@tauri-apps/api/window').Monitor | null = null;
           try {
@@ -559,34 +603,96 @@ export class PetApp {
           const width = chatOpen ? Math.min(roomW, Math.max(680, baseW * scale)) : baseW * scale;
           const height = chatOpen ? Math.min(roomH, Math.max(560, Math.min(760, baseH * scale))) : baseH * scale;
           document.body.classList.toggle('chat-mobile', chatOpen && width < 580);
-          // 缩放时保持角色脚底中心不动：窗口向左右等量扩缩，底边保持原位。
-          // 启动恢复则以保存的位置为准，不做自动拉回屏幕。
-          const beforePos = await win.outerPosition().catch((): null => null);
-          const beforeSize = await win.outerSize().catch((): null => null);
-          await win.setSize(new m.LogicalSize(width, height)).catch((): void => {});
+          // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
+          const beforePos = await win.outerPosition();
+          const beforeSize = await win.innerSize();
           if (revision !== this._windowSettingsRevision) return;
-          let target: { x: number; y: number } | null = null;
-          if (restoreWindow && s.posX != null && s.posY != null) {
-            target = { x: s.posX, y: s.posY };
-          } else if (beforePos && beforeSize) {
-            const afterSize = await win.outerSize().catch((): null => null);
-            if (afterSize) target = {
-              x: Math.round(beforePos.x + (beforeSize.width - afterSize.width) / 2),
-              y: beforePos.y + beforeSize.height - afterSize.height,
+          // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
+          const mirror = s.mirror;
+          const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
+          const anchor = {
+            x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
+            y: beforePos.y + beforeFoot.y + this._windowResizeRemainder.y,
+          };
+          // 在调用前登记补偿：Promise 拒绝不代表原生尺寸没有改变。
+          this._windowResizeRecovery = async (publish = true) => {
+            const afterSize = await win.innerSize();
+            const sf = await win.scaleFactor();
+            const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
+            const target = restoredPosition ?? {
+              x: Math.round(anchor.x - afterFoot.x), y: Math.round(anchor.y - afterFoot.y),
             };
-          }
-          if (target) {
-            await win.setPosition(new m.PhysicalPosition(target.x, target.y)).catch(() => {});
-            this._winPhysX = target.x; this._winPhysY = target.y;
-            this._settings.posX = target.x; this._settings.posY = target.y;
-            saveSettings(this._settings);
-            // 缩放落定立刻用已知几何重报锚点：等 onMoved→_syncWindowMetrics 的
-            // 异步往返，chat 会在旧锚点上多停好几帧（大档位切换时肉眼可见）。
-            this._syncChatAnchor({ cssW: width, cssH: height, physX: target.x, physY: target.y });
-          }
-        })
-        .catch(() => {});
+            const current = await win.outerPosition();
+            if (current.x !== target.x || current.y !== target.y) {
+              await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
+            }
+            this._windowResizeRemainder = restoredPosition ? { x: 0, y: 0 } : {
+              x: anchor.x - target.x - afterFoot.x, y: anchor.y - target.y - afterFoot.y,
+            };
+            this._rebaseWindowPosition(target, beforePos, positionRevision);
+            this._scaleFactor = sf; this._metricsSynced = true;
+            this._windowResizeRecovery = null;
+            this._windowGeometryError = null;
+            if (publish && positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging &&
+                revision === this._windowSettingsRevision) this._persistDesktopPos();
+            if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
+          };
+          let resizeError: unknown;
+          try { await win.setSize(new m.LogicalSize(width, height)); }
+          catch (error) { resizeError = error; }
+          await this._windowResizeRecovery();
+          if (resizeError) throw resizeError;
+        }, 'Failed to apply pet window settings');
     }
+  }
+
+  /** 所有应用侧原生几何写入共用队列；已开始的副作用不能用 revision 丢弃。 */
+  private _queueWindowGeometry(operation: () => Promise<void>, label: string): Promise<void> {
+    this._windowGeometryPending = (this._windowGeometryPending ?? 0) + 1;
+    this._windowGeometryRevision = (this._windowGeometryRevision ?? 0) + 1;
+    const task = (this._windowSettingsTask ?? Promise.resolve()).then(async () => {
+      if (this._windowResizeRecovery) await this._windowResizeRecovery(false);
+      await operation();
+    }).catch(error => { this._windowGeometryError = error; console.warn(label, error); }).finally(() => { this._windowGeometryPending--; });
+    this._windowSettingsTask = task;
+    return task;
+  }
+
+  /** IPC 拒绝不能证明 Win32 副作用未发生；所有位置写入用读回确认统一处理。 */
+  private async _setWindowPositionVerified(position: import('@tauri-apps/api/window').PhysicalPosition): Promise<void> {
+    const win = this._tauriWindow;
+    if (!win) throw new Error('Pet window unavailable');
+    try { await win.setPosition(position); }
+    catch (error) {
+      const actual = await win.outerPosition();
+      if (actual.x !== position.x || actual.y !== position.y) throw error;
+      console.warn('Pet position IPC failed after native position was applied', error);
+    }
+    this._windowGeometryError = null;
+  }
+
+  /** 缩放/重置改变原点时，后到的拖动仍表示相同屏幕位移，不能退回旧原点。 */
+  private _rebaseWindowPosition(target: { x: number; y: number }, before: { x: number; y: number }, revision: number): void {
+    if (revision === (this._windowPositionRevision ?? 0)) {
+      this._winPhysX = target.x; this._winPhysY = target.y;
+    } else if (this._windowPositionKind === 'move') {
+      this._winPhysX += target.x - before.x; this._winPhysY += target.y - before.y;
+    }
+  }
+
+  /** 与 _render 相同的适配公式；输入、输出均为物理像素。 */
+  private _windowFootOffset(
+    size: { width: number; height: number }, mirror: boolean, chatOpen: boolean
+  ): { x: number; y: number } {
+    const ready = this._model?.isReady();
+    const bounds = ready ? this._model.getStaticBounds() : null;
+    const fitH = chatOpen && ready
+      ? Math.min(size.height, size.width / this._model.boundsAspect) : size.height;
+    const scale = fitH / PetApp._renderMarginRatio / (ready ? this._model.boundsH : 1);
+    return {
+      x: size.width / 2 + (bounds ? (bounds.minX + bounds.maxX) / 2 : 0) * scale * (mirror ? -1 : 1),
+      y: size.height / 2 - (bounds?.minY ?? -0.5) * scale,
+    };
   }
 
   /** 刷新壳侧屏幕尺寸缓存（CSS px；缩放和贴边共用）。 */
@@ -665,38 +771,45 @@ export class PetApp {
     this._canvas.style.transform = v ? 'scaleX(-1)' : '';
   }
 
-  /** 设置窗口/托盘事件接线。 */
-  private _wireSettingsSync(): void {
-    if (platform !== 'tauri') return;
-    import('@tauri-apps/api/event')
-      .then((ev) => {
-        // 设置窗口推送的全量设置
-        ev.listen<PetSettings>('settings-changed', (e) => {
+  /** 设置窗口/托盘事件接线；模型重载时复用注册任务，避免重复监听。 */
+  private _wireSettingsSync(): Promise<void> {
+    if (platform !== 'tauri') return Promise.resolve();
+    return this._settingsSyncTask ??= import('@tauri-apps/api/event').then(async (ev) => {
+      const installed = this._settingsSyncListeners ??= new Set<string>();
+      const listen = async <T>(name: string, handler: import('@tauri-apps/api/event').EventCallback<T>) => {
+        if (installed.has(name)) return;
+        try {
+          await ev.listen<T>(name, handler);
+          installed.add(name);
+        } catch (error) {
+          throw new Error(`${name}: ${String(error)}`);
+        }
+      };
+      // 等待全部结果，保留已成功的监听；重试只补装失败项。
+      const results = await Promise.allSettled([
+        listen<PetSettings>('settings-changed', (e) => {
           if (!e.payload || typeof e.payload !== 'object') return;
           this.applySettings(e.payload, false);
-        });
-        // 托盘/设置窗口动作
-        ev.listen<{
-          action: string;
-          value?: boolean;
-          name?: string;
-          duration?: number;
-        }>('tray-action', (e) => {
+        }),
+        listen<ShellAction>('tray-action', (e) => {
           const p = e.payload;
           if (!p || typeof p.action !== 'string') return;
           this.onShellAction(p);
-        });
+        }),
         // Rust 全局光标广播（物理 px）：光标不在窗口上时视线也要跟随
-        ev.listen<{ x: number; y: number }>('global-mouse', (e) => {
+        listen<{ x: number; y: number }>('global-mouse', (e) => {
           if (!this._behavior || this._wrapWindow) return;
           if (Number.isFinite(e.payload.x) && Number.isFinite(e.payload.y)) {
             this._globalMouse = e.payload;
           }
-        });
-      })
-      .catch(() => {
-        // 浏览器环境：无事件同步
-      });
+        }),
+      ]);
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    }).catch(error => {
+      this._settingsSyncTask = null;
+      throw error;
+    });
   }
 
   /** 向设置窗口广播当前设置（托盘改动后保持 UI 同步）。 */
@@ -715,12 +828,16 @@ export class PetApp {
    * Android 设置页经壳桥 notifyPetAction 转发（main.ts 暴露给
    * window.__pet.onShellAction）。
    */
-  public onShellAction(p: {
-    action: string;
-    value?: boolean;
-    name?: string;
-    duration?: number;
-  }): void {
+  public onShellAction(p: ShellAction): void {
+    if (!this._shellActionsReady && [
+      'open-chat', 'play-action', 'random-speech', 'express', 'clear-expression', 'set-mood',
+    ].includes(p.action)) {
+      // 启动阶段连续点随机台词只补发一次，不积压一串气泡。
+      if (p.action !== 'random-speech' || !this._pendingShellActions.some(a => a.action === p.action)) {
+        this._pendingShellActions.push({ ...p });
+      }
+      return;
+    }
     switch (p.action) {
         case 'open-chat':
           if (this._chatView && !this._chatView.isOpen) this._chatView.setOpen(true);
@@ -744,7 +861,7 @@ export class PetApp {
           if (p.name) this._ai?.play(p.name);
           break;
         case 'random-speech':
-          this._playRandom();
+          this._playRandom('manual');
           break;
         // 表情/情绪（设置窗口「表情与情绪」面板）
         case 'express':
@@ -757,6 +874,13 @@ export class PetApp {
           if (p.name) this._ai?.setMood(p.name, p.duration);
           break;
     }
+  }
+
+  /** 模型、台词和气泡就绪后补发；忙碌/暂停等仲裁仍由正常入口处理。 */
+  private _flushPendingShellActions(): void {
+    this._shellActionsReady = true;
+    const pending = this._pendingShellActions.splice(0);
+    for (const action of pending) this.onShellAction(action);
   }
 
   /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
@@ -811,22 +935,26 @@ export class PetApp {
     }
     const win = this._tauriWindow;
     if (!win) return;
-    import('@tauri-apps/api/window')
-      .then(async (m) => {
-        const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
-        if (!mon) return;
-        const size = await win.outerSize();
-        const x = mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2);
-        const y =
-          mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2);
-        await win.setPosition(new m.PhysicalPosition(x, y));
-        this._winPhysX = x;
-        this._winPhysY = y;
-        this._settings.posX = x;
-        this._settings.posY = y;
-        saveSettings(this._settings);
-      })
-      .catch(() => {});
+    const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
+    this._windowPositionKind = 'reset';
+    this._queueWindowGeometry(async () => {
+      const m = await import('@tauri-apps/api/window');
+      if (revision !== this._windowPositionRevision) return;
+      const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+      if (!mon || revision !== this._windowPositionRevision) return;
+      const size = await win.outerSize();
+      const before = await win.outerPosition();
+      if (revision !== this._windowPositionRevision) return;
+      const target = {
+        x: mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2),
+        y: mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2),
+      };
+      await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
+      this._windowResizeRemainder = { x: 0, y: 0 };
+      this._rebaseWindowPosition(target, before, revision);
+      if (revision === this._windowPositionRevision) this._persistDesktopPos();
+      this._syncChatAnchor();
+    }, 'Failed to reset pet position');
   }
 
   /** 短暂显示贴边成功反馈，不额外扩大可点击区域。 */
@@ -871,14 +999,19 @@ export class PetApp {
     import('@tauri-apps/api/window')
       .then(async (m) => {
         await pendingMove;
-        if (token !== this._snapAnimToken) return;
+        await this._windowSettingsTask;
+        const geometryRevision = this._windowGeometryRevision ?? 0;
+        const current = () => token === this._snapAnimToken &&
+          geometryRevision === (this._windowGeometryRevision ?? 0) && !this._windowGeometryPending &&
+          !this._windowResizeRecovery && !this._windowGeometryError;
+        if (!current()) return;
         const pos = await win.outerPosition();
-        if (token !== this._snapAnimToken) return;
+        if (!current()) return;
         this._winPhysX = pos.x;
         this._winPhysY = pos.y;
         if (this._settings.snapEdges) {
           const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
-          if (token !== this._snapAnimToken) return;
+          if (!current()) return;
           if (mon) {
             const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
             const left = mon.workArea.position.x;
@@ -897,13 +1030,15 @@ export class PetApp {
             this._showSnapHint(edges);
           }
         }
+        if (token !== this._snapAnimToken || this._windowGeometryPending) return;
         this._persistDesktopPos();
       })
-      .catch(() => {});
+      .catch(error => { console.warn('Failed to finish pet drag', error); });
   }
 
   /** 持久化桌面窗口位置（物理 px）。 */
   private _persistDesktopPos(): void {
+    if (this._dragging || this._windowResizeRecovery || this._windowGeometryError) return;
     this._settings.posX = this._winPhysX;
     this._settings.posY = this._winPhysY;
     saveSettings(this._settings);
@@ -1039,10 +1174,10 @@ export class PetApp {
     if (resolved) this._speak(resolved, 'interaction');
   }
 
-  private _playRandom(): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak('ambient')) return;
+  private _playRandom(source: 'ambient' | 'manual' = 'ambient'): void {
+    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak(source)) return;
     const resolved = this._dialogue.resolveRandom();
-    if (resolved) this._speak(resolved, 'ambient');
+    if (resolved) this._speak(resolved, source);
   }
 
   // ---------- 指针输入 ----------
@@ -1085,7 +1220,30 @@ export class PetApp {
     };
   }
 
-  /** 构造互动上下文（归一化坐标 + 物理像素 + 真实事件间隔）。 */
+  /** 点击/抚摸使用模型参考坐标；注视仍使用原来的视口坐标。 */
+  private _hitEventNorm(e: PointerEvent): { nx: number; ny: number } {
+    if (!this._model?.isReady()) return this._eventNorm(e);
+    const rect = this._canvas.getBoundingClientRect();
+    const { scale, originX, originY } = this._modelViewportTransform();
+    // 先到真实 backing-store 像素，包含 DPR 与 canvas 尺寸取整，再反解渲染变换。
+    const px = (e.clientX - rect.left) * this._canvas.width / rect.width;
+    const py = (e.clientY - rect.top) * this._canvas.height / rect.height;
+    const screenOriginX = this._settings.mirror ? this._canvas.width - originX : originX;
+    const referenceScale = scale * this._hitAreas.referenceRenderMargin;
+    return {
+      // 保留屏幕左右方向，镜像只由 HitAreas 消除一次；贴合模式的非居中原点也同步翻转。
+      nx: 0.5 + (px - screenOriginX) / (referenceScale * this._model.boundsW),
+      ny: 0.5 + (py - originY) / (referenceScale * this._model.boundsH),
+    };
+  }
+
+  private _updatePointerLook(e: PointerEvent): void {
+    if (platform === 'tauri' && e.pointerType === 'mouse') return;
+    const n = this._eventNorm(e);
+    this._behavior?.updateLookTarget(n.nx, n.ny);
+  }
+
+  /** 构造互动上下文（模型参考坐标 + 物理像素 + 真实事件间隔）。 */
   private _ctx(e: PointerEvent, isSecondary: boolean): PointerContext {
     const rect = this._canvas.getBoundingClientRect();
     const scale = rect.width > 0 ? this._canvas.width / rect.width : 1;
@@ -1095,7 +1253,7 @@ export class PetApp {
         ? Math.min(Math.max((now - this._lastMoveEventMs) / 1000, 0.001), 0.2)
         : 0.016;
     this._lastMoveEventMs = now;
-    const n = this._eventNorm(e);
+    const n = this._hitEventNorm(e);
     return {
       normX: n.nx,
       normY: n.ny,
@@ -1113,7 +1271,7 @@ export class PetApp {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (!e.isPrimary || (e.button !== 0 && e.button !== 2)) return;
+      if (!e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
       // 透明像素兜底：壳穿透生效前的竞态，落在透明区的事件不触发互动
       if (
@@ -1124,28 +1282,29 @@ export class PetApp {
         return;
       }
       this._cancelSnapAnimation();
+      this._activePointerId = e.pointerId;
+      // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
+      this._publishHitMask();
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
         // 合成事件/非常规指针没有 active pointer，捕获失败不影响交互
       }
-      const n0 = this._eventNorm(e);
+      const n0 = this._hitEventNorm(e);
       const isSecondary =
         e.button === 2 ||
         // 触摸端没有右键：按下头部抚摸区视为抚摸手势起点，
         // 其余区域的单指按住保留给拖动窗口
-        (isTouchDevice &&
+        (e.pointerType === 'touch' &&
           e.button === 0 &&
           this._hitAreas.isInHeadPetZone(n0.nx, n0.ny));
       const ctx = this._ctx(e, isSecondary);
-      this._touchPetting = isTouchDevice && isSecondary && e.button === 0;
+      this._touchPetting = e.pointerType === 'touch' && isSecondary && e.button === 0;
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
       // 视线跟随：按下即更新目标（轻点不移动也要看向触点）
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
 
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
@@ -1157,9 +1316,7 @@ export class PetApp {
       if (e.button !== 0) return;
 
       this._leftDown = true;
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
@@ -1173,15 +1330,13 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointermove', (e) => {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._dragThresholdPx) {
         this._touchTapCandidate = false;
       }
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
-      if (platform !== 'tauri' || e.pointerType !== 'mouse') {
-        this._behavior?.updateLookTarget(ctx.normX, ctx.normY);
-      }
+      this._updatePointerLook(e);
 
       if (this._dragCandidate && this._leftDown && !handled) {
         if (!this._dragging) {
@@ -1209,7 +1364,7 @@ export class PetApp {
     });
 
     canvas.addEventListener('pointerup', (e) => {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       this._coordination.activity();
       const viaPetting = e.button === 2 || this._touchPetting;
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
@@ -1233,9 +1388,13 @@ export class PetApp {
         }
         this._resetDragState();
       }
+      this._activePointerId = null;
+      this._touchTapCandidate = false;
+      this._publishHitMask();
     });
 
-    canvas.addEventListener('pointercancel', () => {
+    canvas.addEventListener('pointercancel', (e) => {
+      if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -1243,8 +1402,9 @@ export class PetApp {
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
     });
-    canvas.addEventListener('lostpointercapture', () => {
-      if (!this._leftDown && !this._touchPetting &&
+    canvas.addEventListener('lostpointercapture', (e) => {
+      if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
       this._cancelInteraction();
@@ -1285,18 +1445,24 @@ export class PetApp {
    * 配对的 pointerup 可能永远不到达，需主动收尾，否则按下状态与 expand=96 卡死。
    */
   private _cancelInteraction(): void {
+    this._activePointerId = null;
     this._touchPetting = false;
+    this._touchTapCandidate = false;
     this._interaction?.cancel();
     this._coordination.activity();
+    this._publishHitMask();
   }
 
   /** 拉取窗口物理位置与 DPI 缩放；旧查询不得覆盖正在提交或播放动画的位置。 */
   private _syncWindowMetrics(): void {
     const win = this._tauriWindow;
     if (!win) return;
+    if (this._windowGeometryPending > 0 || this._windowResizeRecovery) return;
     const token = this._snapAnimToken;
+    const geometryRevision = this._windowGeometryRevision;
     Promise.all([win.outerPosition(), win.scaleFactor()])
       .then(([pos, sf]) => {
+        if (geometryRevision !== this._windowGeometryRevision || this._windowGeometryPending > 0) return;
         this._scaleFactor = sf;
         this._metricsSynced = true;
         if (token === this._snapAnimToken && !this._dragging && !this._windowMoveTask && !this._snapAnimation) {
@@ -1305,23 +1471,25 @@ export class PetApp {
           this._syncChatAnchor();
         }
       })
-      .catch(() => {});
+      .catch(error => console.warn('Failed to read pet window metrics', error));
   }
 
   /**
-   * 向壳上报模型可见矩形（物理像素）：底边 = 脚底，横向沿用画布宽
+   * 向壳上报模型可见矩形（客户区比例）：底边 = 脚底，横向沿用画布宽
    * （chat 宽 = 锚宽 × 1.18 的既有观感不变）。锚点不能取含渲染余量的
    * 整个画布——余量随窗口线性放大，用画布当锚点，缩放越大 chat 离脚越远。
-   * known 传入缩放落定时的已知几何（applySettings 路径），省去 DOM 与
-   * 位置查询的异步往返；缺省按画布实测 + 窗口位置缓存。
+   * known 传入缩放落定时的实际客户区尺寸（applySettings 路径）；缺省按画布实测。
+   * 协议发送相对于客户区的比例矩形，完全不混入屏幕位置或另一次 DPI 采样。
    */
-  private _syncChatAnchor(known?: { cssW: number; cssH: number; physX: number; physY: number }): void {
+  private _syncChatAnchor(known?: { cssW: number; cssH: number }): void {
     if (platform !== 'tauri' || !this._metricsSynced) return;
     const rect = known
       ? { left: 0, top: 0, width: known.cssW, height: known.cssH }
       : this._canvas.getBoundingClientRect();
-    const baseX = known ? known.physX : this._winPhysX;
-    const baseY = known ? known.physY : this._winPhysY;
+    // IPC 不携带屏幕原点；局部比例由 Rust 同一原生矩形快照还原，移动/DPI 不混时刻。
+    const viewportW = known?.cssW ?? window.innerWidth;
+    const viewportH = known?.cssH ?? window.innerHeight;
+    if (!(viewportW > 0 && viewportH > 0)) return;
     let left = rect.left;
     let top = rect.top;
     let w = rect.width || window.innerWidth;
@@ -1333,15 +1501,12 @@ export class PetApp {
       top += h / 2 - b.maxY * s;
       h = (b.maxY - b.minY) * s;
     }
-    const sf = this._scaleFactor;
+    const revision = this._chatAnchorRevision = Math.max((this._chatAnchorRevision ?? 0) + 1,
+      Math.round((performance.timeOrigin + performance.now()) * 1000));
+    const payload = { x: left / viewportW, y: top / viewportH, w: w / viewportW, h: h / viewportH, revision };
     void import('@tauri-apps/api/core')
-      .then(m => m.invoke('sync_chat_anchor', {
-        x: Math.round(baseX + left * sf),
-        y: Math.round(baseY + top * sf),
-        w: Math.round(w * sf),
-        h: Math.round(h * sf),
-      }))
-      .catch(() => {});
+      .then(m => m.invoke('sync_chat_anchor', payload))
+      .catch(error => console.warn('Failed to synchronize local chat anchor', error));
   }
 
   /** 拖动只跟随指针，不在移动过程中吸附或限制位置。 */
@@ -1362,20 +1527,19 @@ export class PetApp {
   private _submitWindowPos(): Promise<void> {
     const win = this._tauriWindow;
     if (!win) return Promise.resolve();
-    if (this._windowMoveTask) return this._windowMoveTask;
-    this._windowMoveTask = import('@tauri-apps/api/window')
-      .then(async (m) => {
-        let x: number, y: number;
-        do {
-          x = Math.round(this._winPhysX);
-          y = Math.round(this._winPhysY);
-          await win.setPosition(new m.PhysicalPosition(x, y));
-        } while (x !== Math.round(this._winPhysX) || y !== Math.round(this._winPhysY));
-      })
-      .finally(() => {
-        this._windowMoveTask = null;
-      });
-    return this._windowMoveTask;
+    const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
+    this._windowPositionKind = 'move';
+    const task = this._queueWindowGeometry(async () => {
+      const m = await import('@tauri-apps/api/window');
+      if (revision !== this._windowPositionRevision) return;
+      const x = Math.round(this._winPhysX), y = Math.round(this._winPhysY);
+      await this._setWindowPositionVerified(new m.PhysicalPosition(x, y));
+      this._windowResizeRemainder = { x: 0, y: 0 };
+    }, 'Failed to move pet window').finally(() => {
+      if (this._windowMoveTask === task) this._windowMoveTask = null;
+    });
+    this._windowMoveTask = task;
+    return task;
   }
 
   // ---------- 渲染循环 ----------
@@ -1667,6 +1831,25 @@ export class PetApp {
     this._model?.update(dt);
   }
 
+  /** 模型 → backing-store 像素：渲染与命中反解共享同一变换。 */
+  private _modelViewportTransform(): { scale: number; originX: number; originY: number } {
+    if (this._wrapWindow) {
+      return {
+        scale: this._contentScaleCss * this._dpr,
+        originX: (this._originCssX - this._appliedRectX) * this._dpr,
+        originY: (this._originCssY - this._appliedRectY) * this._dpr,
+      };
+    }
+    // 包围盒适配，与 native SetupModelMatrix/Render 的布局口径一致。
+    const fitH = (this._chatView?.isOpen || platform === 'android')
+      ? Math.min(this._canvas.height, this._canvas.width / this._model.boundsAspect) : this._canvas.height;
+    return {
+      scale: fitH / PetApp._renderMarginRatio / this._model.boundsH,
+      originX: this._canvas.width / 2,
+      originY: this._canvas.height / 2,
+    };
+  }
+
   private _render(): void {
     const gl = this._gl;
     if (gl.isContextLost()) return;
@@ -1684,24 +1867,9 @@ export class PetApp {
     const vpH = this._canvas.height;
     const modelMatrix = this._model.getModelMatrix();
     modelMatrix.loadIdentity();
-    if (this._wrapWindow) {
-      // 贴合模式：渲染比例固定，模型原点锚在窗口内对应位置，窗口包裹剪影。
-      const sDev = this._contentScaleCss * this._dpr;
-      modelMatrix.scale(sDev, -sDev); // 模型 Y 轴朝上，视口 Y 轴朝下
-      modelMatrix.translate(
-        (this._originCssX - this._appliedRectX) * this._dpr,
-        (this._originCssY - this._appliedRectY) * this._dpr
-      );
-    } else {
-      // 视口适配算法与 native SetupModelMatrix/Render 一致：
-      //   模型渲染高 = 视口高 / 余量，按包围盒均匀缩放，模型原点置于视口中心。
-      // 官方 Demo 的 canvas-fit 对 Aliya 的 1×1 方形画布会把角色缩到窗口的 ~44%，
-      // 观感与 Flutter 版不符（"压扁"）；包围盒适配才是用户熟悉的布局。
-      const fitH = (this._chatView?.isOpen || platform === 'android') ? Math.min(vpH, vpW / this._model.boundsAspect) : vpH;
-      const s = fitH / PetApp._renderMarginRatio / this._model.boundsH;
-      modelMatrix.scale(s, -s); // 模型 Y 轴朝上，视口 Y 轴朝下
-      modelMatrix.translate(vpW * 0.5, vpH * 0.5);
-    }
+    const { scale, originX, originY } = this._modelViewportTransform();
+    modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
+    modelMatrix.translate(originX, originY);
 
     // 视口像素 -> NDC（y 翻转）
     const projection = new CubismMatrix44();
@@ -1785,11 +1953,13 @@ export class PetApp {
     const androidWrap = platform === 'android' && this._wrapWindow;
     if (!this._hitMaskSend && !androidWrap) return;
     if (!this._model?.isReady()) return;
-    const interacting = this._leftDown || this._touchPetting || (this._chatView?.pointerActive ?? false);
+    const interacting = this._isPointerInteracting();
+    const geometry = this._hitMaskGeometryKey();
     const now = performance.now();
     if (
       now - this._hitMaskLastMs < 120 &&
-      interacting === this._hitMaskInteracting
+      interacting === this._hitMaskInteracting &&
+      geometry === this._hitMaskGeometry
     ) {
       return;
     }
@@ -1833,6 +2003,10 @@ export class PetApp {
     for (const r of this._chatView?.hitRects() ?? (this._chatLauncher && !this._chatLauncher.hidden ? [this._chatLauncher.getBoundingClientRect()] : [])) {
       ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
     }
+    if (this._shellSyncNotice) {
+      const r = this._shellSyncNotice.getBoundingClientRect();
+      ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
+    }
     const img = ctx.getImageData(0, 0, cols, rows).data;
     const data = new Uint8Array(cols * rows);
     for (let i = 0; i < data.length; i++) {
@@ -1842,13 +2016,16 @@ export class PetApp {
       interacting === this._hitMaskInteracting &&
       data.length === this._hitMaskData.length &&
       rows === this._hitMaskRows &&
-      data.every((v, i) => v === this._hitMaskData[i])
+      data.every((v, i) => v === this._hitMaskData[i]) &&
+      geometry === this._hitMaskGeometry &&
+      (androidWrap || now - this._hitMaskSentMs < 1000)
     ) {
-      return; // 掩码无变化：寂静期零 IPC
+      return; // Windows 仍需在原生 1.5s TTL 前刷新；相同剪影不能吞掉几何变化。
     }
     this._hitMaskData = data;
     this._hitMaskRows = rows;
     this._hitMaskInteracting = interacting;
+    this._hitMaskGeometry = geometry;
     if (androidWrap) {
       // Android 悬浮窗：壳在 ACTION_DOWN 命中透明格时临时切 NOT_TOUCHABLE 穿透
       let csv = '';
@@ -1856,11 +2033,30 @@ export class PetApp {
       androidShell()?.setHitMask(cols, rows, csv);
       return;
     }
-    this._hitMaskSend?.({
-      cols,
-      rows,
-      data: Array.from(data),
-      interacting,
+    this._publishHitMask();
+  }
+
+  private _isPointerInteracting(): boolean {
+    const petting = this._interaction?.petting.state;
+    return this._activePointerId != null || petting === 'pressed' || petting === 'petting'
+      || (this._chatView?.pointerActive ?? false);
+  }
+
+  private _hitMaskGeometryKey(): string {
+    return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor].join(':');
+  }
+
+  /** 只重发缓存掩码，不在输入回调读取/改写渲染缓冲。 */
+  private _publishHitMask(): void {
+    if (platform !== 'tauri' || !this._hitMaskSend || !this._hitMaskData.length) return;
+    this._hitMaskInteracting = this._isPointerInteracting();
+    this._hitMaskGeometry = this._hitMaskGeometryKey();
+    this._hitMaskSentMs = performance.now();
+    this._hitMaskSend({
+      cols: PetApp._hitMaskCols,
+      rows: this._hitMaskRows,
+      data: Array.from(this._hitMaskData),
+      interacting: this._hitMaskInteracting,
       winX: this._winPhysX,
       winY: this._winPhysY,
       winW: Math.round(window.innerWidth * this._scaleFactor),

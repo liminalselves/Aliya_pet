@@ -38,6 +38,8 @@ export interface ComposedMessage {
 export interface ComposeOptions {
   role: ChatRole;
   stickersEnabled: boolean;
+  /** false 时剥离生图标记，不创建卡片或空白分页。 */
+  showGeneratedImages?: boolean;
   resolveSticker?: (key: string) => DriveFileLike | undefined;
   resolveEmoji?: (name: string) => CustomEmojiInfo | undefined;
   segmented?: boolean;
@@ -128,14 +130,16 @@ export function composeMessage(text: string, options: ComposeOptions): ComposedM
         const emoji = options.resolveEmoji?.(part.name);
         if (emoji?.url) html += emojiHtml(part.name, emoji);
         else html += renderMarkdown(clean.slice(part.start, part.end));
-      } else {
+      } else if (options.showGeneratedImages !== false) {
         hasDraw = true;
         draws.push({ index: part.index, size: part.size, tag: part.tag });
         html += drawCardHtml({ index: part.index, size: part.size, tag: part.tag });
       }
     }
     drawOffset = draws.length;
-    if (html !== '') produced.push({ html: `<div class="msk-segment${hasDraw && parts.length === 1 ? ' msk-segment-draw' : ''}">${html}</div>`, isCue: false });
+    const mediaPage = options.segmented === true && parts.length === 1 && (parts[0]!.type === 'sticker' || parts[0]!.type === 'emoji');
+    const pageClass = mediaPage ? ' msk-segment-media' : hasDraw && parts.length === 1 ? ' msk-segment-draw' : '';
+    if (html !== '') produced.push({ html: `<div class="msk-segment${pageClass}">${html}</div>`, isCue: false });
   }
   // 开场归一：模型常让第一条指令落在开场白之后（开口时角色素颜）。只把首条指令
   // 提前到页首——表情是持续语义，提前只是让它多覆盖开场白，其原配对段落依然被

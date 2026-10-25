@@ -64,9 +64,16 @@
           "FadeOutTime": 1.0
         }
       ],
-      "walk": [
+      "cheerful_bounce": [
         {
-          "File": "motions/walk.motion3.json",
+          "File": "motions/cheerful_bounce.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "shy_sway": [
+        {
+          "File": "motions/shy_sway.motion3.json",
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }

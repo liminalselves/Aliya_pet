@@ -1,131 +1,190 @@
 # 动作接入指南
 
-## 2026-09-08 挥手新版接入
+## 当前资源与接入
 
-运行时已按实际参数兼容两种模型：包含 Param30/31/36 时使用新版
-挥手开关、小臂和手部控制；否则继续使用当前模型的右手五段链。
-两种控制都在物理之后执行，支持重复播放、打断和结束复位；
-playAction、startMotion、startRandomMotion 均联动手部通道。
+正式资源为 PET 版 Aliya 模型，入口保留 `16.model3.json`、`16.moc3`、
+`16.physics3.json`、`16.cdi3.json`，纹理为 `aliya.2048/texture_00.png`。
+当前 **10 个动作、12 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
+不是官方示例占位文件。LipSync 不启用。
 
-正式资源已替换为 PET.zip 中的完整模型，保留入口名称 16.model3.json、
-16.moc3、16.physics3.json、16.cdi3.json；纹理改为 aliya.2048/texture_00.png。
-现有 9 个动作、12 个表情和 actions.json 保留，LipSync 仍不启用。
-Param30 使用 0/1 端点切换手臂图层，Param31/36 在物理后控制摆动，
-避免 PhysicsSetting15 覆盖动作；结束与打断后显式归零。
-挥手外观已在浏览器检查，真实模型在 15/30/60fps 下完成全部动作、
-表情加载、特殊眼型互斥、重复挥手、打断复位及眼睛/耳朵/脸红互动检查。
-测试入口：开发服务器的 /tests/model-preview.html（不进入生产构建）。
-测得 maxX=0.373701、maxY=0.535082，含 5% 安全系数需求约 1.21746，
-当前渲染余量 1.22 足够。新增更大动作仍需重新测量。
+修改关键帧后重新生成与验证：
 
-当前 9 个动作已是为新 Aliya 模型（aliya 重置版）**自编的动作**，
-由 `redesign/tools/gen-motions.py` 生成，不再是官方示例占位文件。
-修改动作请改生成器里的关键帧再重新生成：
-
-```bash
-python redesign/tools/gen-motions.py   # 同时写入 assets/ 与 dist/
-cd redesign/ui && npm run build        # 或重新构建让 dist 生效
+```sh
+python redesign/tools/gen-motions.py
+python -B -m unittest discover -s redesign/tools -p test_gen_motions.py -v
+npm --prefix redesign/ui test
+npm --prefix redesign/ui run build
 ```
 
-## 动作清单与文件位置
+生成器同时更新 assets 与 dist；生产构建会重新复制正式 assets。动作资源位于
+`redesign/ui/assets/live2d/aliya/motions/`。注册须同步生成器 `GENERATORS`、
+`16.model3.json` 的 `Motions`、`actions.json`、`src/behavior.ts` 的
+`ACTION_LIBRARY`、`src/chat/performance-manifest.ts` 的 `PERFORMANCE_ACTIONS`。
+设置页中文标签由 `src/settings-page.ts` 的 `ACTION_LABELS` 提供。
 
-`redesign/ui/assets/live2d/aliya/motions/`
+## 动作清单
 
-| 动作 | 文件 | 所属组（model3.json `Motions`） | 设计要点 |
-| ---- | ---- | ------------------------------- | -------- |
-| 摇摆 | `sway.motion3.json`  | `sway`   | AngleZ ±6 周期摇摆 + 笑眼 |
-| 点头 | `nod.motion3.json`   | `nod`    | AngleY 两次点头（-11），低点半闭眼 |
-| 摇头 | `shake.motion3.json` | `shake`  | AngleX ±12 两次，眉毛下压 |
-| 疑惑 | `doubt.motion3.json` | `doubt`  | 歪头 AngleZ 10 保持 + 不对称挑眉 |
-| 挥手 | `wave.motion3.json`  | `wave`   | AngleZ 摆动 + 满笑眼/嘴角/张嘴 + **抬右手摇摆**（代码通道，见下） |
-| 伸展 | `stretch.motion3.json` | `stretch` | 闭眼后仰伸懒腰 + 收尾甩头 |
-| 生气 | `angry.motion3.json` | `angry`  | Param32 生气阴影 + 怒眉 + 头部颤抖 |
-| 打哈欠 | `yawn.motion3.json` | `yawn`   | 闭眼大张嘴 + 抬头后仰 |
-| 走路 | `walk.motion3.json`  | `walk`   | BodyAngleZ ±5 步态摇摆 + 身体起伏 |
+| 中文名称 | 内部动作名 | 设计要点 |
+| --- | --- | --- |
+| 摇摆 | `sway` | 头部周期摇摆与笑眼 |
+| 点头 | `nod` | 两次点头，低点半闭眼 |
+| 摇头 | `shake` | 两次摇头，眉毛下压 |
+| 疑惑 | `doubt` | 歪头保持、不对称挑眉 |
+| 挥手 | `wave` | 头脸协调，专用代码通道抬右手摆动 |
+| 伸展 | `stretch` | 完全闭眼后仰，收尾回正 |
+| 生气 | `angry` | 生气阴影、怒眉与头部颤动 |
+| 打哈欠 | `yawn` | 闭眼张嘴、抬头后仰 |
+| 开心雀跃 | `cheerful_bounce` | 蓄势、两次递减的上半身弹动、小幅协同摆臂 |
+| 撒娇 | `shy_sway` | 贴身收肘藏手、三次柔和轻晃、低头偷看，自动脸红 |
 
-组名与 `ui/src/behavior.ts` 的 `ACTION_LIBRARY` 一一对应；新增/改名动作请
-同步改该数组、`model3.json` 的 `Motions` 节（含 FadeInTime/FadeOutTime）、
-生成器的动作表和 `ui/src/chat/performance-manifest.ts` 的 `PERFORMANCE_ACTIONS`
-（AI 表演指令的第四张对照表，见 `PERFORMANCE.md`；表情同理同步
-`PERFORMANCE_EXPRESSIONS`）。
+## 开心雀跃 cheerful_bounce
 
-## 自编动作的工程约束（重要）
+完整时长 **4.1s = 2.9s 表演与回正 + 1.2s 默认姿态尾垫**。
+保留原蓄势、两次递减弹动、小回弹及收尾的所有时间点，主要头身曲线幅度增加 30%：
 
-1. **只写存在的参数**。新模型可用参数见生成器头部注释；**手臂参数
-   （ParamArmL01/02、ParamArmR01/02）在 PET 版已绑定变形器，范围均为 ±10；
-   当前动作仍沿用原配方，挥手使用专用通道**。`Param33/34/35` 会切换整套特殊眼睛，
-   中间值和交叉淡化会产生重影；动作仅保留 0 值复位曲线。
-2. **每条动作必须带全套复位曲线**（生成器的 `base_reset`：16 个表情参数
-   归 0、眼睛归 1、头身角度归 0）。否则上一个动作/互动写入的值会经
-   `saveParameters` 残留到下一个动作。
-3. **所有曲线必须在 Duration 结束前回到默认值**（生成器统一加
-   `TAIL_SECONDS = 1.2s` 尾垫）。Cubism Web Framework 在动作自然播放完毕时
-   不做完整淡出，最后一帧求值会被 `saveParameters` 冻结——不带尾垫的
-   生气动作会让脸黑（Param32≈0.17）永久挂在脸上。
-4. Meta 计数会被 `hasConsistency()` 校验：Linear 段 3 元素/段、Bezier 段
-   7 元素/段，TotalPointCount = 1 + Linear×1 + Bezier×3。改生成器不要
-   破坏计数。
-5. **眼球曲线（ParamEyeBallX/Y，值域 ±30）**：该模型眼球参数不是官方惯例
-   的 ±1 而是 ±30——按 ±1 写只有 3% 行程，几乎看不见。动作带视线表演
-   （点头垂眼、疑惑斜瞟、生气下压瞪人等，常用 5~11）。**动作播放期间
-   视线跟随按权重平滑交挖**（gaze.ts GazeController 单一所有权：指针跟随
-   ×交挖权重×表情注视偏移→动态径向钳制），动作曲线与跟随交叉淡化衔接。
-   每条动作必须带眼球复位曲线（base_reset 已含）。方向：X+ 画面右、Y+ 上。
-6. **嘴/眉要动态**：参考旧版 Hiyori 占位动作的节拍风格——眉毛随节拍起伏
-   （±0.2~0.7）、嘴角随剧情渐变而非长平台、嘴巴在节拍上轻张轻收
-   （0.1~0.3）。长期平坦的微笑曲线会让角色「僵笑」。
-7. **笑眼与注视互斥**：满笑眼（弯月，EyeSmile≥0.7）**不要带注视曲线**——
-   瞳孔/高光物理链（输入：头部角度 + 闭眼）不跟眼球走，弯月眼里移瞳会把
-   高光顶出弧线外，呈现「破相」。轻度笑眼（≤0.4）注视幅度收小（≤±5）。
+- 身体 Y 为 -3.38～2.08，身体 Z 为 -0.845～1.3。
+- 头部 Y 为 -3.9～7.15，头部 Z 为 -1.82～2.6。
+- 两侧上臂最大 1.4、前臂最大 1.8，前臂略迟于躯干，左右时点略错开；不做大幅抬手。
 
-## 动作余量重新测量
+眉嘴仍按原节拍表演；满笑眼期间眼球 XY 保持 0。使用现有 `smooth_curve_segments()`
+保形 C1 插值，单调中间关键帧不强制停速，极值与收尾自然减速。
+模型没有独立整体升降或腿部跳跃绑定，所以这是上半身俯仰弹动，不是离地跳跃。
+随机配置为 emotion、基础权重 0.45，偏好 happy。
 
-渲染余量（`ui/src/pet-app.ts` 的 `_renderMarginRatio`，当前 **1.22**）按
-PET 版现动作实测：水平 maxX 0.373701 / 垂直 maxY 0.535082（模型单位，
-静态包围盒约 0.635599×1.007191），取水平/垂直最大需求并乘 1.05
-安全系数 = 1.21746 → 1.22。
-（旧占位动作摆动大得多，当时是 1.45。）
+## 撒娇 shy_sway
 
-改动动作幅度后重新测量（手动步进法，页面隐藏时 rAF 不跑）：
+调用名、动作组和资源名统一为 `shy_sway`，无第二个别名；设置页显示“撒娇”。
+完整时长 **5.4s = 4.2s 表演与回正 + 1.2s 默认姿态尾垫**，不改变现有动作管理架构。
 
-```js
-// 在页面 console / CDP evaluate 里：
-const app = window.__pet, pm = app._model, md = pm._model;
-app._behavior.autoActions = false;
-const dyn = () => { let a=1e9,b=-1e9,c=1e9,d=-1e9;
-  for (let i=0;i<md.getDrawableCount();i++){const v=md.getDrawableVertices(i);
-    for(let j=0;j<v.length;j+=2){a=Math.min(a,v[j]);b=Math.max(b,v[j]);
-      c=Math.min(c,v[j+1]);d=Math.max(d,v[j+1]);}} return [a,b,c,d]; };
-pm.playAction('wave'); let X=0,Y=0;
-for(let t=0;t<4.2;t+=1/30){ app._update(1/30); app._render();
-  const [l,r,b,tp]=dyn(); X=Math.max(X,-l,r); Y=Math.max(Y,-b,tp); }
-// 余量 ≥ X/(0.32×pm.boundsH) 且 ≥ Y/(0.5×pm.boundsH)，取最差 ×1.05
+### 时间节奏与姿态
+
+- 0–0.74s：左右上臂逐渐贴身收肘、前臂错峰内折，双手收向外套侧后缘；低头轻歪、视线躲闪。
+- 0.74–3.62s：四臂稳定保持，身体三次左右往返；极值约在 0.78/1.34/1.93/2.5/3.04/3.58s，逐渐收小。
+  身体 Z 比前版增加 40%，主峰为 +2.66/-2.52；穿过 1.06s 中心时仍有非零速度。
+- 身体 X 提前约 0.12s 轻转，增加 25% 后范围为 -2.0625～1.875；身体 Y 保持 1.1～1.5 的轻前倾起伏。
+  头部 Z 只增加 10%，最大 4.18，滞后跟随；头部 X 反向量减半，最大绝对值 0.65，不以大幅反扭抢戏。
+- 轻笑眼最大 0.24、眼球最大绝对值 3，回避后偷看，穿插两次完全眨眼，眉嘴细节延续到最后一次回摆。
+- 3.62–4.2s：双臂放松、头身回正；接默认姿态尾垫。
+
+保形 C1 Bezier 让相邻单调段共享切线，只在摆动极值、手臂平台和最终回正处减速。
+控制点不超过相邻姿态的范围，不靠过冲或单纯放慢掩盖卡顿。
+
+### 藏手能力与参数所有权
+
+正式 Core/WebGL 逐侧扫描正负端点与中间值确认：四臂范围均为 ±10、默认 0；
+`01` 负向贴身、正向外展，`02` **负向才是前臂明显内折**。不能仅凭参数名或镜像关系推断方向。
+主体保持左上臂 -5.8、右上臂 -5.2、左前臂 -9.8、右前臂 -10，本轮增强头身不改这四个姿态。
+四臂均在主段保持，收尾才依次松开，不以腹前交叉或叉腰代替。
+
+手部网格 `ArtMesh128/129` 绘制顺序为 17/16，`ArtMesh119/120` 为 32/31，
+先于外套 `ArtMesh45` 的 47；利用模型固有层次遮挡，形成手藏向腰后侧/外套后缘的近似背手。
+不修改透明度、绘制顺序、moc3 或物理输出；不包含背后手指交握或转身背面演出。
+四臂已加入公共 `base_reset`，全库均有 30 参数曲线，任何接替动作都能释放收臂残值。
+
+### 自动脸红，不替换原表情
+
+motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经其调用的随机动作
+统一触发既有 `CheekChannel`；设置按钮、Windows/Android 桥、AI 与自动行为走相同入口。
+被拒绝或未知动作不改变当前包络。不会调用 `startExpression('shy')`，也不会结束时清空表情。
+
+动作脸红目标为 1，进入按 0.1s 时间常数平滑；主体末 0.6s 用 smoothstep 降低目标，
+退出按 0.18s 时间常数平滑并在 1.2s 尾垫内释放。重播从当前红晕继续，中断只撤回动作自己的贡献。
+覆盖位于 `saveParameters` 之后，取 **原表情、互动、动作贡献的最大值**并限制为 0～1，
+不把脸红写进持久动作基线，不用较弱点击覆盖更强表情。
+
+点击脸红保留原 300ms 渐入、900ms 保持、700ms 恢复，峰值由 0.55 提高至
+**0.85 × strength**（strength 限制在 0～1）；互动贡献另作平滑接管/释放。
+既有 `shy` 表情的 Cheek 已为 1，不再提高或叠加越界。若调用前有 shy 表情或点击脸红，
+撒娇结束/打断后保留它们自己的状态，按原生命周期退出。
+仍可通过已有协议另外选择完整害羞表情：
+
+```text
+[[agent_cue express=shy play=shy_sway]]
 ```
 
-## 旧模型抬手通道（兼容回退）
+这不是自动脸红的必要条件。随机配置仍为 emotion、基础权重 0.4，shy 倍率 4、happy 倍率 2。
 
-模型有两条「手部物理链」：`Param_Angle_Rotation_1..5_ArtMesh60`（左手）/
-`.._ArtMesh61`（右手），五段旋转驱动整条小臂+手，**左手正角抬起、右手负角
-抬起**（±45 满量程可把手举到头侧，实测位移 ≈0.28 模型单位）。
+## 自编动作的工程约束
 
-但它们是**物理输出**（physics3.json PhysicsSetting13/14，输入 BodyAngleX/Z），
-物理每帧覆盖，所以 **motion3.json 曲线写不住**——抬手只能像猫耳一样走代码
-通道：`pet-model.ts` 的 `_handRaiseR`（0..1），在物理求值后、`model.update()`
-前加写。目前由 `playAction('wave')` 触发包络（0.45s 举起 → 保持 + 指尖摆动
-→ 2.55s 起 0.6s 放下，被打断平滑回落）。要让别的动作抬手，在同一个包络
-里加触发即可；物理基础摆动会自然叠加在抬起姿态上。
+1. 只写已验证存在的参数。四臂可用，但手链、头发、猫耳、眼部跟随等物理输出不进 motion；
+   `ParamBreath` 由呼吸系统独占，`ParamCheek` 由表情与既有覆盖层协调。
+2. 每个动作必须带全套 `base_reset`：30 参数，面部/头身/四臂默认 0，眼开度默认 1。
+   不完整的曲线会让 `saveParameters` 保存前一个动作的残值。
+3. 所有表演曲线在内容段结束时回默认；统一 `TAIL_SECONDS = 1.2`，大于当前 1s 淡出。
+   SDK 自然完成不会替所有参数执行完整淡出，不可依赖队列结束自动恢复。
+4. Meta 必须与曲线一致：Linear 每段 3 元素、Bezier 每段 7 元素，
+   TotalPointCount = 1 + Linear×1 + Bezier×3，保留 `hasConsistency()` 校验。
+5. `Param33/34/35` 是整套特殊眼型选择器，不可中间值渐变；motion 只写 0 复位，
+   运行时最后负责互斥。`Param32` 是生气阴影，不是脸红。
+6. 眼球 XY 的真实范围为 ±30，而不是惯例 ±1；动作与指针跟随走现有 `GazeController`
+   混合和径向钳制。轻笑眼（≤0.4）只用小视线（≤±5），满笑眼（≥0.7）眼球居中。
+7. `stretch` 闭眼保持使用 EyeOpen=0、EyeBallXY=0；EyeOpen=0.1 在此模型仍露紫色虹膜，
+   叠加笑眼会产生夹层。`doubt` 起止眼开度为默认 1，不能用零值 hold 复位眼开度。
+8. 眉嘴按语义和节奏协调变化。平滑插值用于当前 cheerful、shy，不改变其余动作节奏。
 
-## 猫耳互动映射（已适配）
+## 挥手与猫耳兼容通道
 
-新模型没有旧版的 `ParamEarL/ParamEarR`；耳朵由物理输出 **Param9/Param13**
-（左/右晃动1，cdi3「猫耳」组）驱动。`pet-model.ts` 加载时探测：有原生
-ParamEarL/R 用原生（0..1 直写），否则映射物理输出（×12 缩放）。写入点在
-物理求值之后、`model.update()` 之前，加写当帧生效（实测 0.8 强度耳尖
-抽动 ≈0.05 模型单位位移）。
+包含 `Param30/31/36` 的当前模型使用新版挥手图层开关、小臂及手部控制，在物理之后应用；
+旧模型回退到 `Param_Angle_Rotation_1..5_ArtMesh61` 五段手链。挥手包络约 0.45s 举起，
+2.55s 起用 0.6s 放下，重复和打断均平滑释放；不让 motion 直接写这些独占参数。
 
-## 旧版动作文件（参考）
+当前模型没有旧 `ParamEarL/R`；耳朵映射到物理输出 `Param9/13`（互动值 ×12），
+有原生参数的旧模型仍使用 0～1 原生耳动。覆盖在物理之后、生效于当帧，不保存进动作基线。
 
-git 历史里的 `windows/Assets/Live2D/Aliya/Actions/*.json` 是旧 C# 版自己的
-**自定义 keyframe 格式**（`channels/parameter/keyframes/weight`），**不是**
-Cubism motion3.json，不能直接替换；如需要可参考其参数范围与时间轴上卷为
-Cubism 动作，但建议直接改 `gen-motions.py` 重新生成。
+## 验证与人工验收
+
+保留 develop 原有开发入口 `/tests/model-preview.html`，通过正式 PetApp、Core、纹理和物理
+加载真实模型。运行按钮覆盖全 10 动作的 15/30/60 FPS、12 表情、特殊眼型、挥手重播/打断
+及眼睛/猫耳/脸红互动。本会话新增的临时动画预览与参数工作台及其专属模块、配置、CLI 已清理；
+通用 SDK seeking、自然完成、连播、交叉淡化和参数复位断言迁入正式自动回归，不保留草稿覆盖钩子。
+
+前轮（删除 walk 前）生成器 7 项测试、完整 Node 140 项测试以及 `npm run build` 均通过；
+正常构建包含 TypeScript 检查，不再使用绕开临时调参类型错误的替代构建。前轮另用本机
+Chromium + 正式 Core/WebGL 执行 165 场景、71,641 帧，覆盖两动作自然播放、所有来源接入、
+所有接替动作、进入/主体/收尾打断、重播、原表情与互动脸红恢复；真实参数数目 126。
+前轮模型预览回归亦通过当时全部 11 动作、12 表情和互动。
+删除走动后的本轮生成器 5/5、完整 Node 134/134 均通过，新增断言确保动作库、模型配置、
+元数据、AI 清单和资源目录均无该动作。完整 TypeScript、Vite 与 Windows Tauri Release
+构建通过，已启动最新程序并确认主窗口响应；本轮未重新执行浏览器视觉矩阵。
+
+新一轮使用正式 Cubism Core 6.0.1、moc、物理及 `PetModel.update` 测量：15/30/60 FPS 下，
+两项新动作分别叠加全部 12 表情与中点/四角注视，并在进入、主体、收尾阶段切换全部 10 动作
+（含重播），共 540 场景、164,960 帧。实测 maxX=0.388627589、maxY=0.538378239；
+按实际静态宽高计算所需余量 1.222871072，乘 1.05 后需 1.284014626。
+最差帧是 60 FPS 的 `cheerful_bounce` 在 3.9 秒切换 `wave` 后的第 318 帧。
+因此将 `PetApp._renderMarginRatio` 从 1.22 提高到 1.30，不修改用户保存的窗口缩放设置；
+同一窗口中的模型约缩小 6.2%，为上述组合留出完整 5% 安全带。新增更大幅度仍须重测。
+
+在 `redesign/ui` 运行 `npm run test:bounds` 可复现此较慢检查（本机约 5 分钟）。测试还用
+真实 `PetApp._render` 和 Cubism 矩阵，将测得的保守包络投影到 3840×2160 工作区、
+DPI 1/1.5/2/3、设备最小/默认/最大尺寸及镜像开关的全部 24 组合，检查边缘安全带。
+这属于正式 Core 顶点及 CPU 投影检查；纹理上传和 GL 调用被隔离，不能视为 WebGL 像素、
+原生 Tauri 跨窗口 IPC 或 Windows 实机高 DPI 验收。
+
+已检查真实模型关键姿态：自动脸红明显、手臂收姿保留、未见明显重影/拉伸/裁切。
+自动检查和静帧不能替代连续播放审美验收；Windows 实际 DPI/缩放/镜像、高频指针跟随、
+Android 设备的实际渲染与触摸观感仍需人工确认。跨平台使用共用 TypeScript 调用链不等于 Android 实机通过。
+
+重新测量时禁用随机行为，手动 `_update(dt)` 驱动；每帧读取 `getDynamicBounds()`，
+按 maxAbsX/(0.5×boundsW)、maxAbsY/(0.5×boundsH) 取最大，并另乘 1.05 报告建议安全带。
+水平使用实际静态 `boundsW`，不再用 `0.64×boundsH` 近似宽度，以免低估所需余量。
+画面须等待纹理与首次有效 WebGL 渲染，不能只以 `isReady()` 为截图就绪依据。
+
+## 互动命中坐标
+
+`aliya_hit_areas.json` 使用固定模型参考坐标 `model_reference_normalized`，
+`referenceRenderMargin: 1.22` 记录原椭圆的校准基准；椭圆数值保留，不宣称重新测量了可见部位。
+`PetApp` 的渲染和命中反解共享模型到画布的变换，点击先按真实 canvas 像素尺寸反投影，
+再换算到参考坐标；镜像只消除一次，聊天适配、贴合原点和 DPR 取整均纳入计算。
+因此当前或后续渲染余量变化不需手工平移椭圆；注视及指针速度仍保持原口径。
+
+在 `redesign/ui` 运行 `node --test tests/eye-side.test.mjs` 可复现命中回归：
+正式 Core/moc 的全部顶点及椭圆采样点，经真实 `PetApp._render` 和 Cubism 矩阵投影，
+在 288 组余量、尺寸、DPI、镜像及布局组合下保持相同参考坐标和命中分类。
+这证明坐标随渲染一致，不是部位语义的重新标注，也不替代实机 GPU、鼠标及触摸验收。
+
+## 旧版格式参考
+
+git 历史 `windows/Assets/Live2D/Aliya/Actions/*.json` 是旧 C# 自定义
+`channels/parameter/keyframes/weight` 格式，不是 Cubism motion3.json，不能直接替换。
+可参考语义与节奏，但正式资源始终由当前生成器生成。

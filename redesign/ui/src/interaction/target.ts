@@ -19,6 +19,17 @@ export interface InteractionParamInfo {
   hasEyes: boolean;
 }
 
+/** 抚摸恢复交给点击反应时，保留上一帧实际写入的姿态。 */
+export interface InteractionPose {
+  headX: number;
+  headY: number;
+  headZ: number;
+  bodyX: number;
+  eyeEnabled: boolean;
+  eyeLeft: number;
+  eyeRight: number;
+}
+
 export interface InteractionTarget {
   /** 模型互动参数范围；模型未就绪返回 null。 */
   getInteractionParamInfo(): InteractionParamInfo | null;
@@ -31,8 +42,11 @@ export interface InteractionTarget {
     bodyAngleX: number
   ): void;
 
-  /** 眼睛开合覆盖（0=闭 1=睁，映射到真实参数范围）；激活期间自动眨眼暂停。 */
-  setEyeOverride(enabled: boolean, leftOpen: number, rightOpen: number): void;
+  /** 眼睛开合覆盖；side 仅接管指定眼睛，其余眼睛继续基础眨眼。 */
+  setEyeOverride(
+    enabled: boolean, leftOpen: number, rightOpen: number,
+    side?: 'both' | 'left' | 'right'
+  ): void;
 
   /** 猫耳附加偏移（参数缺失时静默忽略）。 */
   setEarInteraction(enabled: boolean, leftValue: number, rightValue: number): void;

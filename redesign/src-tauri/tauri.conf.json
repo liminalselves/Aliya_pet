@@ -1,16 +1,16 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aliya Pet",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "identifier": "top.liminalselves.aliyapet",
   "build": {
     "beforeDevCommand": {
-      "script": "npm run dev -- --host 127.0.0.1",
+      "script": "node ../scripts/prepare-windows-build.mjs && npm run dev -- --host 127.0.0.1",
       "cwd": "../ui"
     },
     "devUrl": "http://127.0.0.1:5175",
     "beforeBuildCommand": {
-      "script": "npm run build",
+      "script": "node ../scripts/prepare-windows-build.mjs && npm run build",
       "cwd": "../ui"
     },
     "frontendDist": "../ui/dist"
@@ -75,6 +75,16 @@
     "targets": "all",
     "icon": [
       "icons/tray.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/tray.ico",
+        "uninstallerIcon": "icons/tray.ico",
+        "languages": ["SimpChinese"]
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
   }
 }

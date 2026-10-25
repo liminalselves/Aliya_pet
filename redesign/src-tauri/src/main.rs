@@ -18,7 +18,7 @@ use tauri::{
 };
 
 /// 前端上报的像素占用掩码：透明区域鼠标穿透的命中表。
-/// 窗口矩形由前端随掩码捎带（物理像素），避免后台线程查询窗口API。
+/// 前端随掩码捎带参考矩形（物理像素）；Windows 命中优先使用当前原生矩形。
 /// pet 上报角色剪影；chat 上报面板/输入框矩形，各自独立判定。
 struct HitMask {
     cols: u32,
@@ -90,21 +90,67 @@ fn update_hit_mask(
 
 /// 单个窗口在光标处的期望穿透状态；光标在窗口外返回 None（保持现状）。
 #[cfg(windows)]
-fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32)) -> Option<bool> {
+fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32, i32, i32)>) -> Option<bool> {
     let m = mask?;
+    let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
-    if m.interacting || stale || m.cols == 0 || m.rows == 0 || m.win_w <= 0 || m.win_h <= 0 {
+    if m.interacting || stale || m.cols == 0 || m.rows == 0 || w <= 0 || h <= 0 {
         return Some(false);
     }
-    let lx = pt.0 - m.win_x;
-    let ly = pt.1 - m.win_y;
-    if lx < 0 || ly < 0 || lx >= m.win_w || ly >= m.win_h {
+    let lx = pt.0 - x;
+    let ly = pt.1 - y;
+    if lx < 0 || ly < 0 || lx >= w || ly >= h {
         return None; // 光标在窗口外：保持当前状态
     }
-    let gx = (lx as u32 * m.cols / m.win_w as u32).min(m.cols - 1);
-    let gy = (ly as u32 * m.rows / m.win_h as u32).min(m.rows - 1);
+    let gx = (lx as u32 * m.cols / w as u32).min(m.cols - 1);
+    let gy = (ly as u32 * m.rows / h as u32).min(m.rows - 1);
     let idx = (gy * m.cols + gx) as usize;
     Some(m.data.get(idx).copied().unwrap_or(1) == 0)
+}
+
+#[cfg(all(test, windows))]
+mod hit_mask_tests {
+    use super::*;
+
+    fn mask() -> HitMask {
+        HitMask { cols: 2, rows: 2, data: vec![0, 1, 1, 0],
+            win_x: 10, win_y: 20, win_w: 100, win_h: 100,
+            updated: std::time::Instant::now(), ..HitMask::default() }
+    }
+
+    #[test]
+    fn live_geometry_follows_move_resize_and_dpi() {
+        let m = mask();
+        let rect = Some((321, -123, 200, 100));
+        assert_eq!(want_ignore_at(Some(&m), (331, -113), rect), Some(true));
+        assert_eq!(want_ignore_at(Some(&m), (431, -113), rect), Some(false));
+        assert_eq!(want_ignore_at(Some(&m), (331, -33), rect), Some(false));
+        assert_eq!(want_ignore_at(Some(&m), (431, -33), rect), Some(true));
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), rect), None);
+    }
+
+    #[test]
+    fn gesture_lock_and_heartbeat_preserve_pixel_hit_policy() {
+        let mut m = mask();
+        m.interacting = true;
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false));
+        assert_eq!(want_ignore_at(Some(&m), (-500, -500), None), Some(false));
+        m.interacting = false;
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true));
+        m.updated -= std::time::Duration::from_secs(2);
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false));
+        m.updated = std::time::Instant::now();
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true));
+    }
+
+    #[test]
+    fn missing_cells_are_opaque_and_outside_keeps_state() {
+        let mut m = mask();
+        m.data.clear();
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false));
+        assert_eq!(want_ignore_at(Some(&m), (110, 30), None), None);
+        assert_eq!(want_ignore_at(None, (20, 30), None), None);
+    }
 }
 
 /// Windows：16ms 轮询全局光标，命中不透明像素→窗口接收事件，
@@ -115,7 +161,7 @@ fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32)) -> Option<bool> {
 /// 视线跟随不再要求光标悬在窗口上。
 #[cfg(windows)]
 fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
     std::thread::spawn(move || {
         let mut ignoring: std::collections::HashMap<&str, bool> = Default::default();
         let mut last_emit = (i32::MIN, i32::MIN);
@@ -146,9 +192,15 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                         let _ = win.emit("global-mouse", json!({ "x": pt.x, "y": pt.y }));
                     }
                 }
+                // pet/chat 均无边框；一次原生快照避免拖动、DPI 切换时依赖过期 IPC 坐标。
+                let rect = win.hwnd().ok().and_then(|hwnd| {
+                    let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    (unsafe { GetWindowRect(hwnd.0 as _, &mut r) } != 0)
+                        .then_some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+                });
                 let want = {
                     let Ok(map) = state.lock() else { continue };
-                    match want_ignore_at(map.get(label), (pt.x, pt.y)) {
+                    match want_ignore_at(map.get(label), (pt.x, pt.y), rect) {
                         Some(w) => w,
                         None => continue, // 光标在窗口外：保持当前状态
                     }
@@ -334,6 +386,7 @@ fn main() {
             chat_window::handle_window_event(window.app_handle(), window.label(), event);
         })
         .setup(move |app| {
+            chat_window::setup(app.handle())?;
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）

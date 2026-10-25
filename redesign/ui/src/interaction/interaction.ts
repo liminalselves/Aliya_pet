@@ -27,6 +27,8 @@ export class InteractionService {
   readonly proximity = new PointerProximityService();
   readonly dragReaction = new DragReactionService();
   readonly procedural: ProceduralReactionService;
+  private _earClickUntilMs = 0;
+  private _basicClickUntilMs = 0;
 
   /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
   playClickDialogue: ((tag: string) => void) | null = null;
@@ -44,6 +46,8 @@ export class InteractionService {
     this.procedural.cancelAll();
     this.dragReaction.cancel();
     this.clickSequence.reset();
+    this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
   }
 
 
@@ -64,6 +68,7 @@ export class InteractionService {
     this.procedural = new ProceduralReactionService({
       getTarget: deps.getTarget,
       isPettingActive: () => this.petting.isPettingSessionActive,
+      takeOverPetting: () => this.petting.releaseFinishing(),
       playCharacterAction: deps.playCharacterAction,
     });
   }
@@ -93,7 +98,7 @@ export class InteractionService {
       this.petting.exitPettingMode('modeChanged');
     }
     if (this.petting.onPointerDown(ctx)) {
-      this.procedural.cancelAll();
+      this.procedural.cancelAll(true);
       this.dragReaction.cancel();
       return true;
     }
@@ -125,9 +130,25 @@ export class InteractionService {
     }
 
     this.dragReaction.cancel();
+    const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
+    // 耳朵不计入普通疑惑连点，但保留其历史与全局冷却。
+    if (area === 'ear_left' || area === 'ear_right') {
+      const now = performance.now();
+      if (this.clickSequence.isInCooldown) {
+        this._acknowledgeCooldownClick();
+        return true;
+      }
+      if (now < this._earClickUntilMs) return true;
+      // 左右耳共用一次反馈时窗，避免连点反复启动 120+60+240ms 的单眼动作。
+      this._earClickUntilMs = now + 420;
+      this.procedural.apply(ProceduralReactions.earBlink(0.8, area));
+      if (this.isDialogueActive?.() !== true) this.playClickDialogue?.(area);
+      return true;
+    }
     const result = this.clickSequence.registerClick();
     if (result === ClickResult.cooldown) {
-      return true; // 点击冷却中，抑制点击台词
+      this._acknowledgeCooldownClick();
+      return true; // 冷却只抑制台词/连击动作，不吞掉基础视觉反馈。
     }
 
     if (result === ClickResult.doubt || result === ClickResult.comment) {
@@ -136,7 +157,6 @@ export class InteractionService {
       return true;
     }
 
-    const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
     switch (area) {
       case 'head':
       case 'head_pet_zone':
@@ -147,14 +167,22 @@ export class InteractionService {
         // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
         this.procedural.apply(ProceduralReactions.blush(1.0));
         break;
-      case 'ear_left':
-      case 'ear_right':
-        this.procedural.apply(ProceduralReactions.earTwitch(0.8, area));
+      default:
+        // 身体、手部、平板及未命名的可见区域也有独立反馈，不依赖台词成功播放。
+        this.procedural.apply(ProceduralReactions.acknowledge(0.8));
         break;
     }
 
     this.playClickDialogue?.(area === 'head_pet_zone' ? 'head' : area ?? 'body');
     return true;
+  }
+
+  /** 冷却期间只允许低幅度点头；限频不延长台词冷却，也不触发角色动作。 */
+  private _acknowledgeCooldownClick(): void {
+    const now = performance.now();
+    if (now < this._basicClickUntilMs) return;
+    this._basicClickUntilMs = now + 240;
+    this.procedural.apply(ProceduralReactions.acknowledge(0.35));
   }
 
   onEsc(): void {
@@ -167,14 +195,18 @@ export class InteractionService {
     this.petting.resetConfiguration();
     this.dragReaction.cancel();
     this.clickSequence.reset();
-    this.procedural.cancelAll();
+    this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
+    this.procedural.cancelAll(true);
   }
 
   /** 关闭窗口时调用：完整清理，不残留参数覆盖。 */
   onWindowClosed(): void {
     this.petting.exitPettingMode('windowClosing');
-    this.procedural.cancelAll();
+    this.procedural.cancelAll(true);
     this.clickSequence.reset();
+    this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
     this.proximity.reset();
     this.dragReaction.cancel();
   }
@@ -183,7 +215,7 @@ export class InteractionService {
   tick(dtMs: number): void {
     // 一个时刻只有一个服务写互动覆盖通道。
     if (this.petting.isPettingSessionActive) {
-      if (this.procedural.isPlaying) this.procedural.cancelAll();
+      if (this.procedural.isPlaying) this.procedural.cancelAll(true);
       this.petting.tick(dtMs);
     } else {
       this.procedural.tick();

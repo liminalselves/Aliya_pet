@@ -11,6 +11,7 @@ import { normalizeRegexRules } from './rendering/rules';
 import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } from './rendering/emoji';
 import type { MskApiCaller } from './rendering/types';
 import { openUrl, platform, shellAction } from '../platform';
+import { loadSettings } from '../settings';
 import './chat.css';
 
 /** 会话列表用的简短相对时间。 */
@@ -84,6 +85,10 @@ export class ChatView {
   private enterTimer: ReturnType<typeof setTimeout> | null = null;
   /** 整体退出动画计时器：播完才真正 setOpen(false)/关窗；重开前必须取消。 */
   private exitTimer: ReturnType<typeof setTimeout> | null = null;
+  private layoutFrame: number | null = null;
+  private layoutRevision = 0;
+  private layoutTask: Promise<void> = Promise.resolve();
+  private lastLayoutKey = '';
   private readonly panel: HTMLElement;
   private readonly content: HTMLElement;
   private readonly composer: HTMLFormElement;
@@ -103,7 +108,7 @@ export class ChatView {
         </section>
         <form class="chat-composer" hidden>
           <textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea>
-          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><span class="chat-status" role="status"></span><button type="button" class="stop" hidden>停止等待</button><button type="submit" class="send">发送</button><button type="button" class="close-window" aria-label="关闭聊天窗口">×</button></div>
+          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" hidden>停止</button><button type="submit" class="send">发送</button><button type="button" class="close-window" aria-label="关闭聊天窗口">×</button></div>
         </form>
       </div>`;
     document.body.append(this.root);
@@ -125,7 +130,12 @@ export class ChatView {
       else if (platform === 'android') shellAction('open-session-control');
     };
     this.get('.session-config').hidden = platform === 'web';
-    this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; };
+    this.get('.app-settings').onclick = () => {
+      if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_settings', { target: 'main' })).catch(() => {});
+      else if (platform === 'android') shellAction('open-settings');
+    };
+    this.get('.app-settings').hidden = platform === 'web';
+    this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; this.reportLayout(); };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     this.input.addEventListener('compositionstart', () => { this.composing = true; });
     this.input.addEventListener('compositionend', () => { this.composing = false; });
@@ -133,7 +143,7 @@ export class ChatView {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !this.composing && e.keyCode !== 229) { e.preventDefault(); this.send(); }
     };
     this.input.oninput = () => {
-      this.input.style.height = 'auto'; this.input.style.height = `${Math.min(92, this.input.scrollHeight)}px`;
+      this.input.style.height = 'auto'; this.input.style.height = `${Math.min(64, this.input.scrollHeight)}px`;
       this.reportLayout();
     };
     this.input.onfocus = () => this.notify(); this.input.onblur = () => this.notify();
@@ -157,10 +167,17 @@ export class ChatView {
     // 逐字播放中文本是收起的，此时量高会误判，跳过（播完 onDone 已补量）。
     this.content.addEventListener('load', e => {
       const img = e.target as Element | null;
-      if (!(img instanceof HTMLImageElement) || !img.closest('.msk-draw-card,.msk-attachment')) return;
+      if (!(img instanceof HTMLImageElement) || img.closest('[hidden]') || !img.closest('.msk-draw-card,.msk-attachment,.msk-sticker,.msk-emoji-img')) return;
       if (this.screen !== 'ready' || !this.replyActive || this.historyVisible || this.typewriter?.typing) return;
       this.reportLayout();
     }, true);
+    // 只响应宽度变化：原生窗口回写高度不能再次触发量高/缩放反馈。
+    let layoutWidth = window.innerWidth;
+    window.addEventListener('resize', () => {
+      if (window.innerWidth === layoutWidth) return;
+      layoutWidth = window.innerWidth;
+      if (!this.typewriter?.typing) this.reportLayout();
+    });
     void this.bootstrap();
   }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
@@ -255,7 +272,7 @@ export class ChatView {
   private showPanel(_title = ''): void {
     this.cancelLeave();
     this.panel.hidden = !this.isOpen;
-    this.get('.gal-footer').classList.remove('show');
+    this.updateHint();
     this.updateLayoutMode();
   }
   /** 取消未播完的收起动画：面板重新展示前必须撤销 leaving 态与补 hidden 的计时器。 */
@@ -310,38 +327,51 @@ export class ChatView {
   }
   /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
   private reportLayout(measuredHeight?: number): void {
-    if (platform === 'android') {
-      requestAnimationFrame(() => {
-        document.body.style.setProperty('--chat-composer-height', `${this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height}px`);
-      });
-      return;
-    }
+    const composerHeight = this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height;
+    document.body.style.setProperty('--chat-composer-height', `${composerHeight}px`);
     if (platform !== 'tauri') return;
     const mode = document.body.dataset.chatLayout ?? 'setup';
+    // 正文逐字收起期间保留本页完整高度，不以中间帧覆盖已测量的目标。
+    if (mode === 'reply' && this.typewriter?.typing && measuredHeight === undefined) return;
+    if (this.layoutFrame != null) cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = null;
+    const revision = ++this.layoutRevision;
+    if (mode === 'closed') return; // closed 不能被壳误当作 setup 再撑开窗口。
     const send = (height: number) => {
-      void import('@tauri-apps/api/core')
-        .then(m => m.invoke('set_chat_layout', { mode, contentHeight: height }))
-        .catch(() => {});
+      if (revision !== this.layoutRevision || document.body.dataset.chatLayout !== mode) return;
+      const contentHeight = mode === 'setup' ? 0 : mode === 'reply'
+        ? Math.max(118, Math.min(330, Math.ceil(height))) : Math.max(62, Math.min(144, Math.ceil(height)));
+      // 与外窗目标同批落定；打字机只揭示内容，不再拉伸/收缩可见卡片。
+      if (mode === 'reply') this.panel.style.setProperty('--chat-panel-height', `${Math.max(0, contentHeight - composerHeight - 6)}px`);
+      else this.panel.style.removeProperty('--chat-panel-height');
+      const key = `${mode}:${contentHeight}`;
+      this.layoutTask = this.layoutTask.then(async () => {
+        if (revision !== this.layoutRevision || key === this.lastLayoutKey) return;
+        const { invoke } = await import('@tauri-apps/api/core');
+        if (revision !== this.layoutRevision) return;
+        await invoke('set_chat_layout', { mode, contentHeight });
+        this.lastLayoutKey = key;
+      }).catch(error => { console.warn('聊天窗口布局更新失败', error); });
     };
     if (measuredHeight !== undefined) { send(measuredHeight); return; }
-    // setup 高与内容无关（壳侧钳 default≥300）：同步直发省一帧——等 rAF 会让
-    // 内容先换、窗口后到，矮窗把刚展开的面板压成细条（切屏闪烁源）。
     if (mode === 'setup') { send(0); return; }
-    requestAnimationFrame(() => {
-      // 逐字播放中文本是收起的，量到的是塌陷高度；播放路径已在翻页时同步量好。
+    this.layoutFrame = requestAnimationFrame(() => {
+      this.layoutFrame = null;
       if (this.typewriter?.typing) return;
       send(this.measureContentHeight());
     });
   }
-  /**
-   * 期望窗口内容高：gal-panel 被 max-height 钳在当前窗口内，直接量 shell 会越量
-   * 越矮（矮窗里的高页量出矮高，窗口再也长不回来）；补上 gal-content 的滚动
-   * 溢出量，还原内容自然高度，窗口才能随高页长到位。
-   */
+  /** 同步读取当前可见页的自然高度；旧窗口高度、滚动余量与打字机锁高均不参与。
+   * 测量样式在同一 JS 任务内恢复，不把无约束的中间布局绘制到屏幕上。 */
   private measureContentHeight(): number {
-    const shell = this.get('.chat-shell');
-    const overflow = Math.max(0, this.content.scrollHeight - this.content.clientHeight);
-    return Math.ceil(shell.getBoundingClientRect().height + overflow + 6);
+    this.root.classList.add('layout-measuring');
+    try {
+      const panelHeight = this.panel.hidden ? 0 : this.panel.getBoundingClientRect().height;
+      const composerHeight = this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height;
+      return Math.ceil(panelHeight + composerHeight + 6);
+    } finally {
+      this.root.classList.remove('layout-measuring');
+    }
   }
   private showConnect(message = ''): void {
     this.screen = 'connect'; this.clearRendering();
@@ -450,7 +480,8 @@ export class ChatView {
       this.historyMayHaveMore = timeline.length >= HISTORY_FETCH_LIMIT;
       this.renderer = new MskMessageRenderer({ api, openUrl: url => { void openUrl(url); }, onImageClick: url => { void openUrl(url); },
         regexRules: normalizeRegexRules(character.regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
-        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false });
+        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false,
+        get showGeneratedImages() { return loadSettings().showGeneratedImages; } });
       this.controller.useProvider(new MskChatProvider(client, session.id));
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.lastAnswer = this.controller.latest?.id ?? '';
@@ -500,6 +531,8 @@ export class ChatView {
       }
     }
     this.lastBusy = c.busy; this.notify();
+    // 状态提示/停止按钮会改变输入区高度，需在变更后的布局帧重新量高。
+    this.reportLayout();
     if (!c.busy) void this.applyControlRequest();
   }
   private bindMessage(message: ChatMessage, container: HTMLElement, segmented = false, onUpdate?: () => void) {
@@ -535,11 +568,13 @@ export class ChatView {
     this.replyActive = true;
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
-    const text = document.createElement('div'); text.className = 'message-text'; text.style.visibility = 'hidden';
+    // 渲染器先构建整条回复；准备期间必须脱离布局，不能只设 visibility:hidden。
+    const text = document.createElement('div'); text.className = 'message-text'; text.hidden = true;
     this.content.append(dots, text);
     const token = message.id;
     this.replyToken = token;
     const task = this.bindMessage(message, text, message.role === 'assistant', () => {
+      if (!this.playing) return;
       this.resyncPages();
       // 生图/表情异步落地后页面会变高；逐字播放中文本是收起的，此时量高会误判，跳过。
       if (!this.typewriter?.typing) this.reportLayout();
@@ -549,7 +584,7 @@ export class ChatView {
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
       // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接。
-      dots.remove(); text.style.visibility = ''; text.classList.add('gal-text-in');
+      dots.remove(); text.hidden = false; text.classList.add('gal-text-in');
       this.playing = true;
       this.resyncPages();
     });
@@ -558,7 +593,8 @@ export class ChatView {
   private resyncPages(): void {
     if (!this.replyActive || !this.playing) return;
     const segments = [...this.content.querySelectorAll<HTMLElement>('.msk-segment')];
-    if (!segments.length) return;
+    // 仅含配图的回复在关闭配图后没有可播放页，不留下空白面板。
+    if (!segments.length) { this.hideReply(); return; }
     if (segments.length === this.segments.length && segments.every((s, i) => s === this.segments[i])) return;
     const firstPaint = this.segments.length === 0;
     this.segments = segments;
@@ -590,7 +626,8 @@ export class ChatView {
       this.updateHint();
       return;
     }
-    // 逐字播放会收起文本；趁整页文字还在先同步量高上报，窗口贴合每一页而不是整条回复。
+    // 页脚先落定，再按当前完整页一次量高；后续逐字揭示不改变卡片尺寸。
+    this.updateHint();
     this.reportLayout(this.measureContentHeight());
     if (page && animate) {
       page.classList.add('gal-page-in');
@@ -634,9 +671,9 @@ export class ChatView {
     const footer = this.get('.gal-footer');
     const hint = this.get('.page-hint');
     this.panel.classList.toggle('replying', this.screen === 'ready' && this.replyActive);
-    const showFooter = this.screen === 'ready' && this.replyActive;
+    const showFooter = this.screen === 'ready' && this.replyActive && this.playing;
     footer.classList.toggle('show', showFooter);
-    if (!showFooter) return;
+    if (!showFooter) { hint.textContent = ''; hint.classList.remove('blink'); return; }
     // 页脚计数只计文本页：指令页不展示，数进去会让「2/5」跳到看不见的页
     const total = this.segments.filter(s => !s.classList.contains('msk-cue')).length;
     const page = this.segments.slice(0, this.pageIndex + 1).filter(s => !s.classList.contains('msk-cue')).length;
@@ -647,6 +684,8 @@ export class ChatView {
     else hint.textContent = total > 1 ? `▼ 点击收起 ${page}/${total}` : '▼ 点击收起';
   }
   private clearPlayback(): void {
+    // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
+    if (this.replyActive) this.controller.onCancelPerformance();
     this.replyActive = false; this.replyToken = null; this.playing = false;
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;
