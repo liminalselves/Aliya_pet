@@ -60,3 +60,14 @@
 ## 验收边界
 
 自动化检查与实际 GUI 验收分开记录。不能用本机新系统上的成功构建，替代 macOS 14.4、Intel 真机或混合 DPI 多屏实测。CI 配置加入仓库不代表远程 CI 已执行。
+
+## 本机安全验收记录（2026-10-26）
+
+本轮只执行不会启动应用、不会安装到 `/Applications`、不会修改登录项或系统偏好的检查；明确跳过自启动测试。
+
+- `redesign/ui`: `npm test` 172 项通过；`npm run build` 通过。
+- `redesign/src-tauri`: `PATH="/opt/homebrew/opt/rustup/bin:$PATH" cargo test --locked --quiet` 33 项通过；`cargo check --locked --quiet` 通过。
+- `redesign`: `npm run test:mac` 12 项通过；`TMPDIR=真实路径 npm run test:build` 13 项通过、7 项 Windows 专用测试跳过。
+- Universal 产物：`npm run validate:mac -- ".../Aliya Pet.app"` 通过，确认 `arm64 + x86_64`、macOS 14.4、ad-hoc 签名。
+- DMG：`hdiutil verify` 通过，checksum 有效。
+- 未执行：应用 GUI 启动、`open`、复制到 Applications、登录自启/LaunchAgent、`launchctl`、Gatekeeper 放行、跨屏/Spaces/输入法实机操作。
