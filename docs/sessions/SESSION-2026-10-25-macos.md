@@ -16,6 +16,11 @@
 3. 系统能力：浏览器、登录自启、平台文案与失败回读测试（已实现并通过静态/单元测试；实际登录自启待验收）。
 4. 集成验证：双架构包、使用文档、实际检查与剩余验收项（待实施）。
 
+### 已完成提交
+
+- `f57c01c feat: 添加 macOS 通用包构建配置与打包测试`
+- `7417e8d feat: 接入 macOS 桌面交互与系统能力`
+
 ## 验证记录
 
 - 初始工作区干净；读取代码、调用方、现有测试和锁定依赖。
@@ -31,6 +36,13 @@
 - macOS 原生接线后：`cargo test --locked --quiet` 33 项通过，`cargo check --locked --quiet` 通过；共享 UI `npm test` 172 项通过，`npm run build` 通过。
 - 新增桌面适配测试：macOS points/Retina/负坐标/工作区/事件/置顶错误传播 7 项通过；Control+主键抚摸及取消路径纳入点击回归。
 - 本地尝试 `npm run tauri -- build --target aarch64-apple-darwin --bundles app --no-sign`：前端构建成功，但 Tauri CLI 报本机未安装目标（环境没有可用 `rustup`，仅 Homebrew Rust）；因此未声称本地 `.app` 构建通过。CI 使用 `dtolnay/rust-toolchain` 安装目标。
+
+## 尚未完成的实机门禁
+
+- 本机没有可用 `rustup`，也没有 x86_64 Rust 标准库；Universal `.app/.dmg` 尚未在本机生成。
+- 尚未在 Intel Mac、macOS 14.4、混合 1x/2x 多屏、多个普通 Space、Stage Manager、全屏独占 Space 上启动并操作。
+- 尚未验证 Finder 安装、ad-hoc Gatekeeper「Open Anyway」、菜单栏浅色/深色实际外观、登录项实际启动、Misskey 浏览器回调及中文输入法。
+- CI workflow 已提交但未在 GitHub Actions 执行；不能将 workflow 配置视为远程构建通过。
 
 ## 验收边界
 
