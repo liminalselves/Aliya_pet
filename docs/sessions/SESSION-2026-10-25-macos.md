@@ -14,12 +14,14 @@
 1. 构建基础：平台配置、图标、打包校验和 macOS CI（已实现并通过本地脚本/编译测试；安装包与远程 CI 尚待验证）。
 2. 桌面交互：命中策略、Retina 坐标、窗口生命周期、菜单栏与测试（已实现并通过 Rust/UI 回归测试；GUI 待验收）。
 3. 系统能力：浏览器、登录自启、平台文案与失败回读测试（已实现并通过静态/单元测试；实际登录自启待验收）。
-4. 集成验证：双架构包、使用文档、实际检查与剩余验收项（待实施）。
+4. 集成验证：双架构包、使用文档、实际检查与剩余验收项（已完成构建与产物校验；GUI/跨版本验收待实施）。
 
 ### 已完成提交
 
 - `f57c01c feat: 添加 macOS 通用包构建配置与打包测试`
 - `7417e8d feat: 接入 macOS 桌面交互与系统能力`
+- `7d3df5d docs: 记录 macOS 支持验收边界`
+- `ac9a7a0 docs: 修正 macOS 自启架构说明`
 
 ## 验证记录
 
@@ -35,14 +37,25 @@
 - 修正透明配置后重跑 `npm run test:mac`，12 项全部通过；`git diff --check` 通过。
 - macOS 原生接线后：`cargo test --locked --quiet` 33 项通过，`cargo check --locked --quiet` 通过；共享 UI `npm test` 172 项通过，`npm run build` 通过。
 - 新增桌面适配测试：macOS points/Retina/负坐标/工作区/事件/置顶错误传播 7 项通过；Control+主键抚摸及取消路径纳入点击回归。
-- 本地尝试 `npm run tauri -- build --target aarch64-apple-darwin --bundles app --no-sign`：前端构建成功，但 Tauri CLI 报本机未安装目标（环境没有可用 `rustup`，仅 Homebrew Rust）；因此未声称本地 `.app` 构建通过。CI 使用 `dtolnay/rust-toolchain` 安装目标。
+- 工具链补齐前曾尝试 `npm run tauri -- build --target aarch64-apple-darwin --bundles app --no-sign`，因缺少 Rust target 失败；补齐 rustup/targets 后已重新完成原生与 Universal 构建。
 
 ## 尚未完成的实机门禁
 
-- 本机没有可用 `rustup`，也没有 x86_64 Rust 标准库；Universal `.app/.dmg` 尚未在本机生成。
 - 尚未在 Intel Mac、macOS 14.4、混合 1x/2x 多屏、多个普通 Space、Stage Manager、全屏独占 Space 上启动并操作。
 - 尚未验证 Finder 安装、ad-hoc Gatekeeper「Open Anyway」、菜单栏浅色/深色实际外观、登录项实际启动、Misskey 浏览器回调及中文输入法。
 - CI workflow 已提交但未在 GitHub Actions 执行；不能将 workflow 配置视为远程构建通过。
+
+## 工具链补齐记录（2026-10-25）
+
+- 通过 Homebrew 安装 `rustup 1.29.2`；因 `rustup` 为 keg-only，在 `~/.zshrc` 增加
+  `/opt/homebrew/opt/rustup/bin` 到 `PATH`。
+- 安装并设为默认：`stable-aarch64-apple-darwin`，Rust `1.99.1`。
+- 安装目标：`aarch64-apple-darwin`、`x86_64-apple-darwin`。
+- `PATH="/opt/homebrew/opt/rustup/bin:$PATH" cargo test --locked --quiet`：33 项通过。
+- `PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri -- build --target aarch64-apple-darwin --bundles app`：Apple Silicon `.app` 构建成功。
+- Apple Silicon `.app` 校验：`validate:mac --arch arm64` 通过，最低系统 14.4，ad-hoc 签名。
+- `PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run build:mac`：Universal `.app` 和 `.dmg` 构建成功。
+- Universal `.app` 校验：arm64 + x86_64、最低系统 14.4、ad-hoc 签名全部通过；`hdiutil verify` 校验 DMG 通过。
 
 ## 验收边界
 

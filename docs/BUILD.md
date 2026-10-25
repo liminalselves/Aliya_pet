@@ -111,6 +111,12 @@ Tauri 的 `beforeBuildCommand` 与 `beforeDevCommand` 会先运行
 以下命令从仓库根目录开始；需先具备 Node、Rust 和 Apple 开发工具：
 
 ```bash
+# Homebrew Rust 与 rustup 冲突时，rustup 使用 keg-only 路径；只需安装一次。
+brew install rustup
+echo 'export PATH="/opt/homebrew/opt/rustup/bin:$PATH"' >> ~/.zshrc
+exec zsh
+rustup toolchain install stable --profile minimal
+rustup default stable
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cd redesign
 npm ci
