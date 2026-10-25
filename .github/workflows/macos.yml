@@ -1,0 +1,116 @@
+name: macos
+
+on:
+  push:
+    branches: [master, mac]
+    paths: ['redesign/**', 'third_party/**', '.github/workflows/macos.yml', '.github/workflows/release.yml']
+  pull_request:
+    paths: ['redesign/**', 'third_party/**', '.github/workflows/macos.yml', '.github/workflows/release.yml']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: '14.4'
+
+jobs:
+  native:
+    name: Native ${{ matrix.arch }} tests and app
+    # Official standard labels: macos-15 = arm64; macos-15-intel = Intel.
+    # Checked against GitHub's hosted-runners reference on 2026-10-25.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            arch: x86_64
+            target: x86_64-apple-darwin
+    defaults:
+      run:
+        working-directory: redesign
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Confirm native runner architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix ui
+      - name: Packaging and frontend tests
+        run: |
+          npm run test:mac
+          # Windows-helper fixtures reject symlink ancestors; macOS /var is a symlink.
+          TMPDIR="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')" npm run test:build
+          npm test --prefix ui
+      - name: Build frontend for Rust generated context
+        run: npm run build --prefix ui
+      - name: Native Rust unit tests
+        # generate_context! reads common + macOS config via tauri-build/codegen.
+        # Do not inject the unmerged base JSON as TAURI_CONFIG.
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+      - name: Build native ad-hoc app
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles app
+      - name: Validate native app
+        run: npm run validate:mac -- "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Aliya Pet.app" --arch ${{ matrix.arch }}
+
+  universal:
+    name: Universal ad-hoc app and DMG
+    needs: native
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: redesign
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix ui
+      - name: Build Universal app and DMG
+        run: npm run build:mac
+      - name: Validate Universal app and disk image
+        run: |
+          npm run validate:mac -- "src-tauri/target/universal-apple-darwin/release/bundle/macos/Aliya Pet.app"
+          for dmg in src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg; do
+            hdiutil verify "$dmg"
+          done
+      - name: Archive app preserving macOS metadata and verify round trip
+        run: |
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          bundle="src-tauri/target/universal-apple-darwin/release/bundle"
+          archive="$bundle/macos/AliyaPet_${version}_universal.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$bundle/macos/Aliya Pet.app" "$archive"
+          restored=$(mktemp -d)
+          trap 'rm -rf "$restored"' EXIT
+          ditto -x -k "$archive" "$restored"
+          npm run validate:mac -- "$restored/Aliya Pet.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          # Upload files, never the raw .app directory (permissions/metadata).
+          path: |
+            redesign/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.zip
+            redesign/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error

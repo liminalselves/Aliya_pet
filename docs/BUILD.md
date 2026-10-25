@@ -6,6 +6,7 @@
 | ---- | ---- | ---- |
 | Node.js `^20.19.0 || >=22.12.0` | 前端构建（Vite 8）；推荐 24 LTS | UI 源码在 `redesign/ui/` |
 | Rust + cargo | Tauri 壳 | `redesign/src-tauri/` |
+| macOS 14.4+ + Xcode Command Line Tools | macOS 原生测试及 Universal 打包 | `xcode-select --install`；需 Apple SDK、`lipo`、`codesign`、`ditto`、`hdiutil` |
 | Android SDK（platform 36）+ JDK 17/21 | Android 构建 | 本地 `gradle wrapper` 自动下载 Gradle 8.11.1 + AGP 8.9 |
 | **Live2D Cubism SDK** | 第三方法/Web 组件 | 见下节 |
 
@@ -23,6 +24,10 @@ clone 后即可构建，无需手动准备。
 ## 图标资源
 
 - Windows 窗口、托盘及安装包共用 `redesign/src-tauri/icons/tray.ico`（16–256px）；NSIS 的 `installerIcon` / `uninstallerIcon` 显式指向该文件。`build.rs` 监听图标变化，更新后运行正常发布构建即可重新嵌入。
+- macOS 应用图标为 `redesign/src-tauri/icons/icon.icns`（含至 1024px 的 Retina 图像），`icon.png` 为 256×256 RGBA 通用图标。公共 `bundle.icon` 同时保留 PNG、ICNS 和 Windows ICO。
+- macOS 菜单栏使用 `tray-template.png`（18×18）及 `tray-template@2x.png`（36×36），均为黑色 RGB + 透明 alpha 的 A 字模板。Rust 托盘必须设置 template 标志；原生图像的逻辑尺寸为 18pt，2x 资源不可当作 36pt 图标。应用彩图不能代替模板。
+- 上述资源随仓库提供，正常构建无需 Python。需要重生成时，在已具备 Pillow 和 Apple `iconutil` 的 macOS 环境执行 `python3 redesign/scripts/generate-macos-icons.py`，随后执行 `npm --prefix redesign run test:mac`。素材来源为现有 `redesign/ui/assets/icon.png`，不需要私有文件。
+- 仅预览现有模板（模拟浅/深色着色，含实际像素与放大图）可运行 `python3 redesign/scripts/generate-macos-icons.py --preview /tmp/aliya-macos-tray-preview.png`；不改写图标，不代替真实菜单栏截图。
 - Android 启动图标位于 `res/mipmap-*`；自适应前景保留底图完整构图，缩放到 108dp 画布中央的 72dp 区域，由系统应用遮罩。通知小图标为 `res/drawable/ic_notification.xml` 的单色 A。
 - 四个 Web 页面共用 `redesign/ui/assets/icon.png`。
 
@@ -80,6 +85,122 @@ Tauri 的 `beforeBuildCommand` 与 `beforeDevCommand` 会先运行
   已知无害，重跑 dev 即可。
 - 前端改动即时热重载；Rust 改动由 tauri dev 自动重编译。
 
+## macOS（Tauri，14.4+ 测试版）
+
+目标为 Apple Silicon + Intel 的 **Universal** 包，输出 ad-hoc 签名的 `.app` 和 `.dmg`。
+该测试版没有 Developer ID 签名及 Apple 公证，不需要 Apple 证书或发布 secrets。
+菜单栏入口与普通桌面 Spaces 行为由原生层实现；打包检查不能证明实际窗口行为。
+
+### 配置与原生集成约定
+
+- Tauri 自动把 `src-tauri/tauri.macos.conf.json` 合并到 `tauri.conf.json`：
+  `minimumSystemVersion: "14.4"`、`signingIdentity: "-"`、`targets: ["app", "dmg"]`，
+  公共配置启用 `app.macOSPrivateApi: true`（只作用于 macOS）。
+- 合并采用 JSON Merge Patch：**数组整体替换**，不是逐元素合并。macOS overlay 不声明
+  `app.windows`，完整继承 `pet`、`chat`、`settings`、`records` 四个窗口；`bundle.icon`
+  则整体替换为 ICNS + PNG。修改 overlay 时不要只写一个窗口。
+- Tauri 2.11 的 manifest 校验只检查公共 `tauri` 依赖，不合并 target dependency 的 features。
+  因此公共依赖启用 `macos-private-api`，与公共 `app.macOSPrivateApi` 成对配置；该功能在
+  Tauri 内部仅作用于 macOS。`image-png` 仍只在 macOS target 启用，用于解码模板 PNG。
+- 菜单栏 template、18pt/Retina 尺寸、后台常驻及所有普通 Spaces 行为均需原生层接入和真机确认。
+
+### 安装构建依赖与检查
+
+以下命令从仓库根目录开始；需先具备 Node、Rust 和 Apple 开发工具：
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cd redesign
+npm ci
+npm ci --prefix ui
+
+# Node 打包回归：合并、图像像素、Windows 配置、校验器；macOS 另用 iconutil 解码 ICNS
+npm run test:mac
+# Windows-helper 的模拟测试拒绝符号链接祖先；macOS 上先解析 /var 的真实路径
+TMPDIR="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')" npm run test:build
+npm test --prefix ui
+
+# Rust 的 generate_context! 可能需要 frontendDist，先构建共享前端
+npm run build --prefix ui
+MACOSX_DEPLOYMENT_TARGET=14.4 cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+# 自动构建前端，并分别编译两种架构，再合成 Universal .app / .dmg
+MACOSX_DEPLOYMENT_TARGET=14.4 npm run build:mac
+```
+
+Rust 配置测试应通过 Tauri 生成的 context 获取配置，不要只反序列化
+`include_str!("../tauri.conf.json")`，也不要把未合并的公共配置注入 `TAURI_CONFIG`。
+例如测试四窗口时使用：
+
+```rust
+let context = tauri::generate_context!();
+let labels: Vec<_> = context.config().app.windows.iter()
+    .map(|window| window.label.as_str()).collect();
+assert_eq!(labels, ["pet", "chat", "settings", "records"]);
+```
+
+在 macOS 上，`tauri-build` / codegen 自动读取平台 overlay；测试只生成 context，
+无需启动 GUI 事件循环。原生配置测试与 Node 合并测试互相补充。
+
+默认产物目录（自定义 `CARGO_TARGET_DIR` 时相应替换根目录）：
+
+```text
+redesign/src-tauri/target/universal-apple-darwin/release/bundle/
+├── macos/Aliya Pet.app/
+└── dmg/Aliya Pet_<version>_universal.dmg
+```
+
+### 校验与归档
+
+在 `redesign/` 下：
+
+```bash
+bundle="src-tauri/target/universal-apple-darwin/release/bundle"
+npm run validate:mac -- "$bundle/macos/Aliya Pet.app"
+for dmg in "$bundle"/dmg/*.dmg; do hdiutil verify "$dmg"; done
+
+version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+ditto -c -k --sequesterRsrc --keepParent \
+  "$bundle/macos/Aliya Pet.app" "$bundle/macos/AliyaPet_${version}_universal.app.zip"
+```
+
+`validate:mac` 真正执行 `plutil`、`lipo -archs` 与 `codesign`：
+读取 `CFBundleExecutable`，要求 arm64 + x86_64 两个切片，深度严格验证整个 app 签名，
+逐切片检查 `Signature=adhoc`，并要求 `LSMinimumSystemVersion` 为 `14.4`、bundle ID 与配置一致。
+成功时输出 JSON 报告；工具失败、缺少切片、最低系统版本错误或签名不符均退出非零。
+仅检查单架构开发产物时显式加 `--arch arm64` 或 `--arch x86_64`，默认始终要求 Universal。
+此检查不等同于 Gatekeeper 公证检查，也不代替 14.4 真机运行测试。
+
+`.app` 是目录，不能直接作为 GitHub Release 文件上传。先用上面的 `ditto` 命令生成
+保留元数据的 `.app.zip`，再上传 ZIP 和 DMG；CI 还会解压 ZIP 并再次验证 app。
+
+### 安装与 Gatekeeper
+
+1. macOS 14.4+ 上打开 DMG，把 **Aliya Pet.app** 拖入「应用程序」；ZIP 则先用 Finder
+   解压后移动到「应用程序」。从安装位置启动，完成复制后推出 DMG。
+2. ad-hoc 测试包首次打开可能显示开发者无法验证或 Apple 无法检查。
+   确认下载来源可信后，先尝试打开一次，再到 **系统设置 → 隐私与安全性 → 仍要打开
+   （Open Anyway）**，确认此应用的例外并再次选择打开。
+3. 保持 Gatekeeper 开启。若提示损坏、签名校验失败或恶意软件，重新获取完整产物并排查；
+   不通过全局关闭安全机制或批量删除隔离属性绕过问题。
+4. 真机验收至少覆盖菜单栏图标的浅色/深色及 Retina 外观、菜单打开设置/记录、退出、
+   宠物和聊天窗口切换所有**普通 Spaces**、交互/拖动/透明区域，以及关闭辅助窗口后的常驻行为。
+   Apple Silicon 和 Intel 均需实际运行；全屏独占 Space 的行为不在此测试版承诺范围内。
+
+### macOS CI
+
+`.github/workflows/macos.yml` 支持 `master` / `mac` 分支相关改动、PR、手动触发，
+也被 release 工作流复用。原生矩阵为官方标准 runner `macos-15`（arm64）与
+`macos-15-intel`（Intel）；标签在 2026-10-25 依据 GitHub hosted-runners 官方参考核对。
+每个原生 job 执行打包脚本测试、前端测试/构建、对应架构 Rust 单元测试及 ad-hoc app 构建/验证。
+两者通过后，在 arm64 runner 安装两个 Rust target 并构建 Universal，上传
+`macos-universal` artifact（`.app.zip` + `.dmg`）。CI runner 的系统版本不是 14.4，
+因此 CI 通过仍需补充最低系统版本及 GUI 验收。
+
+官方参考：GitHub Docs 的 **GitHub-hosted runners reference**，Tauri v2 的
+**Configuration / Platform-Specific Configuration** 与 **macOS Application Bundle**，
+Apple Support 的 **Safely open apps on your Mac**（文章 102445）。
+
 ## Android
 
 ```bash
@@ -120,8 +241,10 @@ debug 与 release 签名不同，从 debug 覆盖装 release 前必须先卸载�
 ## 发布构建（GitHub Actions）
 
 推送 `v*` 标签且指向 master 时，`.github/workflows/release.yml` 自动：
-校验 tag 在 master 上且与各端包内版本一致 → 构建 Windows 安装包（NSIS + MSI）与 Android 签名 APK →
+校验 tag 在 master 上且与各端包内版本一致 → 构建 Windows 安装包（NSIS + MSI）、
+macOS Universal ad-hoc 测试包（`.app.zip` + `.dmg`）与 Android 签名 APK →
 附到对应 tag 的 GitHub Release（也可在 Actions 页下载 artifact）。
+发布 job 依赖三个平台全部成功；macOS 没有 Developer ID / 公证，不代表正式签名发行。
 
 Android 签名需在仓库 Settings → Secrets and variables → Actions 配置：
 

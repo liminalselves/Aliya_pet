@@ -2,12 +2,15 @@
   "name": "aliya-pet-redesign",
   "private": true,
   "version": "0.1.0",
-  "description": "Aliya Pet：共享 Web 内核 + Tauri（Windows）/ Kotlin（Android）双端薄壳",
+  "description": "Aliya Pet：共享 Web 内核 + Tauri（Windows / macOS）/ Kotlin（Android）薄壳",
   "scripts": {
     "tauri": "tauri",
     "dev": "node scripts/dev.mjs",
     "build": "tauri build",
-    "test:build": "node --test scripts/prepare-windows-build.test.mjs"
+    "test:build": "node --test scripts/prepare-windows-build.test.mjs",
+    "build:mac": "tauri build --target universal-apple-darwin",
+    "test:mac": "node --test scripts/macos-packaging.test.mjs",
+    "validate:mac": "node scripts/validate-macos-artifact.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

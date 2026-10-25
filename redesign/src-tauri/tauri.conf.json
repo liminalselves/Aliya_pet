@@ -16,6 +16,7 @@
     "frontendDist": "../ui/dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "pet",
@@ -28,7 +29,8 @@
         "skipTaskbar": true,
         "resizable": false,
         "shadow": false,
-        "focus": false
+        "focus": false,
+        "acceptFirstMouse": true
       },
       {
         "label": "chat",
@@ -43,6 +45,7 @@
         "resizable": false,
         "shadow": false,
         "focus": false,
+        "acceptFirstMouse": true,
         "visible": false
       },
       {
@@ -74,7 +77,9 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/tray.ico"
+      "icons/tray.ico",
+      "icons/icon.png",
+      "icons/icon.icns"
     ],
     "windows": {
       "nsis": {
