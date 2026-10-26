@@ -22,7 +22,12 @@
 .agent-control-drawer .control-close:hover { background:var(--al-hover-fill); color:var(--al-text-1); }
 
 /* 页签：下划线式，选中项文字变亮 + 底部一道腮红短线 */
-.agent-control-drawer nav { display:flex; gap:2px; margin:0 12px; overflow-x:auto; scrollbar-width:none; }
+.agent-control-drawer nav { display:flex; gap:2px; margin:0 12px; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; touch-action:pan-x; --fade-l:0px; --fade-r:0px; -webkit-mask-image:linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent); mask-image:linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent); }
+/* 边缘渐隐只是透明度遮罩（示意还有页签），不是色彩光晕。 */
+.agent-control-drawer nav.more-left { --fade-l:24px; }
+.agent-control-drawer nav.more-right { --fade-r:24px; }
+.agent-control-drawer nav.dragging { cursor:grabbing; user-select:none; }
+.agent-control-drawer nav.dragging button { cursor:grabbing; }
 .agent-control-drawer nav::-webkit-scrollbar { display:none; }
 .agent-control-drawer nav button { position:relative; flex:none; height:36px; padding:0 10px; border:0; border-radius:var(--al-r-s) var(--al-r-s) 0 0; background:none; color:var(--al-text-3); font-size:13px; white-space:nowrap; }
 .agent-control-drawer nav button::after { content:''; position:absolute; left:10px; right:10px; bottom:0; height:2px; border-radius:1px; background:var(--al-accent); transform:scaleX(0); transition:transform var(--al-t-med) var(--al-ease); }

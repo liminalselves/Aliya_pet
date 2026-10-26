@@ -36,7 +36,7 @@ button { font: inherit; }
 /* 状态提示：浮在列表上方的小胶囊，不占布局（展开收起会把整列消息顶下去） */
 .records-status { position: absolute; top: 64px; left: 50%; z-index: 3; max-width: calc(100% - 48px); padding: 6px 14px; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-pill); background: var(--al-bg-3); box-shadow: var(--al-shadow-2); color: var(--al-text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; pointer-events: none; transform: translate(-50%, -6px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease); }
 .records-status.show { opacity: 1; transform: translate(-50%, 0); }
-.records-status:empty { visibility: hidden; }
+.records-status:empty, .records-status:not(.show) { visibility: hidden; transition: opacity var(--al-t-out) var(--al-ease-in), transform var(--al-t-out) var(--al-ease-in), visibility 0s var(--al-t-out); }
 .records-status[data-kind="error"] { color: var(--al-danger); }
 
 /* ---------- 消息列：居中阅读栏，宽窗不再半边空 ---------- */

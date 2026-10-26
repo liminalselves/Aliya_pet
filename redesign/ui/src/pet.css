@@ -73,7 +73,7 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   word-break: break-word;
   z-index: 10;
   /* display:none→block 会重放该动画，即每次翻页/新台词弹入 */
-  animation: bubble-pop 0.22s var(--al-ease-spring);
+  animation: bubble-pop var(--al-t-med) var(--al-ease);
 }
 
 /* 指向角色的小尾巴 */

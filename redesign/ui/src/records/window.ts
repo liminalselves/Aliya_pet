@@ -384,9 +384,11 @@ class RecordsView {
 
   private setStatus(text: string, kind: 'info' | 'error' = 'info', transient = false): void {
     window.clearTimeout(this.statusTimer);
+    // 收起时保留旧文字直到淡出结束：先清空会让胶囊在淡出帧里塌成空壳。
+    this.status.classList.toggle('show', text !== '');
+    if (!text) return;
     this.status.textContent = text;
     this.status.dataset.kind = kind;
-    this.status.classList.toggle('show', text !== '');
     if (transient && text) this.statusTimer = window.setTimeout(() => this.setStatus(''), 4200);
   }
 
