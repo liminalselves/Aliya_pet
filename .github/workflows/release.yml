@@ -1,6 +1,6 @@
 name: release
 
-# 推送 v* 标签且指向 master 时：构建 Windows 安装包与 Android 签名 APK，附到 GitHub Release
+# 推送 v* 标签且指向 master 时：构建 Windows、macOS Universal 测试包与 Android，附到 GitHub Release
 on:
   push:
     tags: ['v*']
@@ -80,6 +80,10 @@ jobs:
             redesign/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+  build-macos:
+    needs: tag-on-master
+    uses: ./.github/workflows/macos.yml
+
   build-android:
     needs: tag-on-master
     runs-on: ubuntu-latest
@@ -131,7 +135,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-android]
+    needs: [build-windows, build-macos, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

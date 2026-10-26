@@ -40,7 +40,7 @@ function startHitMaskRelay(): void {
   let lastKey = '';
   setInterval(() => {
     void (async () => {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow } = await import('../desktop-window');
       const win = getCurrentWindow();
       const [pos, sf] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
       const w = window.innerWidth;

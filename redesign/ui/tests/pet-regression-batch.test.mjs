@@ -69,7 +69,7 @@ function resizeHarness(sf = 1.5, mirror = false) {
     scaleFactor: sf, workArea: { position: { x: -3000, y: 0 }, size: { width: 3000, height: 2400 } },
   }; }, LogicalSize: class { constructor(width, height) { this.width = width; this.height = height; } },
   PhysicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } } };
-  const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api,
+  const { PetApp } = load('pet-app', { './desktop-window': api,
     './platform': { platform: 'tauri' }, './settings': { ...settings, saveSettings: s => saved.push({ ...s }) },
   }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {} } },
     console: { warn: (...args) => warnings.push(args) } });
