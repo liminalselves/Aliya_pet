@@ -54,7 +54,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     _bubble: { play: r => lines.push(r.pages[0].text), cancel: () => assert.fail('点击不能取消现有气泡') },
     _activePointerId: null, _leftDown: false, _touchPetting: false, _touchTapCandidate: false,
     _dragCandidate: false, _dragging: false, _wrapWindow: false, _scaleFactor: 1,
-    _winPhysX: 0, _winPhysY: 0, _hitMaskData: new Uint8Array(48 * 48).fill(1), _hitMaskRows: 48,
+    _winPhysX: 0, _winPhysY: 0, _hitMaskData: new Uint8Array(96 * 96).fill(1), _hitMaskRows: 96,
     _hitMaskInteracting: false, _hitMaskLastMs: 0, _hitMaskSentMs: 0,
     _hitMaskSend: args => masks.push(args), _settings: { mirror: false },
     _syncWindowMetrics() {}, _cancelSnapAnimation() {}, _moveWindowBy() {}, _onDragFinished() {},
@@ -230,9 +230,9 @@ test('Windows透明命中与指针交接立即锁定右键，up/cancel/失焦后
 
 test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相同掩码去重', () => {
   const h = harness({ platform: 'tauri' });
-  const pixels = new Uint8ClampedArray(48 * 48 * 4).fill(255);
+  const pixels = new Uint8ClampedArray(96 * 96 * 4).fill(255);
   Object.assign(h.app, { _model: { isReady: () => true },
-    _hitMaskCanvas: { width: 48, height: 48 }, _hitMaskCtx: {
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
       clearRect() {}, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {}, fillRect() {},
       getImageData: () => ({ data: pixels }),
     }, _chatView: { hitRects: () => [] },
@@ -249,19 +249,19 @@ test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相�
 });
 
 test('监听降级提示区域加入Windows命中掩码，成功移除提示后恢复穿透', () => {
-  const h = harness({ platform: 'tauri' }), pixels = new Uint8ClampedArray(48 * 48 * 4), fills = [];
+  const h = harness({ platform: 'tauri' }), pixels = new Uint8ClampedArray(96 * 96 * 4), fills = [];
   Object.assign(h.app, { _model: { isReady: () => true },
     _shellSyncNotice: { getBoundingClientRect: () => ({ left: 100, top: 50, width: 200, height: 100 }) },
-    _hitMaskCanvas: { width: 48, height: 48 }, _hitMaskCtx: {
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
       clearRect() { pixels.fill(0); }, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {},
       fillRect(x, y, w, h) {
         fills.push([x, y, w, h]);
-        for(let row=y;row<Math.min(48,y+h);row++)for(let col=x;col<Math.min(48,x+w);col++)pixels[(row*48+col)*4+3]=255;
+        for(let row=y;row<Math.min(96,y+h);row++)for(let col=x;col<Math.min(96,x+w);col++)pixels[(row*96+col)*4+3]=255;
       }, getImageData: () => ({ data: pixels }),
     }, _chatView: { hitRects: () => [] },
   });
   h.setTime(200); h.app._maybeSendHitMask();
-  assert.deepEqual(fills, [[6, 3, 13, 7]]);assert.equal(h.masks.at(-1).data[4 * 48 + 7], 1);
+  assert.deepEqual(fills, [[12, 6, 25, 13]]);assert.equal(h.masks.at(-1).data[8 * 96 + 14], 1);
   h.app._shellSyncNotice = null; h.setTime(400); h.app._maybeSendHitMask();
   assert.ok(h.masks.at(-1).data.every(v => v === 0));
 });

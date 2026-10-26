@@ -122,6 +122,13 @@ export class PetApp {
   private _screenH = 0;
   /** 吸附归位动画令牌：新拖动/新吸附自增打断旧动画。 */
   private _snapAnimToken = 0;
+  /**
+   * 缩放补间（CSS px / 模型单位）：外窗尺寸只能单步落定，角色大小在画布内以脚底为
+   * 锚平滑过渡。start=null 表示保持 from（等原生尺寸落地再开始）；settled=窗口已落定，
+   * 播完即撤销，回到按窗口自然适配。
+   */
+  private _scaleTween: { from: number; to: number; start: number | null; settled: boolean } | null = null;
+  private static readonly _scaleTweenMs = 200;
   private _snapAnimation: Animation | null = null;
   private _snapHintTimer: ReturnType<typeof setTimeout> | null = null;
   private _globalMouse: { x: number; y: number } | null = null;
@@ -188,7 +195,8 @@ export class PetApp {
   private _bubbleScaledH = 0;
 
   /** 鼠标穿透掩码列数（行数按窗口纵横比推导）。 */
-  private static readonly _hitMaskCols = 48;
+  /** 原生穿透掩码列数：48 列时一格 ≈ 8 CSS px，头顶发梢旁的整格透明区也会被吞点击。 */
+  private static readonly _hitMaskCols = 96;
 
   /** 掩码 alpha 阈值（0-255）：低于视为透明像素。 */
   private static readonly _hitMaskAlphaThreshold = 16;
@@ -218,11 +226,14 @@ export class PetApp {
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
       premultipliedAlpha: true,
-      antialias: true,
-      // 窗口缩放过程中系统会重合成上一帧：preserve=false 时呈现后缓冲失效，
-      // 合成到的是黑/白闪帧；true 让旧帧被拉伸显示直到新一帧就绪
-      // （鼠标穿透的 readPixels 命中掩码也依赖保留的缓冲）
-      preserveDrawingBuffer: true,
+      // Live2D 边缘来自贴图 alpha，MSAA 几乎不起作用；移动端 dpr≥2 下多重采样
+      // 是整屏填充率的主要开销之一，安卓关掉。
+      antialias: platform !== 'android',
+      // Windows 窗口缩放过程中系统会重合成上一帧：preserve=false 时呈现后缓冲失效，
+      // 合成到的是黑/白闪帧；true 让旧帧被拉伸显示直到新一帧就绪。
+      // Android 不缩放外窗，而保留缓冲在移动端分块 GPU 上每帧多一次整屏拷贝；
+      // 悬浮窗命中掩码在 _render 同一任务内读取画布，不依赖保留缓冲。
+      preserveDrawingBuffer: platform !== 'android',
     }) as WebGL2RenderingContext;
     if (!this._gl) {
       console.error('[pet] WebGL2 not available');
@@ -637,10 +648,42 @@ export class PetApp {
                 revision === this._windowSettingsRevision) this._persistDesktopPos();
             if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
           };
+          // 预测缩放后的物理尺寸，位置与尺寸同一次原生调用落定（脚底不先跳再拉回）；
+          // 系统若钳制了尺寸，下面的补偿按实测尺寸再校正一次位置。
+          const sf = await win.scaleFactor();
+          const predicted = { width: Math.max(1, Math.round(width * sf)), height: Math.max(1, Math.round(height * sf)) };
+          const predictedFoot = this._windowFootOffset(predicted, mirror, chatOpen);
+          const target = restoredPosition ?? {
+            x: Math.round(anchor.x - predictedFoot.x), y: Math.round(anchor.y - predictedFoot.y),
+          };
+          // 角色大小补间：放大先扩窗再在画布内长大；缩小先在原窗内缩完再收窗（否则先被裁切）。
+          const rect = this._canvas?.getBoundingClientRect?.();
+          const fromCss = this._scaleTweenValue() ?? (rect ? this._naturalScaleCss(rect.width, rect.height, chatOpen) : 0);
+          const toCss = this._naturalScaleCss(width, height, chatOpen);
+          const animate = fromCss > 0 && toCss > 0 && Math.abs(toCss / fromCss - 1) > 0.005
+            && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+          if (animate && toCss < fromCss) {
+            this._scaleTween = { from: fromCss, to: toCss, start: performance.now(), settled: false };
+            await new Promise(resolve => setTimeout(resolve, PetApp._scaleTweenMs));
+          } else if (animate) {
+            this._scaleTween = { from: fromCss, to: toCss, start: null, settled: false };
+          }
           let resizeError: unknown;
-          try { await win.setSize(new m.LogicalSize(width, height)); }
-          catch (error) { resizeError = error; }
-          await this._windowResizeRecovery();
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            await invoke('set_pet_bounds', { x: target.x, y: target.y, w: predicted.width, h: predicted.height });
+          } catch (error) { resizeError = error; }
+          try { await this._windowResizeRecovery(); }
+          finally {
+            const tween = this._scaleTween;
+            if (tween && animate) {
+              // 系统可能钳制尺寸：终点改为实测窗口的自然比例，播完无缝撤销。
+              const after = this._canvas?.getBoundingClientRect?.();
+              if (after?.height) tween.to = this._naturalScaleCss(after.width, after.height, chatOpen) || tween.to;
+              if (tween.start == null) tween.start = performance.now();
+              tween.settled = true;
+            }
+          }
           if (resizeError) throw resizeError;
         }, 'Failed to apply pet window settings');
     }
@@ -731,7 +774,9 @@ export class PetApp {
       scale = Math.min(Math.max(scale, minS), maxS);
     }
     if (this._wrapWindow) {
+      // 原点补偿以上次落定的比例为准（原点只对它成立）；补间起点取当前显示比例（中途再改不跳）。
       const previousScale = this._contentScaleCss;
+      const shownScale = this._scaleTweenValue() ?? previousScale;
       if (s.scale !== scale) {
         this._settings.scale = scale;
         saveSettings(this._settings);
@@ -745,8 +790,19 @@ export class PetApp {
       }
       if (!restoreWindow && this._rectInited) {
         const bounds = this._model?.getStaticBounds();
-        if (bounds) this._originCssY += bounds.minY * (this._contentScaleCss - previousScale);
+        // 脚底（静态包围盒底边中点）屏幕位置不变：x 也要补，否则补间结束会横跳 cx·Δs。
+        if (bounds) {
+          const delta = this._contentScaleCss - previousScale;
+          this._originCssX -= ((bounds.minX + bounds.maxX) / 2) * delta;
+          this._originCssY += bounds.minY * delta;
+        }
         this._persistWrapOrigin();
+        // 画内从当前显示比例补间到新比例（以脚底为锚）；外窗按两端较大者一次给足，
+        // 缩小时播完再收窗（见 _fixedWindowRect），全程只重配两次窗口表面。
+        if (shownScale > 0 && Math.abs(this._contentScaleCss / shownScale - 1) > 0.005
+          && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          this._scaleTween = { from: shownScale, to: this._contentScaleCss, start: performance.now(), settled: true };
+        } else this._scaleTween = null;
       }
       this._rectInited = false;
       if (this._model?.isReady() && s.snapEdges) this._onDragFinishedAndroid();
@@ -1273,12 +1329,11 @@ export class PetApp {
     canvas.addEventListener('pointerdown', (e) => {
       if (!e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
-      // 透明像素兜底：壳穿透生效前的竞态，落在透明区的事件不触发互动
-      if (
-        platform === 'tauri' &&
-        this._hitMaskData.length > 0 &&
-        !this._isOpaqueAt(e)
-      ) {
+      // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
+      // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
+      if (!this._isOnCharacter(e)) {
+        // 触屏点空白处仍让角色看过去（鼠标视线由全局光标驱动）。
+        this._updatePointerLook(e);
         return;
       }
       this._cancelSnapAnimation();
@@ -1753,8 +1808,11 @@ export class PetApp {
     } else {
       // 非贴合：原点锚在视口中心，比例与非贴合渲染一致（CSS 口径）
       const fitH = (this._chatView?.isOpen || platform === 'android') ? Math.min(vpH, vpW / this._model.boundsAspect) : vpH;
-      const s = fitH / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
-      headTopCss = vpH / 2 - b.maxY * s;
+      const natural = fitH / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
+      // 缩放补间以静态脚底为锚：头顶 = 脚底 − (maxY − minY)·当前比例，气泡跟着角色一起长高。
+      const s = this._scaleTweenValue() ?? natural;
+      const minY = this._model.getStaticBounds().minY;
+      headTopCss = vpH / 2 - minY * natural - (b.maxY - minY) * s;
     }
     const el = bubble.el;
     // 小窗口适配：气泡按视口等比缩小（transform scale 保形缩放，
@@ -1816,7 +1874,9 @@ export class PetApp {
       this._launcherBottomCss = bottom;
       launcher.style.bottom = `${bottom}px`;
     }
-    const k = Math.round(Math.min(1.6, Math.max(0.7, rect.height / (675 * PetApp._windowMarginRatio))) * 1000) / 1000;
+    // 入口大小跟角色当前显示比例走（缩放补间期间同步长大/缩小）。
+    const shown = (this._scaleTweenValue() ?? s) / s;
+    const k = Math.round(Math.min(1.6, Math.max(0.7, rect.height * shown / (675 * PetApp._windowMarginRatio))) * 1000) / 1000;
     if (k !== this._launcherScaleK) {
       this._launcherScaleK = k;
       launcher.style.setProperty('--launcher-k', String(k));
@@ -1834,20 +1894,55 @@ export class PetApp {
   /** 模型 → backing-store 像素：渲染与命中反解共享同一变换。 */
   private _modelViewportTransform(): { scale: number; originX: number; originY: number } {
     if (this._wrapWindow) {
-      return {
+      const base = {
         scale: this._contentScaleCss * this._dpr,
         originX: (this._originCssX - this._appliedRectX) * this._dpr,
         originY: (this._originCssY - this._appliedRectY) * this._dpr,
       };
+      // 悬浮窗缩放补间：外窗已一次给足终点尺寸，角色在窗内以静态脚底为锚过渡。
+      const tweenCss = this._scaleTweenValue();
+      if (tweenCss == null || this._contentScaleCss <= 0) return base;
+      const k = tweenCss / this._contentScaleCss;
+      const b = this._model.getStaticBounds();
+      const footX = base.originX + ((b.minX + b.maxX) / 2) * base.scale;
+      const footY = base.originY - b.minY * base.scale;
+      return { scale: base.scale * k, originX: footX + (base.originX - footX) * k, originY: footY + (base.originY - footY) * k };
     }
     // 包围盒适配，与 native SetupModelMatrix/Render 的布局口径一致。
     const fitH = (this._chatView?.isOpen || platform === 'android')
       ? Math.min(this._canvas.height, this._canvas.width / this._model.boundsAspect) : this._canvas.height;
-    return {
-      scale: fitH / PetApp._renderMarginRatio / this._model.boundsH,
-      originX: this._canvas.width / 2,
-      originY: this._canvas.height / 2,
-    };
+    const natural = fitH / PetApp._renderMarginRatio / this._model.boundsH;
+    const originX = this._canvas.width / 2, originY = this._canvas.height / 2;
+    const tweenCss = this._scaleTweenValue();
+    if (tweenCss == null || natural <= 0) return { scale: natural, originX, originY };
+    // 以静态脚底为锚缩放（缓冲坐标未镜像；镜像是画布 CSS 翻转）：脚底不动，角色向上生长/收缩。
+    const k = tweenCss * this._dpr / natural;
+    const b = this._model.getStaticBounds();
+    const footX = originX + ((b.minX + b.maxX) / 2) * natural;
+    const footY = originY - b.minY * natural;
+    return { scale: natural * k, originX: footX + (originX - footX) * k, originY: footY + (originY - footY) * k };
+  }
+
+  /** 当前补间值（CSS 口径）；无补间或已播完落定返回 null。 */
+  private _scaleTweenValue(now = performance.now()): number | null {
+    const tween = this._scaleTween;
+    if (!tween) return null;
+    if (tween.start == null) return tween.from;
+    const t = Math.min(1, Math.max(0, (now - tween.start) / PetApp._scaleTweenMs));
+    if (t >= 1 && tween.settled) {
+      this._scaleTween = null;
+      if (this._wrapWindow) this._rectDirty = true; // 缩小补间结束：外窗收回终点尺寸
+      return null;
+    }
+    const eased = 1 - (1 - t) ** 3;
+    return tween.from + (tween.to - tween.from) * eased;
+  }
+
+  /** 给定画布 CSS 尺寸下的自然适配比例（CSS px / 模型单位），与 _modelViewportTransform 同式。 */
+  private _naturalScaleCss(width: number, height: number, chatOpen: boolean): number {
+    if (!this._model?.isReady()) return 0;
+    const fitH = chatOpen ? Math.min(height, width / this._model.boundsAspect) : height;
+    return fitH / PetApp._renderMarginRatio / this._model.boundsH;
   }
 
   private _render(): void {
@@ -1893,15 +1988,20 @@ export class PetApp {
    * 静态剪影中心锚在内容区中心（四向等距余量，动作向任何方向甩都有空间）。
    */
   private _fixedWindowRect(): { x: number; y: number; w: number; h: number } {
-    const s = this._contentScaleCss;
     const band = PetApp._WRAP_BUBBLE_BAND;
     const b = this._model?.getStaticBounds() ?? null;
-    const baseH = 675 * PetApp._windowMarginRatio * this._settings.scale;
+    // 缩放补间期间按起止两端较大的比例给窗口（脚底同锚，大窗包住小角色），不逐帧改窗。
+    const tween = this._scaleTween;
+    const s0 = this._contentScaleCss;
+    const s = tween && s0 > 0 ? Math.max(s0, tween.from) : s0;
+    const k = s0 > 0 ? s / s0 : 1;
+    const baseH = 675 * PetApp._windowMarginRatio * this._settings.scale * k;
     const baseW =
       baseH * (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
-    // 静态剪影中心的屏幕坐标（模型 Y 轴朝上 → 屏幕坐标减）
-    const ccx = this._originCssX + (b ? ((b.minX + b.maxX) / 2) * s : 0);
-    const ccy = this._originCssY - (b ? ((b.minY + b.maxY) / 2) * s : 0);
+    // 比例 s 下保持脚底不动的原点（模型 Y 轴朝上 → 屏幕坐标减）
+    const originY = this._originCssY + (b ? b.minY * (s - s0) : 0);
+    const ccx = this._originCssX + (b ? ((b.minX + b.maxX) / 2) * s0 : 0);
+    const ccy = originY - (b ? ((b.minY + b.maxY) / 2) * s : 0);
     const w = baseW;
     const h = baseH + band;
     return {
@@ -2064,20 +2164,46 @@ export class PetApp {
     });
   }
 
-  /** 事件位置是否落在角色不透明像素上（壳穿透生效前的竞态兜底）。 */
-  private _isOpaqueAt(e: PointerEvent): boolean {
-    if (this._hitMaskData.length === 0 || this._hitMaskRows === 0) return true;
+  /**
+   * 事件位置附近是否有角色不透明像素：在触点周围半径内采样渲染缓冲 alpha。
+   * 半径按 CSS px 计（鼠标 6、触摸 10，乘 dpr 换到缓冲像素），不随模型缩放变化——
+   * 小缩放下手指也点得中，大缩放下头顶透明区也不再被当作角色。
+   * 读的是上一帧渲染结果；Android 关闭了 preserveDrawingBuffer，按下时先同步重绘一帧。
+   */
+  private _isOnCharacter(e: PointerEvent): boolean {
+    const gl = this._gl;
+    if (!this._model?.isReady() || !gl || gl.isContextLost()) return this._maskOpaqueAt(e);
     const rect = this._canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return true;
+    const sx = this._canvas.width / rect.width;
+    const sy = this._canvas.height / rect.height;
+    // 镜像是画布 CSS 翻转：屏幕左右与缓冲左右相反。
+    const lx = (e.clientX - rect.left) * sx;
+    const bx = this._settings.mirror ? this._canvas.width - lx : lx;
+    const by = this._canvas.height - (e.clientY - rect.top) * sy; // GL 原点在左下
+    const radius = Math.max(2, Math.round((e.pointerType === 'mouse' ? 6 : 10) * sx));
+    const x0 = Math.max(0, Math.floor(bx - radius)), y0 = Math.max(0, Math.floor(by - radius));
+    const x1 = Math.min(this._canvas.width, Math.ceil(bx + radius)), y1 = Math.min(this._canvas.height, Math.ceil(by + radius));
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return false;
+    if (platform === 'android') this._render();
+    const px = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._frameBuffer);
+    gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const r2 = radius * radius;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const dx = x0 + x + 0.5 - bx, dy = y0 + y + 0.5 - by;
+      if (dx * dx + dy * dy <= r2 && px[(y * w + x) * 4 + 3] > PetApp._hitMaskAlphaThreshold) return true;
+    }
+    return false;
+  }
+
+  /** 画布不可读（未就绪/上下文丢失）时退回原生穿透掩码；没有掩码则放行。 */
+  private _maskOpaqueAt(e: PointerEvent): boolean {
+    if (!this._hitMaskData?.length || !this._hitMaskRows) return true;
     const cols = PetApp._hitMaskCols;
-    const gx = Math.min(
-      cols - 1,
-      Math.max(0, Math.floor((e.clientX / Math.max(1, window.innerWidth)) * cols))
-    );
-    const gy = Math.min(
-      this._hitMaskRows - 1,
-      Math.max(0, Math.floor((e.clientY / Math.max(1, window.innerHeight)) * this._hitMaskRows))
-    );
+    const gx = Math.min(cols - 1, Math.max(0, Math.floor((e.clientX / Math.max(1, window.innerWidth)) * cols)));
+    const gy = Math.min(this._hitMaskRows - 1, Math.max(0, Math.floor((e.clientY / Math.max(1, window.innerHeight)) * this._hitMaskRows)));
     return this._hitMaskData[gy * cols + gx] !== 0;
   }
 }

@@ -1,6 +1,6 @@
 // Browser regression fixture: node tests/chat-layout.fixture.mjs, then open the generated
 // chat-layout.fixture.html through the screenshot tool or a local static server.
-// Uses real ChatView, Typewriter and CSS; only the renderer/network and native resize are stubbed.
+// Uses real ChatView, Typewriter and CSS; only the renderer/network are stubbed. Native window height is fixed (330).
 import { readFileSync, writeFileSync } from 'node:fs';
 import ts from 'typescript';
 const compile = name => ts.transpileModule(readFileSync(new URL(`../src/chat/${name}.ts`, import.meta.url), 'utf8'), {
@@ -10,23 +10,17 @@ const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content
 <link rel="stylesheet" href="./src/chat/chat.css">
 <style>
 @font-face{font-family:'Aliya Serif';src:url('./assets/fonts/NotoSerifSC-var.ttf')}
-html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bottom:0;height:62px}
+html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bottom:0;height:330px}
 #chat-ui .msk-draw-card{border:1px solid #76595c}
 </style><body><script>
 (async () => {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const frames = async n => { while (n--) await new Promise(requestAnimationFrame); };
   const events = [], samples = [], errors = [];
-  let root, nativeHeight = 62;
-  const invoke = async (command, payload) => {
-    if (command !== 'set_chat_layout') return;
-    events.push({...payload, phase});
-    await frames(2); // WebView/native IPC does not resize synchronously.
-    const cap = payload.mode === 'reply' ? [118,330] : payload.mode === 'composer' ? [62,144] : [300,330];
-    nativeHeight = Math.max(cap[0], Math.min(cap[1], payload.contentHeight || cap[0]));
-    root.style.height = nativeHeight + 'px';
-    window.dispatchEvent(new Event('resize'));
-  };
+  let root, view;
+  const invoke = async () => {};
+  // 卡片可见总高（面板 + 间距 + 输入框）：外窗固定，卡片在 DOM 内伸缩。
+  const cardHeight = () => Math.round((view.panel.hidden ? 0 : view.panel.getBoundingClientRect().height + 8) + view.composer.getBoundingClientRect().height + 6);
   const load = (code, imports) => { const exports = {}; new Function('exports','require',code)(exports,id => imports[id] || {}); return exports; };
   const { Typewriter } = load(${JSON.stringify(compile('typewriter'))}, {});
   const { ChatView } = load(${JSON.stringify(compile('view'))}, {
@@ -36,12 +30,12 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
   ChatView.prototype.bootstrap = async () => {};
   document.body.classList.add('chat-window');
   const controller = {busy:false, error:null, onCue(){}, onCancelPerformance(){}};
-  const view = new ChatView(controller, {}, () => {});
+  view = new ChatView(controller, {}, () => {});
   root = view.root; view.screen = 'ready'; view.setOpen(true);
   let phase = 'composer';
   await document.fonts.ready; // 排除字体迟到造成的测量噪声。
   const sample = () => {
-    samples.push({phase, nativeHeight, panel:view.panel.hidden?0:view.panel.getBoundingClientRect().height,
+    samples.push({phase, nativeHeight:cardHeight(), panel:view.panel.hidden?0:view.panel.getBoundingClientRect().height,
       typing:!!view.typewriter?.typing, playing:view.playing});
     if (!document.documentElement.dataset.reviewReady) requestAnimationFrame(sample);
   };
@@ -54,7 +48,7 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
       const r=el.getBoundingClientRect();
       if(r.top<host.top-1 || r.bottom>host.bottom+1) errors.push(label+' 控件被原生窗裁切: '+el.className);
     }
-    if(composer.top<host.top-1 || input.height>64.5) errors.push(label+' 输入自然高度未容纳: '+composer.height+' / '+nativeHeight);
+    if(composer.top<host.top-1 || input.height>64.5) errors.push(label+' 输入自然高度未容纳: '+composer.height);
   };
   phase='composer-normal';assertComposer(phase);
   phase='composer-long';view.input.value=Array.from({length:20},()=> '多行输入文字不会被窗口顶边裁掉。').join('\\n');view.input.oninput();await frames(8);assertComposer(phase);
@@ -89,17 +83,17 @@ html,body{min-height:100vh}body{margin:0;background:#21352f}#chat-ui{top:auto;bo
   textPanels.push(view.panel.getBoundingClientRect().height);
   if (Math.max(...textPanels)-Math.min(...textPanels)>2) errors.push('逐字播放期间面板高度改变: '+JSON.stringify(textPanels));
   phase = 'emoji'; view.showPage(7,true); await frames(12); view.typewriter?.finish(); await frames(6);
-  const emojiHeight = nativeHeight;
+  await sleep(260); const emojiHeight = cardHeight();
   if (emojiHeight > 280 || emojiHeight < 170) errors.push('独立表情页高度异常: '+emojiHeight);
   phase = 'card'; view.showPage(8,true); await frames(10); view.typewriter?.finish(); await frames(6);
   phase = 'short';
-  view.segments[0].innerHTML='<p>短句回复。</p>';view.showPage(0,true);await frames(8);view.typewriter?.finish();await frames(6);
-  if(nativeHeight>210) errors.push('短句仍保留大面积空白: '+nativeHeight);
-  const expected = nativeHeight;
+  view.segments[0].innerHTML='<p>短句回复。</p>';view.showPage(0,true);await frames(8);view.typewriter?.finish();await sleep(260);
+  if(cardHeight()>210) errors.push('短句仍保留大面积空白: '+cardHeight());
+  await sleep(260); const expected = cardHeight();
   for(let i=0;i<8;i++){view.reportLayout();await frames(3);}
-  if(nativeHeight!==expected) errors.push('重复测量产生反馈漂移: '+expected+' -> '+nativeHeight);
-  phase = 'pending-again'; view.showPending(); controller.busy=true;view.changed();await frames(10);
-  if(nativeHeight>200)errors.push('重复等待被旧页撑高: '+nativeHeight);
+  if(cardHeight()!==expected) errors.push('重复测量产生反馈漂移: '+expected+' -> '+cardHeight());
+  phase = 'pending-again'; view.showPending(); controller.busy=true;view.changed();await sleep(260);
+  if(cardHeight()>200)errors.push('重复等待被旧页撑高: '+cardHeight());
   window.review = {errors,events,samples,emojiHeight};
   document.documentElement.dataset.reviewReady='true';
   document.documentElement.dataset.reviewResult=errors.length?'fail':'pass';

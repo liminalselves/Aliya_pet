@@ -38,8 +38,8 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 /* 底锚布局：输入框永远压在窗口底边（= pet 脚线，见 chat_window.rs 底边恒定契约），
    回复面板是输入框上方的独立卡片，出现/收起/换页只向上生长，输入框的位置与形状永不改变
-   （两卡拼接时输入框圆角会随面板显隐形变，是闪烁源）。
-   卡间距 8px 与 view.ts PANEL_GAP 同步。container-type 让字号随窗口宽度自适应。 */
+   （两卡拼接时输入框圆角会随面板显隐形变，是闪烁源）。外窗高度固定，面板上方透明区经命中掩码穿透。
+   container-type 让字号随窗口宽度自适应。 */
 .chat-shell { position:absolute; inset:0 8px 6px; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-end; gap:8px; container-type:inline-size; }
 
 /* ---- 回复/连接面板 ---- */
@@ -177,7 +177,10 @@ body.chat-window .chat-composer { box-shadow:none; }
 /* 连接/会话屏只禁用不隐藏（卡片常驻不撕裂），降透明度示意暂不可输入。 */
 .chat-composer textarea:disabled { opacity:.5; cursor:default; }
 
-/* 发送/停止：同一位置的圆形图标键，busy 时停止键在发送键左侧淡入 */
+/* 发送/停止：同一槽位叠放的圆形图标键，busy 时停止键原位替换发送键（缩放交叉淡入）。
+   不可见的一方同时 disabled（JS 维护），不可点、不进 Tab 顺序。 */
+#chat-ui .composer-action { display:grid; flex:none; }
+#chat-ui .composer-action > button { grid-area:1/1; }
 #chat-ui .send, #chat-ui .stop { display:grid; place-items:center; flex:none; width:26px; height:26px; padding:0!important; border-radius:50%; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease),opacity var(--al-t-fast) var(--al-ease)!important; }
 #chat-ui .send { background:var(--al-accent)!important; color:var(--al-on-accent)!important; }
 #chat-ui .send:hover { background:var(--al-accent-strong)!important; }
@@ -186,7 +189,11 @@ body.chat-window .chat-composer { box-shadow:none; }
 #chat-ui .send:disabled, #chat-ui .chat-composer.empty .send { opacity:1; background:var(--al-bg-4)!important; color:var(--al-text-4)!important; cursor:default; }
 #chat-ui .stop { background:var(--al-bg-4)!important; color:var(--al-text-1); }
 #chat-ui .stop:hover { background:var(--al-overlay-chip-hover)!important; }
-#chat-ui .stop:not([hidden]) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
+#chat-ui .chat-composer.busy .send, #chat-ui .chat-composer:not(.busy) .stop { opacity:0!important; transform:scale(.6); pointer-events:none; }
+/* 等待回复：输入框只读，占位符显示「Aliya 正在想……」；换字淡入（JS 挂 hint-in）。 */
+.chat-composer textarea.hint-in::placeholder { animation:al-fade-in var(--al-t-med) var(--al-ease); }
+.chat-composer.busy textarea { cursor:default; }
+.chat-composer.busy textarea::placeholder { color:var(--al-text-2); }
 
 .composer-toolbar { display:flex; align-items:center; gap:2px; min-height:22px; margin:3px 0 0 -6px; font-size:11px; color:var(--al-text-3); }
 .composer-toolbar button { height:22px; padding:0 6px!important; color:var(--al-text-3); white-space:nowrap; }
@@ -195,18 +202,15 @@ body.chat-window .chat-composer { box-shadow:none; }
 .composer-toolbar svg { display:block; }
 .chat-status { flex:1; min-width:0; margin:0 4px 0 6px; overflow:hidden; color:var(--al-text-3); font-size:11px; text-align:right; white-space:nowrap; text-overflow:ellipsis; }
 .chat-status:not(:empty) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
-/* 等待回应时状态文字前一枚呼吸点，和面板里的「正在输入」同语言 */
-.chat-composer.busy .chat-status::before { content:''; display:inline-block; width:5px; height:5px; margin:0 6px 1px 0; border-radius:50%; background:var(--al-accent); vertical-align:middle; animation:al-breathe 1.15s ease-in-out infinite; }
 .chat-composer.errored .chat-status { color:var(--al-danger); }
 #chat-ui .close-window { display:grid; place-items:center; flex:none; width:22px; height:22px; padding:0!important; border-radius:50%; }
 
-/* 当前页锁定完整高度：逐字播放与页脚提示只改变内容，不再推动卡片边界。 */
+/* 当前页锁定完整高度（view.ts lockPanel）：逐字播放与页脚提示只改变内容，不再推动卡片边界。 */
 body.chat-window .chat-shell .gal-panel { flex:none; height:var(--chat-panel-height,auto); min-height:88px; max-height:calc(100% - var(--chat-composer-height,52px) - 8px); }
 /* 临时自然量高：解除旧视口/锁高，不累计 scrollHeight 的视口填充或溢出。 */
 body.chat-window #chat-ui.layout-measuring .gal-panel { height:auto; min-height:88px; max-height:none; }
 body.chat-window #chat-ui.layout-measuring .gal-content { flex:none; overflow:visible; }
-/* 内嵌模式（Android/web）同样按页锁高：view.ts lockEmbeddedPanel 量出本页自然高写入变量；
-   max-height 仍按可用空间钳制，超高页在锁定高度内滚动。量高时解除约束取自然高。 */
+/* 内嵌模式（Android/web）同样按页锁高；max-height 仍按可用空间钳制，超高页在锁定高度内滚动。 */
 body:not(.chat-window) .chat-shell .gal-panel { flex:none; height:var(--chat-panel-height,auto); }
 body:not(.chat-window) #chat-ui.layout-measuring .gal-panel { height:auto; max-height:none; }
 body:not(.chat-window) #chat-ui.layout-measuring .gal-content { flex:none; overflow:visible; }
@@ -216,13 +220,14 @@ body:not(.chat-window) #chat-ui.layout-measuring .gal-content { flex:none; overf
    面板入场：从输入框方向（底部）轻微上浮+淡入；收起：下沉淡出。输入框是锚点不参与。
    shell-enter（整窗重现）时面板和输入框一起上浮，互斥规则避免双重位移。 */
 .chat-shell:not(.shell-enter) .gal-panel:not([hidden]) { --al-rise:8px; animation:al-rise-in var(--al-t-med) var(--al-ease); }
-/* hidden 由 JS 在动画结束后补上（见 view.ts hidePanelAnimated）。 */
-.gal-panel.leaving { --al-sink:6px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
+/* hidden 由 JS 在动画结束后补上（见 view.ts hidePanelAnimated）。
+   退出规则带 #chat-ui 前缀：入场规则特异性 (0,4,0)，不压过它退出动画根本不会播。 */
+#chat-ui .gal-panel.leaving { --al-sink:6px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
 .chat-shell.shell-enter .gal-panel:not([hidden]),
 .chat-shell.shell-enter .chat-composer { --al-rise:10px; animation:al-rise-in var(--al-t-med) var(--al-ease) both; }
 .chat-shell.shell-enter .gal-panel:not([hidden]) { animation-delay:.04s; }
 /* 整体退出：规则置于 shell-enter 之后，退出优先于入场。 */
-.chat-shell.shell-exit .gal-panel,.chat-shell.shell-exit .chat-composer { --al-sink:8px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
+#chat-ui .chat-shell.shell-exit .gal-panel,#chat-ui .chat-shell.shell-exit .chat-composer { --al-sink:8px; animation:al-sink-out var(--al-t-out) var(--al-ease-in) forwards; pointer-events:none; }
 
 /* 「正在输入」三点：明暗脉冲（不用上下跳动——回弹类动效与本主题气质不符） */
 .typing-dots { display:flex; gap:5px; align-items:center; padding:12px 0 8px; }

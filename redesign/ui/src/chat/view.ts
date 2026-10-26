@@ -32,9 +32,6 @@ function relativeTime(iso?: string): string {
 const HISTORY_FETCH_LIMIT = 100;
 const HISTORY_ROUND_LIMIT = 50;
 
-/** 回复卡片与输入框之间的间距（CSS px），须与 chat.css .chat-shell 的 gap 一致。 */
-const PANEL_GAP = 8;
-
 /** 表演指令页（.msk-cue）派发后的停顿：不建打字机，静默自动翻页。 */
 const CUE_PAGE_MS = 400;
 
@@ -88,15 +85,11 @@ export class ChatView {
   private enterTimer: ReturnType<typeof setTimeout> | null = null;
   /** 整体退出动画计时器：播完才真正 setOpen(false)/关窗；重开前必须取消。 */
   private exitTimer: ReturnType<typeof setTimeout> | null = null;
-  private layoutFrame: number | null = null;
   /** 内嵌模式面板高度补间（翻页/锁高变化）；新补间先取消旧的。 */
   private morph: Animation | null = null;
-  private morphFrom: number | null = null;
   /** startPage 锁定的本页高度，showPage 据此补间。 */
-  private lockedHeight = 0;
-  private layoutRevision = 0;
-  private layoutTask: Promise<void> = Promise.resolve();
-  private lastLayoutKey = '';
+  /** 面板最近一次布局后的可见高度（ResizeObserver 异步回写）：同步替换内容后它仍是旧高，作补间起点。 */
+  private panelHeight = 0;
   private readonly panel: HTMLElement;
   private readonly content: HTMLElement;
   private readonly composer: HTMLFormElement;
@@ -115,7 +108,7 @@ export class ChatView {
           <footer class="gal-footer"><span class="page-hint"></span></footer>
         </section>
         <form class="chat-composer" hidden>
-          <div class="composer-row"><textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" hidden><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg></button><button type="submit" class="send" title="发送（Enter）" aria-label="发送"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+          <div class="composer-row"><textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea><span class="composer-action"><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" disabled><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg></button><button type="submit" class="send" title="发送（Enter）" aria-label="发送"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
           <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
         </form>
       </div>`;
@@ -173,7 +166,7 @@ export class ChatView {
       }
       void this.applyControlRequest();
     });
-    // 生图/附图解码晚于翻页量高：载入后按真实高度补量窗口。
+    // 生图/附图解码晚于翻页锁高：载入后按真实高度重新锁高。
     // 逐字播放中文本是收起的，此时量高会误判，跳过（播完 onDone 已补量）。
     this.content.addEventListener('load', e => {
       const img = e.target as Element | null;
@@ -181,13 +174,19 @@ export class ChatView {
       if (this.screen !== 'ready' || !this.replyActive || this.historyVisible || this.typewriter?.typing) return;
       this.reportLayout();
     }, true);
-    // 只响应宽度变化：原生窗口回写高度不能再次触发量高/缩放反馈。
+    // 只响应宽度变化（随 pet 缩放）：宽度决定换行，进而决定页高。
     let layoutWidth = window.innerWidth;
     window.addEventListener('resize', () => {
       if (window.innerWidth === layoutWidth) return;
       layoutWidth = window.innerWidth;
       if (!this.typewriter?.typing) this.reportLayout();
     });
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(entries => {
+        const entry = entries[entries.length - 1];
+        if (entry) this.onPanelResize(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+      }).observe(this.panel);
+    }
     this.syncComposerState();
     void this.bootstrap();
   }
@@ -212,6 +211,7 @@ export class ChatView {
     // 在过渡帧撕裂（面板方角底边悬空），是用户视频的闪烁源之一。
     this.composer.hidden = !open;
     this.panel.hidden = !open || (this.screen === 'ready' && !this.historyVisible);
+    if (this.panel.hidden) this.panel.style.animation = '';
     // 独立窗口打开即聚焦，点完「聊天」按钮直接可以打字；内嵌模式不抢软键盘。
     if (open && this.screen === 'ready' && platform === 'tauri') this.input.focus();
     document.body.classList.toggle('chat-open', open);
@@ -270,12 +270,28 @@ export class ChatView {
     this.setOpen(false);
     if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
   }
-  /** 输入区状态类：empty 灰化发送键；busy/errored 驱动状态行样式。 */
+  /**
+   * 输入区状态：empty 灰化发送键；busy 让停止键原位替换发送键（chat.css .composer-action）；
+   * errored 驱动状态行样式。占位符随屏态/等待态切换，连接与会话屏禁用，等待回复时只读
+   * （保留焦点，回复落地即可接着打字）。
+   */
   private syncComposerState(): void {
     if (!this.composer?.classList || !this.input) return;
+    const busy = this.controller.busy === true;
+    const ready = this.screen === 'ready';
     this.composer.classList.toggle('empty', !this.input.value.trim());
-    this.composer.classList.toggle('busy', this.controller.busy === true);
-    this.composer.classList.toggle('errored', !this.controller.busy && !!this.controller.error);
+    this.composer.classList.toggle('busy', busy);
+    this.composer.classList.toggle('errored', !busy && !!this.controller.error);
+    this.input.disabled = !ready;
+    this.input.readOnly = ready && busy;
+    const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
+    if (this.input.placeholder === hint) return;
+    this.input.placeholder = hint;
+    // 占位符换字时淡入（有输入内容时占位符不可见，不必播）。
+    if (this.input.value || !this.input.classList) return;
+    this.input.classList.remove('hint-in');
+    void this.input.offsetWidth;
+    this.input.classList.add('hint-in');
   }
   private notify(): void {
     // 运行态经壳汇总后全局广播 chat-state {busy, typing, open}（open 由壳按窗口可见性裁定）。
@@ -288,6 +304,8 @@ export class ChatView {
   }
   private clearRendering(): void { for (const task of this.rendered) task.cancel(); this.rendered = []; }
   private showPanel(_title = ''): void {
+    // 从隐藏态重新出现必须重播入场：撤掉打断淡出时留下的内联 animation:none。
+    if (this.panel.hidden) this.panel.style.animation = '';
     this.cancelLeave();
     this.panel.hidden = !this.isOpen;
     this.updateHint();
@@ -296,7 +314,13 @@ export class ChatView {
   /** 取消未播完的收起动画：面板重新展示前必须撤销 leaving 态与补 hidden 的计时器。 */
   private cancelLeave(): void {
     if (this.leaveTimer) { clearTimeout(this.leaveTimer); this.leaveTimer = null; }
+    if (!this.panel.classList.contains('leaving')) return;
+    // 淡出到一半被新内容打断：从当前不透明度/位移接着浮回。直接摘 class 会让 CSS 入场
+    // 动画从 0 重播（0.7→0 闪一下）；内联 animation:none 挡住它，直到下一次收起再撤掉。
+    const { opacity, transform } = getComputedStyle(this.panel);
+    this.panel.style.animation = 'none';
     this.panel.classList.remove('leaving');
+    this.panel.animate?.([{ opacity, transform }, { opacity: 1, transform: 'none' }], { duration: 160, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   }
   /**
    * 内容区入场：stagger 让子项依次浮现（会话行/记录条目/连接屏分块），
@@ -312,26 +336,27 @@ export class ChatView {
     this.content.classList.remove('fade-in', 'stagger-in');
   }
   /**
-   * 面板收起分两步：先播退出动画（chat.css .leaving），此间窗口保持原高
-   * （外窗单步 resize 与淡出同时进行会把面板挤碎——webview 位图跟不上）；
-   * 动画结束补 hidden 并切换布局态，窗口随之单步收缩。
+   * 面板收起分两步：先播退出动画（chat.css .leaving），锁高保持到动画结束，
+   * 再补 hidden 解锁。输入框底锚不动，面板只在原地下沉淡出。
    */
   private hidePanelAnimated(): void {
     if (this.panel.hidden || this.panel.classList.contains('leaving')) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.panel.hidden = true; this.unlockEmbeddedPanel(); return; }
-    this.morph?.cancel(); this.morph = null;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.panel.hidden = true; this.unlockPanel(); this.updateLayoutMode(); return; }
+    this.stopMorph();
+    this.panel.style.animation = '';
     this.panel.classList.add('leaving');
     this.leaveTimer = setTimeout(() => {
       this.leaveTimer = null;
       this.panel.classList.remove('leaving');
       this.panel.hidden = true;
-      if (!this.replyActive) this.unlockEmbeddedPanel();
+      if (!this.replyActive) this.unlockPanel();
       this.updateLayoutMode();
     }, 150);
   }
-  /** 根据面板/输入框可见性切换紧凑布局：只有输入框时贴脚显示，有面板时上下连成一张卡片。 */
+  /** 根据面板/输入框可见性切换布局态（Android 回复卡限高依赖 data-chat-layout）。 */
   private updateLayoutMode(): void {
     const shell = this.get('.chat-shell');
+    // leaving 期间仍算可见：退出动画播完前布局态（min/max-height）不能先变。
     const panelVisible = this.isOpen && !this.panel.hidden;
     const composerVisible = this.isOpen && !this.composer.hidden;
     shell.classList.toggle('with-panel', panelVisible);
@@ -340,62 +365,21 @@ export class ChatView {
     this.get<HTMLButtonElement>('.send').disabled = this.screen !== 'ready' || this.controller.busy;
     document.body.dataset.chatLayout = !this.isOpen ? 'closed'
       : composerVisible && !panelVisible ? 'composer'
-        // Android/web 的内嵌记录/上下文定位与连接/会话屏同属整页内容，按 setup 全高；
-        // Windows 记录已迁入独立 records 窗口。
         : this.screen === 'ready' && !this.historyVisible ? 'reply' : 'setup';
     this.reportLayout();
   }
-  /** 独立窗口把内容态交给壳，壳据此调整外窗高度并重新紧贴 pet；内嵌模式无需处理。 */
-  private reportLayout(measuredHeight?: number): void {
+  /**
+   * 同步输入区高度（面板 max-height 依赖它），回复页播完/资源落地后按真实内容重新锁高。
+   * 外窗高度固定（Windows chat 窗不随内容 resize，见 chat_window.rs），面板伸缩全在 DOM 内补间。
+   */
+  private reportLayout(): void {
     const composerHeight = this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height;
     document.body.style.setProperty('--chat-composer-height', `${composerHeight}px`);
-    if (platform !== 'tauri') { if (measuredHeight === undefined) this.relockEmbedded(); return; }
-    const mode = document.body.dataset.chatLayout ?? 'setup';
-    // 正文逐字收起期间保留本页完整高度，不以中间帧覆盖已测量的目标。
-    if (mode === 'reply' && this.typewriter?.typing && measuredHeight === undefined) return;
-    if (this.layoutFrame != null) cancelAnimationFrame(this.layoutFrame);
-    this.layoutFrame = null;
-    const revision = ++this.layoutRevision;
-    if (mode === 'closed') return; // closed 不能被壳误当作 setup 再撑开窗口。
-    const send = (height: number) => {
-      if (revision !== this.layoutRevision || document.body.dataset.chatLayout !== mode) return;
-      const contentHeight = mode === 'setup' ? 0 : mode === 'reply'
-        ? Math.max(118, Math.min(330, Math.ceil(height))) : Math.max(62, Math.min(144, Math.ceil(height)));
-      // 与外窗目标同批落定；打字机只揭示内容，不再拉伸/收缩可见卡片。
-      if (mode === 'reply') this.panel.style.setProperty('--chat-panel-height', `${Math.max(0, contentHeight - composerHeight - 6 - PANEL_GAP)}px`);
-      else this.panel.style.removeProperty('--chat-panel-height');
-      const key = `${mode}:${contentHeight}`;
-      this.layoutTask = this.layoutTask.then(async () => {
-        if (revision !== this.layoutRevision || key === this.lastLayoutKey) return;
-        const { invoke } = await import('@tauri-apps/api/core');
-        if (revision !== this.layoutRevision) return;
-        await invoke('set_chat_layout', { mode, contentHeight });
-        this.lastLayoutKey = key;
-      }).catch(error => { console.warn('聊天窗口布局更新失败', error); });
-    };
-    if (measuredHeight !== undefined) { send(measuredHeight); return; }
-    if (mode === 'setup') { send(0); return; }
-    this.layoutFrame = requestAnimationFrame(() => {
-      this.layoutFrame = null;
-      if (this.typewriter?.typing) return;
-      send(this.measureContentHeight());
-    });
-  }
-  /** 同步读取当前可见页的自然高度；旧窗口高度、滚动余量与打字机锁高均不参与。
-   * 测量样式在同一 JS 任务内恢复，不把无约束的中间布局绘制到屏幕上。 */
-  private measureContentHeight(): number {
-    this.root.classList.add('layout-measuring');
-    try {
-      const panelHeight = this.panel.hidden ? 0 : this.panel.getBoundingClientRect().height + PANEL_GAP;
-      const composerHeight = this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height;
-      return Math.ceil(panelHeight + composerHeight + 6);
-    } finally {
-      this.root.classList.remove('layout-measuring');
-    }
+    if (this.replyActive && this.playing && !this.typewriter?.typing) this.lockPanel();
   }
   private showConnect(message = ''): void {
     this.screen = 'connect'; this.clearRendering();
-    this.input.disabled = true; this.input.placeholder = '先连接 Misskey…';
+    this.syncComposerState();
     this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
     this.get('.auth-status').textContent = message;
     this.get('.authorize').onclick = () => { void this.login(); };
@@ -426,7 +410,7 @@ export class ChatView {
   }
   private async loadSessions(restore = false): Promise<void> {
     const signal = this.reset(); this.screen = 'sessions';
-    this.input.disabled = true; this.input.placeholder = '先选择会话…';
+    this.syncComposerState();
     // 加载占位也走 stagger 槽位：占位行就是列表的第 0 项，列表落地同位替换，布局不跳。
     this.content.innerHTML = '<p class="muted-note loading-note">正在读取会话</p>'; this.showPanel('选择会话');
     this.animateContent('stagger');
@@ -506,7 +490,7 @@ export class ChatView {
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.lastAnswer = this.controller.latest?.id ?? '';
       this.screen = 'ready'; this.historyVisible = false;
-      this.input.disabled = false; this.input.placeholder = '对 Aliya 说……'; this.status.textContent = '';
+      this.status.textContent = ''; this.syncComposerState();
       // 会话面板两步退出（同 hideReply）：淡出期间窗口保持原高，播完单步收缩；
       // 直接 hidden 会让「正在打开会话……」凭空消失一帧（用户视频的闪烁帧）。
       this.hidePanelAnimated();
@@ -537,8 +521,9 @@ export class ChatView {
   private changed(): void {
     const c = this.controller;
     this.get<HTMLButtonElement>('.send').disabled = c.busy || this.screen !== 'ready';
-    this.get('.stop').hidden = !c.busy;
-    this.status.textContent = c.busy ? 'Aliya 正在想' : c.error ? '回复未完成' : '';
+    this.get<HTMLButtonElement>('.stop').disabled = !c.busy;
+    // 等待提示在输入框占位里显示（等待期间不可输入）；状态行只留停止/错误等需要留意的信息。
+    this.status.textContent = c.busy ? '' : c.error ? '回复未完成' : this.status.textContent === '回复未完成' ? '' : this.status.textContent;
     this.syncComposerState();
     if (this.screen === 'ready' && this.lastBusy && !c.busy) {
       if (c.latest?.role === 'assistant' && c.latest.status === 'complete' && c.latest.id !== this.lastAnswer) {
@@ -577,9 +562,6 @@ export class ChatView {
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
     this.content.append(dots); this.showPanel('');
-    // 同步量高直发，不等 updateLayoutMode 的 rAF：晚一帧窗口才把面板顶起来，
-    // 这一帧里矮窗会把「正在输入」压成细条（切换闪烁源）。
-    this.reportLayout(this.measureContentHeight());
   }
   /**
    * 回复按 MSK 展示分段逐页播放：每页一句，逐字冒出；
@@ -609,9 +591,7 @@ export class ChatView {
     if (!task) { this.replyActive = false; this.updateHint(); return; }
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
-      // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接；
-      // 内嵌模式记下打点时的面板高，首页从这里补间到本页高度。
-      this.morphFrom = this.embeddedPanelHeight();
+      // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接；面板高度由 onPanelResize 补间。
       dots.remove(); text.hidden = false; text.classList.add('gal-text-in');
       this.playing = true;
       this.resyncPages();
@@ -631,38 +611,42 @@ export class ChatView {
     this.showPage(this.pageIndex, firstPaint);
   }
   /**
-   * 内嵌模式（Android/web）面板高度补间：内容替换前后各量一次，用 WAAPI 从旧高过渡到新高。
-   * Windows 独立窗高度由原生窗口单步决定（WebView2 外窗补间会残影），不做。
+   * 面板高度补间：任何高度变化（翻页锁高、解锁、加载占位换成列表、窗口变宽）都在布局后、
+   * 绘制前被 ResizeObserver 捕获，用 WAAPI 从上次高度过渡到新高度，首帧即是旧高，不闪跳。
+   * 显示/隐藏交给入场/退出动画；补间中间帧不更新基准。
    */
-  private morphPanel(from: number, to: number): void {
-    const panel = this.panel;
-    this.morph?.cancel(); this.morph = null;
-    if (platform === 'tauri' || !panel?.animate || panel.hidden || !from || !to || Math.abs(to - from) < 2
+  private onPanelResize(height: number): void {
+    if (this.panel.hidden) { this.panelHeight = 0; return; }
+    if (this.morph) return;
+    const from = this.panelHeight;
+    this.panelHeight = height;
+    this.morphPanel(from, height);
+  }
+  private morphPanel(from: number, height: number): void {
+    if (!from || Math.abs(height - from) < 2 || !this.panel.animate || this.panel.classList.contains('leaving')
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    this.morph = panel.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    const morph = this.panel.animate([{ height: `${from}px` }, { height: `${height}px` }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    // 在 ResizeObserver 回调里新建的动画默认 pending 一帧，那一帧会以新高度绘制（闪跳）；钉住起始时间立即生效。
+    if (document.timeline?.currentTime != null) morph.startTime = document.timeline.currentTime;
+    this.morph = morph;
+    morph.onfinish = () => { if (this.morph === morph) this.morph = null; };
   }
-  /** 当前面板可见高度（内嵌模式补间起点）；Windows 不需要。 */
-  private embeddedPanelHeight(): number {
-    if (platform === 'tauri' || !this.panel?.getBoundingClientRect || this.panel.hidden) return 0;
-    return this.panel.getBoundingClientRect().height;
-  }
-  /** 播完/异步资源落地后按真实内容重新锁高（逐字播放中文本被收起，不量）。 */
-  private relockEmbedded(): void {
-    if (platform === 'tauri' || !this.replyActive || !this.playing || this.typewriter?.typing) return;
-    const from = this.embeddedPanelHeight();
-    const to = this.lockEmbeddedPanel();
-    this.morphPanel(from, to);
+  /** 停掉进行中的补间，基准取当前可见高度：随后的新目标从这里接着过渡。 */
+  private stopMorph(): void {
+    if (!this.morph) return;
+    this.panelHeight = this.panel.getBoundingClientRect().height;
+    this.morph.cancel(); this.morph = null;
   }
   /**
-   * 内嵌模式（Android/web）锁高：翻页时在打字机清空文字前量出本页完整高度并钉住面板，
-   * 逐字揭示只往里填，卡片不再边打边长（Windows 由 reportLayout 的 --chat-panel-height 负责）。
+   * 按页锁高：翻页时在打字机清空文字前量出本页完整高度并钉住面板，逐字揭示只往里填，
+   * 卡片不再边打边长。量出自然高后按当前 max-height 钳制再锁定（超高页在锁定高度内滚动）。
    */
-  private lockEmbeddedPanel(): number {
-    if (platform === 'tauri' || !this.panel?.style || this.panel.hidden) return 0;
-    // 量出自然高后按当前 max-height 钳制再锁定：锁定值超过可用空间时 height 会被
-    // max-height 截住，但 min/max 的过渡帧里两者不一致会抖一下，直接写钳制后的值。
-    // 进行中的高度补间会覆盖 CSS 高度，量到的是补间中间帧（锁矮的根因），先停掉。
-    this.morph?.cancel(); this.morph = null;
+  private lockPanel(): number {
+    if (!this.panel?.style || this.panel.hidden) return 0;
+    // 进行中的补间会覆盖 CSS 高度，量到的是中间帧（锁矮的根因），先停掉。
+    this.stopMorph();
+    // 旧锁高仍钉着面板：此刻可见高就是补间起点，同步起补间，不等 ResizeObserver。
+    const from = this.panel.style.getPropertyValue('--chat-panel-height') ? this.panel.getBoundingClientRect().height : 0;
     const max = parseFloat(getComputedStyle(this.panel).maxHeight);
     this.root.classList.add('layout-measuring');
     let height = 0;
@@ -671,18 +655,15 @@ export class ChatView {
     if (Number.isFinite(max) && max > 0) height = Math.min(height, Math.floor(max));
     if (height > 0) this.panel.style.setProperty('--chat-panel-height', `${height}px`);
     else this.panel.style.removeProperty('--chat-panel-height');
+    if (height > 0) { this.panelHeight = height; this.morphPanel(from, height); }
     return height;
   }
-  private unlockEmbeddedPanel(): void {
-    if (platform !== 'tauri') this.panel?.style?.removeProperty('--chat-panel-height');
+  private unlockPanel(): void {
+    this.panel?.style?.removeProperty('--chat-panel-height');
   }
   private showPage(index: number, animate: boolean): void {
-    const from = this.morphFrom ?? this.embeddedPanelHeight();
-    this.morphFrom = null;
     this.applyPage(index);
-    this.lockedHeight = 0;
     this.startPage(index, animate);
-    this.morphPanel(from, this.lockedHeight);
   }
   private applyPage(index: number): void {
     this.pageIndex = index;
@@ -711,11 +692,9 @@ export class ChatView {
       this.updateHint();
       return;
     }
-    // 页脚先落定，再按当前完整页一次量高；后续逐字揭示不改变卡片尺寸。
-    // 内嵌模式的锁高必须在这里（页脚就位后）重量：showPage 里量时页脚还未展开，会锁矮。
+    // 页脚先落定，再按当前完整页一次锁高；后续逐字揭示不改变卡片尺寸。
     this.updateHint();
-    if (platform !== 'tauri') this.lockedHeight = this.lockEmbeddedPanel();
-    this.reportLayout(this.measureContentHeight());
+    this.lockPanel();
     if (page && animate) {
       page.classList.add('gal-page-in');
       this.typewriter = new Typewriter(page);
@@ -771,7 +750,7 @@ export class ChatView {
     else hint.textContent = total > 1 ? `点击收起 ${page}/${total}` : '点击收起';
   }
   private clearPlayback(keepLock = false): void {
-    if (!keepLock) this.unlockEmbeddedPanel();
+    if (!keepLock) this.unlockPanel();
     // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
     if (this.replyActive) this.controller.onCancelPerformance();
     this.replyActive = false; this.replyToken = null; this.playing = false;

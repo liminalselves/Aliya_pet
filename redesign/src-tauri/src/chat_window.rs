@@ -6,13 +6,14 @@
 //!
 //! 几何契约（物理像素）：
 //! - chat 永远吸附在 pet 正下方、水平居中，像萝莉斯桌宠那样是模型的延伸；
-//!   尺寸按 pet 逻辑宽度推导（宽 = pet 宽 × 1.18，高 = 宽 × 0.62），
+//!   宽度按 pet 逻辑宽度推导（宽 = pet 宽 × 1.18），高度固定 CHAT_HEIGHT_CSS；
+//!   窗口窄于 CHAT_LAYOUT_MIN_W_CSS 时整页等比缩放（set_zoom），高度/脚底偏移同比，
 //!   pet 切换尺寸时 chat 跟随缩放；
 //! - 窗口底边恒定：底边 = pet 底边 + FOOT_OFFSET（贴住脚线），与布局态无关。
-//!   输入框锚在窗口底部，面板出现/收起/换页时只有顶边伸缩，输入框纹丝不动；
-//! - 宽高变化一律单步即时落定：WebView2 外窗分步 resize 会让 webview 位图
-//!   滞后于窗框，产生残影/黑块/抽搐（实测），窗口级补间不可行；
-//!   平滑感由 DOM 内 CSS 动画承担（gal-in/gal-out，见 chat.css）；
+//!   输入框锚在窗口底部，面板出现/收起/换页只在 DOM 内向上伸缩，外窗不变；
+//! - 外窗不随内容 resize：WebView2 resize 时位图滞后于窗框（残影/黑块/闪烁，
+//!   单步也无法避免），透明区域由命中掩码穿透；
+//!   平滑感由 DOM 内 CSS/WAAPI 动画承担（见 chat.css / view.ts）；
 //! - pet 贴近屏幕底边、下方放不下时只向上移回工作区内；
 //! - chat 不提供独立拖动；pet 拖动/缩放时 chat 严格跟随（允许随之越出
 //!   工作区——窗口越界规范只对 pet 生效，chat 是 pet 的影子）。
@@ -76,45 +77,8 @@ pub struct ChatRuntime {
     pub typing: bool,
     /// pet 隐藏前 chat 是否打开；pet 恢复时据此带回 chat。
     pub open_before_pet_hide: bool,
-    /// 前端布局态：setup/reply/composer，决定从属窗口实际高度。
-    pub layout: ChatLayout,
-    /// CSS px；按布局分别保留，移动、隐藏恢复和无测量通知不能重置高度。
-    reply_content_height: Option<u32>,
-    composer_content_height: Option<u32>,
-}
-
-impl ChatRuntime {
-    fn set_layout(&mut self, layout: ChatLayout, content_height: Option<u32>) {
-        self.layout = layout;
-        if let Some(height) = content_height.filter(|height| *height > 0) {
-            match layout {
-                ChatLayout::Reply => self.reply_content_height = Some(height),
-                ChatLayout::Composer => self.composer_content_height = Some(height),
-                ChatLayout::Setup => {}
-            }
-        }
-    }
-
-    fn height_css(&self, default_height: f64) -> f64 {
-        match self.layout {
-            ChatLayout::Composer => self.composer_content_height
-                .map(f64::from).unwrap_or(default_height).clamp(62.0, 144.0),
-            // 回复按当前页量高；窄窗也需容纳完整等待框/独立表情，宽度不再限制内容高。
-            // 仍沿用聊天窗口原有 330 CSS px 上限，长文留在内容区滚动。
-            ChatLayout::Reply => self.reply_content_height
-                .map(f64::from).unwrap_or(default_height).clamp(118.0, 330.0),
-            // 授权/会话页给足高度，不采用尚未完成布局的一次测量。
-            ChatLayout::Setup => default_height.max(300.0),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ChatLayout {
-    #[default]
-    Setup,
-    Reply,
-    Composer,
+    /// 最近一次下发给 chat WebView 的缩放（千分比），未变不重复设置。
+    zoom_milli: Option<u32>,
 }
 
 pub type ChatRuntimeState = Arc<Mutex<ChatRuntime>>;
@@ -191,13 +155,26 @@ pub struct WorkRect {
     pub h: i32,
 }
 
-/// chat 逻辑尺寸按 pet 逻辑宽度推导：宽 = pet 宽 × 1.18（钳 260–560），
-/// 高 = 宽 × 0.62（钳 170–330）。模型多大对话框多大，视觉上是 pet 的延伸。
-pub fn chat_size_for_pet(pet_w_css: f64) -> (f64, f64) {
-    let w = (pet_w_css * 1.18).clamp(260.0, 560.0);
-    let h = (w * 0.62).clamp(170.0, 330.0);
-    (w, h)
+/// chat 逻辑宽度按 pet 逻辑宽度推导：宽 = pet 宽 × 1.18（钳 150–560）。
+/// 模型多大对话框多大，视觉上是 pet 的延伸。
+pub fn chat_width_for_pet(pet_w_css: f64) -> f64 {
+    (pet_w_css * 1.18).clamp(150.0, 560.0)
 }
+
+/// 页面排版的最小逻辑宽度（CSS px）。窗口比它窄时不再挤压排版，而是整页等比缩小
+/// （WebView 缩放 = 窗口宽 / 本值）：小模型旁的输入框、按钮、字号随模型一起变小，
+/// 不会出现「人很小、输入框很大」。窗口高度与脚底偏移同比缩放。
+pub const CHAT_LAYOUT_MIN_W_CSS: f64 = 380.0;
+
+/// 窗口逻辑宽度对应的页面缩放（1 = 不缩放）。
+pub fn chat_zoom_for_width(w_css: f64) -> f64 {
+    (w_css / CHAT_LAYOUT_MIN_W_CSS).clamp(0.4, 1.0)
+}
+
+/// chat 窗口固定高度（CSS px），容纳最高的回复页/会话屏。内容伸缩全在 DOM 内补间，
+/// 透明区经命中掩码穿透到 pet：随内容 resize 外窗会让 WebView2 位图滞后于窗框，
+/// 每次收放输入框都闪一下（单步 resize 同样无法避免）。
+pub const CHAT_HEIGHT_CSS: f64 = 330.0;
 
 /// 由 Live2D 可见矩形计算 chat 左上角：水平居中，且窗口底边恒为
 /// pet 底边 + `foot_offset`（面板盖住角色腿部、输入框压在脚线上，
@@ -277,25 +254,6 @@ pub fn sync_chat_anchor(
     Ok(())
 }
 
-/// 前端报告当前布局态；壳立即按内容态改变外窗高度并重新贴紧 pet。
-#[tauri::command]
-pub fn set_chat_layout(
-    app: AppHandle,
-    anchor: State<ChatAnchorState>,
-    runtime: State<ChatRuntimeState>,
-    mode: String,
-    content_height: Option<u32>,
-) -> Result<(), String> {
-    let layout = match mode.as_str() {
-        "composer" => ChatLayout::Composer,
-        "reply" => ChatLayout::Reply,
-        _ => ChatLayout::Setup,
-    };
-    runtime.lock().map_err(|error| error.to_string())?.set_layout(layout, content_height);
-    position_chat(&app, &anchor);
-    Ok(())
-}
-
 /// chat 页面汇报运行态；全量广播 chat-state {busy, typing, open}。
 #[tauri::command]
 pub fn set_chat_state(
@@ -365,19 +323,22 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let Some(chat) = app.get_webview_window("chat") else { return };
     let Some(pet) = current_anchor(app, anchor) else { return };
     let scale = app.get_webview_window("pet").and_then(|pet| pet.scale_factor().ok()).unwrap_or(1.0);
-    let (w_css, default_h_css) = chat_size_for_pet(pet.w as f64 / scale);
-    let h_css = app
-        .state::<ChatRuntimeState>()
-        .lock()
-        .map(|runtime| runtime.height_css(default_h_css))
-        .unwrap_or_else(|_| ChatRuntime::default().height_css(default_h_css));
+    let w_css = chat_width_for_pet(pet.w as f64 / scale);
+    let zoom = chat_zoom_for_width(w_css);
     let w = (w_css * scale).round().max(1.0) as i32;
-    let h = (h_css * scale).round().max(1.0) as i32;
-    let foot = (FOOT_OFFSET_CSS * scale).round() as i32;
+    let h = (CHAT_HEIGHT_CSS * zoom * scale).round().max(1.0) as i32;
+    let foot = (FOOT_OFFSET_CSS * zoom * scale).round() as i32;
+    // 先改缩放再改外窗：缩小时先缩内容，窗口随后收窄，不会出现一帧挤压排版。
+    let zoom_milli = (zoom * 1000.0).round() as u32;
+    let zoom_changed = app.state::<ChatRuntimeState>().lock()
+        .map(|mut r| if r.zoom_milli == Some(zoom_milli) { false } else { r.zoom_milli = Some(zoom_milli); true })
+        .unwrap_or(true);
+    if zoom_changed {
+        if let Err(error) = chat.set_zoom(f64::from(zoom_milli) / 1000.0) { eprintln!("[chat] set zoom failed: {error}"); }
+    }
     let (x, y) = chat_position(pet, w, h, foot, pet_monitor_work_area(app));
-    // 无变化不触碰窗口：每次 set_size/set_position 都会触发 webview 重合成。
-    // 布局上报（翻页/打字/图片载入）、锚点同步、打开窗口大多带着未变的几何
-    // 进来，照单全收就是用户看到的「刷新状态就闪」。chat 是无边框窗，
+    // 无变化不触碰窗口：每次 set_size/set_position 都会触发 webview 重合成，
+    // 锚点同步、打开窗口大多带着未变的几何进来。chat 是无边框窗，
     // outer_size 与 set_size 的物理尺寸一致。
     let need_size = chat
         .outer_size()
@@ -554,46 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn layout_measurements_survive_reposition_and_layout_switches() {
-        let mut runtime = ChatRuntime::default();
-        runtime.set_layout(ChatLayout::Reply, Some(146));
-        assert_eq!(runtime.height_css(300.0), 146.0);
-        assert_eq!(runtime.height_css(330.0), 146.0);
-        runtime.set_layout(ChatLayout::Composer, Some(70));
-        assert_eq!(runtime.height_css(300.0), 70.0);
-        runtime.set_layout(ChatLayout::Composer, None);
-        assert_eq!(runtime.height_css(300.0), 70.0);
-        runtime.set_layout(ChatLayout::Reply, None);
-        assert_eq!(runtime.height_css(300.0), 146.0);
-        runtime.set_layout(ChatLayout::Setup, Some(20));
-        assert_eq!(runtime.height_css(170.0), 300.0);
-        runtime.set_layout(ChatLayout::Composer, None);
-        assert_eq!(runtime.height_css(300.0), 70.0);
-    }
-
-    #[test]
-    fn remembered_heights_respect_layout_limits_without_clipping_narrow_replies() {
-        let mut runtime = ChatRuntime::default();
-        runtime.set_layout(ChatLayout::Reply, Some(400));
-        assert_eq!(runtime.height_css(330.0), 330.0);
-        assert_eq!(runtime.height_css(170.0), 330.0);
-        runtime.set_layout(ChatLayout::Reply, Some(224));
-        assert_eq!(runtime.height_css(170.0), 224.0);
-        runtime.set_layout(ChatLayout::Reply, Some(1));
-        assert_eq!(runtime.height_css(330.0), 118.0);
-        runtime.set_layout(ChatLayout::Composer, Some(70));
-        runtime.set_layout(ChatLayout::Composer, Some(0));
-        assert_eq!(runtime.height_css(300.0), 70.0);
-        runtime.set_layout(ChatLayout::Composer, Some(1));
-        assert_eq!(runtime.height_css(300.0), 62.0);
-        // 多行输入 + 导航行 + 等待/错误提示行的真实自然高不能被旧 88px 上限裁掉。
-        runtime.set_layout(ChatLayout::Composer, Some(113));
-        assert_eq!(runtime.height_css(300.0), 113.0);
-        runtime.set_layout(ChatLayout::Composer, Some(400));
-        assert_eq!(runtime.height_css(300.0), 144.0);
-    }
-
-    #[test]
     fn chat_bottom_edge_constant_regardless_of_height() {
         // 底边锚定：pet 底 + foot_offset，与窗口高度无关——输入框不随面板伸缩漂移
         let (x, y) = chat_position(PET, 600, 372, 56, None);
@@ -628,10 +549,19 @@ mod tests {
     #[test]
     fn chat_size_scales_with_pet_width() {
         // 模型越大对话框越大；超出区间钳住
-        let (w, h) = chat_size_for_pet(400.0);
-        assert!((w - 472.0).abs() < 1e-9 && (h - 472.0 * 0.62).abs() < 1e-9);
-        assert_eq!(chat_size_for_pet(100.0), (260.0, 170.0));
-        assert_eq!(chat_size_for_pet(900.0), (560.0, 330.0));
+        assert!((chat_width_for_pet(400.0) - 472.0).abs() < 1e-9);
+        assert_eq!(chat_width_for_pet(100.0), 150.0);
+        assert_eq!(chat_width_for_pet(900.0), 560.0);
+    }
+
+    #[test]
+    fn small_chat_scales_page_instead_of_squeezing_layout() {
+        assert_eq!(chat_zoom_for_width(472.0), 1.0);
+        assert_eq!(chat_zoom_for_width(CHAT_LAYOUT_MIN_W_CSS), 1.0);
+        assert!((chat_zoom_for_width(190.0) - 0.5).abs() < 1e-9);
+        // 页面逻辑宽 = 窗口宽 / 缩放，窄窗下恒等于最小排版宽。
+        let w = chat_width_for_pet(180.0);
+        assert!((w / chat_zoom_for_width(w) - CHAT_LAYOUT_MIN_W_CSS).abs() < 1e-9);
     }
 
     #[test]

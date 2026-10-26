@@ -33,12 +33,10 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   缩放越大 chat 离脚越远。缩放落定（applySettings 完成路径）立即用已知几何
   重报，不等 onMoved→位置查询的异步往返；壳侧 pet Resized 事件只按现有
   锚点重排，绝不用窗口外接矩形覆盖锚点。
-- 窗口底边恒定 = 脚底 + 56 CSS px（脚线），与内容态无关：面板出现、
-  收起、换页只伸缩顶边，输入框纹丝不动。宽高变化一律单步即时落定——
-  WebView2 外窗分步 resize 会让 webview 位图滞后于窗框，残影/黑块/抽搐
-  （实测），窗口级补间不可行；平滑感由 DOM 内 CSS 动画承担（面板出入场
-  走共享动效库 al-rise-in/al-sink-out，收起=先播出场帧再隐藏并单步收缩）。前端 chat-shell
-  同为底锚布局：面板/输入框贴窗口底，透明余量留在顶部。
+- 窗口底边恒定 = 脚底 + 56 CSS px（脚线），尺寸只随 pet 缩放变化（见下条）。
+  前端 chat-shell 为底锚布局：面板/输入框贴窗口底，透明余量留在顶部；平滑感
+  全由 DOM 内动画承担（面板出入场走共享动效库 al-rise-in/al-sink-out，
+  退出规则须带 `#chat-ui` 前缀，否则特异性低于入场规则、收起动画不播）。
   输入框是常驻锚点：`hidden` 只由 setOpen 管（开=显），切连接/会话屏
   只禁用不隐藏（占位符提示下一步，发送键随屏态置灰）——显隐切换会让
   卡片在过渡帧撕裂（面板方角底边悬空 + 矮窗把面板压条），是闪烁根因；
@@ -55,15 +53,13 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   fade-in 上浮淡入，列表类子项错落（stagger-in，30-50ms 阶梯，第 8 项起
   共用最大延迟）；回复流（打字点/分页）不参与错落，打点落定后正文以
   gal-text-in 淡入衔接。
-- chat 宽按可见模型宽 × 1.18（钳 260–560 CSS px）；外窗高度由前端
-  `set_chat_layout(mode,contentHeight)` 按内容态动态调整：composer 62–88、
-  reply 118–默认比例、setup 至少 300 CSS px。连接/会话屏按 setup 全高；
-  Windows 的记录与上下文定位已迁入独立 `records` 窗口，不再撑大贴附桌宠的
-  GAL 面板。壳侧重排幂等：outer 几何未变就不调 set_size/set_position——
-  每次调用都触发 webview 重合成，布局上报/锚点同步/打字大多几何未变，
-  照单全收就是「刷新状态就闪」。setup 高与内容无关，前端不同步等 rAF
-  测量，直接同步直发；「正在输入」占位同样同步量高直发——晚一帧窗口才
-  顶起面板，矮窗会把刚展开的面板压成细条。
+- chat 宽按可见模型宽 × 1.18（钳 150–560 CSS px），外窗高度固定 330 CSS px；窄于 380 时
+  整页 `set_zoom(宽/380)`，高度与脚底偏移同比（`chat_zoom_for_width`），命中掩码按原生外窗尺寸换算
+  （`chat_window.rs` `CHAT_HEIGHT_CSS`），不随内容 resize：WebView2 外窗
+  resize 时位图滞后于窗框，单步也会让输入框闪一下。面板出现/伸缩/收起全在
+  DOM 内完成，面板上方透明区经命中掩码穿透到 pet（`window.ts`
+  `startHitMaskRelay`，ResizeObserver 即时刷新）。壳侧重排幂等：outer 几何
+  未变就不调 set_size/set_position。
 - chat 不提供独立拖动；pet 移动/缩放时 chat 严格跟随。水平方向 pet 中心
   在屏内时 chat 钳回工作区（chat 比 pet 宽，纯居中会在贴边时把发送按钮
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
@@ -196,7 +192,10 @@ Aliya_web 相同。
   pending、审核拦截等）也翻译成中文，不向界面泄漏服务器英文原文。
 - 回复为单个 segment（不再按句切分），带 `messageId`；发送后 GAL 面板
   立即弹出显示「正在输入」三点脉冲动画，回复到达后原位
-  替换；停止等待则收起了占位。可 Esc/× 关闭。
+  替换；停止等待则收起了占位。可 Esc/× 关闭。等待期间输入框只读（保留
+  焦点），占位符换成「Aliya 正在想……」，状态行不再重复提示；停止键与发送键
+  叠放在同一槽位（`.composer-action`），busy 时缩放交叉淡入替换，隐藏的一方
+  同时 disabled。占位符与禁用态统一由 `syncComposerState` 按屏态/忙碌维护。
 - 回复播放是萝莉斯式逐页对话（`view.ts` + `typewriter.ts`）：assistant
   回复按 MSK 展示分段机制（`rendering/segments.ts`，逐行移植 misskey
   `agent-message-segments.ts`）拆成多页，一段一页；空行分页，代码块/
@@ -217,11 +216,11 @@ Aliya_web 相同。
   更新只静态刷新当前页。窗口锚定 Live2D 可见矩形并覆盖角色下半部；
   回复卡与输入框是 `chat-shell` 内两张独立卡片（间距 8px = view.ts
   `PANEL_GAP`，输入框形状永不随面板显隐变化）。每页播放前锁定本页完整
-  高度，逐字揭示不改卡片尺寸：Windows 经 `set_chat_layout` 让外窗单步
-  落定，Android/web 由 `lockEmbeddedPanel` 写 `--chat-panel-height` 并用
-  WAAPI 补间翻页高度；外窗高度随 composer/reply/setup 状态收放；量高补上
-  gal-content 滚动溢出量（面板被 max-height 钳住时不会越量越矮），
-  生图/附图解码完成再补量。记录/会话/连接屏不分页不逐字。
+  高度，逐字揭示不改卡片尺寸：`lockPanel` 写 `--chat-panel-height`（按
+  max-height 钳制，超高页在内部滚动），双端一致；面板任何高度变化由
+  ResizeObserver（`onPanelResize`）以 WAAPI 从旧高补间，startTime 钉在当前
+  帧防首帧闪跳。收起=`.leaving` 下沉淡出 150ms 后补 hidden；淡出中被新内容
+  打断则从当前不透明度浮回，不重播入场。生图/附图解码完成再补锁高。记录/会话/连接屏不分页不逐字。
 - 表演走「表演指令协议」（`PERFORMANCE.md`）：send 请求携带表情/动作清单
   （`performance-manifest.ts`，即桌宠环境标记），AI 回复内嵌独占一行的
   `[[agent_cue express=… play=…]]`；渲染时指令行自成隐藏 cue 页（`msk-cue`），

@@ -77,7 +77,7 @@ window.__drive = {
     scrollH: view.content.scrollHeight,
     clientH: view.content.clientHeight,
     overflow: view.content.scrollHeight - view.content.clientHeight,
-    measured: view.measureContentHeight(),
+    panelH: Math.round(view.panel.getBoundingClientRect().height),
     shellH: Math.round(view.root.querySelector('.chat-shell').getBoundingClientRect().height),
     hint: view.root.querySelector('.page-hint').textContent,
   }),

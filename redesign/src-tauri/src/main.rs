@@ -301,6 +301,29 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 缩放时一次性提交 pet 窗口的位置与尺寸（物理像素）。分开 set_size + set_position
+/// 时窗口先沿左上角伸缩一帧，角色会先跳走再被补偿拉回。
+#[tauri::command]
+fn set_pet_bounds(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    if w == 0 || h == 0 { return Err("invalid pet bounds".into()); }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER};
+        let hwnd = pet.hwnd().map_err(|e| e.to_string())?;
+        if unsafe { SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w as i32, h as i32,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        pet.set_size(tauri::PhysicalSize::new(w, h)).map_err(|e| e.to_string())?;
+        pet.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 显示预创建的设置窗口，并按需通知页面打开指定区域。
 fn show_settings_window(app: &tauri::AppHandle, target: Option<&str>) -> Result<(), String> {
     let win = app
@@ -363,12 +386,12 @@ fn main() {
             get_auto_start,
             open_url,
             update_hit_mask,
+            set_pet_bounds,
             show_settings,
             show_records,
             chat_window::show_chat,
             chat_window::hide_chat,
             chat_window::sync_chat_anchor,
-            chat_window::set_chat_layout,
             chat_window::set_chat_state,
             chat_window::send_chat_cue,
             miauth::miauth_begin,
