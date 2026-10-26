@@ -7,6 +7,30 @@
 import { DEFAULT_MSK_ORIGIN, MSK_BASE } from './config';
 
 /** 桌宠固定对接的 Aliya 角色与文风（与 Aliya_web 一致）。 */
+/**
+ * 任一信号中止即中止；可选超时以 TimeoutError 中止。手写而非 AbortSignal.any/timeout：
+ * 前者要 Chrome 116+，安卓系统 WebView 常更老（实机报 "AbortSignal.any is not a function"）。
+ * 返回 dispose 释放计时器与监听，长生命周期的外部信号不会累积监听器。
+ */
+export function combineSignals(signals: (AbortSignal | undefined)[], timeoutMs?: number): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const sources = signals.filter((s): s is AbortSignal => !!s);
+  const cleanups: (() => void)[] = [];
+  const dispose = () => { for (const fn of cleanups.splice(0)) fn(); };
+  const abort = (reason: unknown) => { if (!controller.signal.aborted) { controller.abort(reason); dispose(); } };
+  for (const source of sources) {
+    if (source.aborted) { abort(source.reason); return { signal: controller.signal, dispose }; }
+    const onAbort = () => abort(source.reason);
+    source.addEventListener('abort', onAbort, { once: true });
+    cleanups.push(() => source.removeEventListener('abort', onAbort));
+  }
+  if (timeoutMs !== undefined) {
+    const timer = setTimeout(() => abort(new DOMException('请求超时', 'TimeoutError')), timeoutMs);
+    cleanups.push(() => clearTimeout(timer));
+  }
+  return { signal: controller.signal, dispose };
+}
+
 export const ALIYA_CHARACTER_ID = 'akqruskge8w6003j';
 export const ALIYA_DIALOGUE_STYLE_ID = 'aofoi210vawt01t4';
 
@@ -93,8 +117,7 @@ export class MskClient {
 
   /** 只发请求并解析 JSON；非 2xx 不抛错（由调用方按状态决定），网络/超时/中止才抛。 */
   private async postRaw(path: string, body: Record<string, unknown>, signal: AbortSignal | undefined, timeoutMs: number): Promise<{ status: number; data: unknown }> {
-    const signals = [signal, AbortSignal.timeout(timeoutMs)].filter((s): s is AbortSignal => !!s);
-    const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    const { signal: combined, dispose } = combineSignals([signal], timeoutMs);
     let res: Awaited<ReturnType<FetchLike>>;
     try {
       res = await this.fetchImpl(`${MSK_BASE}/api${path}`, {
@@ -105,7 +128,11 @@ export class MskClient {
       });
     } catch (e) {
       if (signal?.aborted) throw e;
-      fail(e instanceof Error && e.name === 'TimeoutError' ? '请求超时，请检查网络。' : '网络异常，请稍后重试。');
+      const timedOut = combined.reason instanceof Error && combined.reason.name === 'TimeoutError';
+      fail(timedOut || (e instanceof Error && e.name === 'TimeoutError') ? '请求超时，请检查网络。' : '网络异常，请稍后重试。');
+    } finally {
+      // 只覆盖到响应头：读 body 期间不再受超时约束，与原 fetch 语义一致。
+      dispose();
     }
     let data: unknown = null;
     try { data = await res.json(); } catch { /* 非 JSON 响应当空对象处理 */ }

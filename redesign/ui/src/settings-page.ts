@@ -136,6 +136,19 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
   notifyPetAction({ action, ...extra });
 }
 
+/**
+ * 表演类操作（动作/台词/表情/情绪）。Windows 设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
+ * Android 设置页整屏盖住桌宠，发出后先让按钮确认一拍，再滑回主界面让用户看到表演。
+ * 桌宠页在设置页下面持续运行，动作在滑出过程中已开始播放。
+ */
+let returning = 0;
+function perform(button: HTMLElement, action: string, extra?: Record<string, unknown>): void {
+  trayAction(action, extra);
+  pulse(button);
+  if (platform !== 'android' || returning) return;
+  returning = window.setTimeout(() => { returning = 0; shellAction('open-main'); }, 160);
+}
+
 /** 触发类按钮的即时反馈：桌宠在另一个窗口执行，按钮本身短暂确认「已发出」。 */
 function pulse(button: HTMLElement): void {
   button.classList.remove('sent');
@@ -277,14 +290,14 @@ function refreshControls(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = ACTION_LABELS[name] ?? name;
-    b.addEventListener('click', () => { trayAction('play-action', { name }); pulse(b); });
+    b.addEventListener('click', () => perform(b, 'play-action', { name }));
     grid.appendChild(b);
   }
   box.appendChild(grid);
   const speech = document.createElement('button');
   speech.className = 'act wide';
   speech.textContent = '随机说一句';
-  speech.addEventListener('click', () => { trayAction('random-speech'); pulse(speech); });
+  speech.addEventListener('click', () => perform(speech, 'random-speech'));
   box.appendChild(speech);
 }
 
@@ -314,14 +327,14 @@ function refreshMoodHighlight(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = label;
-    b.addEventListener('click', () => { trayAction('express', { name, duration: 8 }); pulse(b); });
+    b.addEventListener('click', () => perform(b, 'express', { name, duration: 8 }));
     exprGrid.appendChild(b);
   }
   box.appendChild(exprGrid);
   const clearExpr = document.createElement('button');
   clearExpr.className = 'act wide';
   clearExpr.textContent = '恢复默认表情';
-  clearExpr.addEventListener('click', () => { trayAction('clear-expression'); pulse(clearExpr); });
+  clearExpr.addEventListener('click', () => perform(clearExpr, 'clear-expression'));
   box.appendChild(clearExpr);
 
   // 情绪（持续心境）
@@ -337,9 +350,9 @@ function refreshMoodHighlight(): void {
     b.className = 'act';
     b.textContent = MOOD_LABELS[name] ?? name;
     b.addEventListener('click', () => {
-      trayAction('set-mood', { name });
       currentMood = name;
       refreshMoodHighlight();
+      perform(b, 'set-mood', { name });
     });
     moodButtons.set(name, b);
     moodGrid.appendChild(b);

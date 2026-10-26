@@ -36,7 +36,13 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 - `WebViewAssetLoader` 将 `assets/pet/` 映射到
   `https://appassets.androidplatform.net/`；Gradle 从 `ui/dist` 同步打包。
 - 同源 WebView 共享 localStorage，设置经 `notifySettings` 即时应用，动作/表情/
-  情绪经 `notifyPetAction` 转给桌宠。辅助页关闭时补发 focus 处理配置与重播请求。
+  情绪经 `notifyPetAction` 转给桌宠；设置页整屏盖住桌宠，这类表演按钮发出后
+  约 160ms 自动 `open-main` 滑回主界面（`settings-page.ts` `perform`）。
+  辅助页关闭时补发 focus 处理配置与重播请求。
+- 系统 WebView 版本可能落后桌面 WebView2：前端不得依赖 Chrome 116+ 新 API
+  （实机踩过 `AbortSignal.any`，信号合并用 `msk/client.ts` `combineSignals`）。
+- 渲染开销：安卓 WebGL 关闭 MSAA 与 preserveDrawingBuffer（Live2D 边缘靠贴图
+  alpha，保留缓冲在分块 GPU 上每帧多一次整屏拷贝）；Windows 保留两者防缩放闪帧。
 - 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
   不用固定高度估算键盘。原生背景与菜单颜色映射共享 `styles/tokens.css`。
 - `WebChromeClient` 接系统文件选择器，托管配置可导入文件；document-start 脚本
@@ -74,7 +80,7 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 | 聊天与媒体 | 发送、停止/重试、分段逐字、图片/贴纸、表情动作正常 |
 | 记录与配置 | 八面板可切换保存；消息/分界可定位；重播回主界面播放 |
 | 导入/导出 | 文件选择可取消后重试；JSON 导出可选路径保存，中文内容不损坏 |
-| 设置 | 镜像、省电、自动行为、动作/表情/情绪实时生效；悬浮尺寸/位置重置可恢复 |
+| 设置 | 镜像、省电、自动行为实时生效；动作/表情/情绪点击后返回主界面表演；悬浮尺寸/位置重置可恢复 |
 | 返回与退出 | 逐层返回；关闭退后台开关不自动悬浮；菜单/通知退出后不自行重启 |
 | 熄屏、亮屏与通知权限 | 渲染暂停/恢复；通知拒绝不影响主界面；厂商后台限制按实机记录 |
 

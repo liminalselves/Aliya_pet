@@ -20,7 +20,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
 });
 function load(name,imports={},globals={}){
  const code=ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2021}}).outputText;
- const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,...globals});return exports;
+ const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
 const newActionNames=['cheerful_bounce','shy_sway'];
@@ -1008,6 +1008,16 @@ test('MSK 客户端：会话只保留 Aliya 角色，时间线过滤 system 并�
  const list=await client.listAliyaSessions();
  assert.deepEqual(list.map(s=>s.id),['s1','s3']);assert.equal(calls[0].i,'tk');
  const tl=await client.timeline('s1',30);
+});
+
+test('MSK 信号合并不依赖 AbortSignal.any/timeout（旧安卓 WebView 无此 API）',async()=>{
+ const {combineSignals}=load('chat/msk/client',{},{AbortSignal:{}});
+ const a=new AbortController(),b=new AbortController();
+ const one=combineSignals([a.signal,undefined,b.signal]);
+ assert.equal(one.signal.aborted,false);b.abort('stop');assert.equal(one.signal.aborted,true);assert.equal(one.signal.reason,'stop');
+ const pre=new AbortController();pre.abort('early');assert.equal(combineSignals([pre.signal]).signal.reason,'early');
+ const t=combineSignals([],5);await new Promise(r=>setTimeout(r,20));assert.equal(t.signal.reason.name,'TimeoutError');
+ const d=combineSignals([new AbortController().signal],5);d.dispose();await new Promise(r=>setTimeout(r,20));assert.equal(d.signal.aborted,false);
 });
 
 test('MSK 客户端：401 视为连接失效，send 带 clientRequestId 并读取 assistantText 与消息 id',async()=>{

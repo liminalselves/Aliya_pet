@@ -1,4 +1,4 @@
-import { MskClient, type FetchLike, type MskUser } from './client';
+import { MskClient, combineSignals, type FetchLike, type MskUser } from './client';
 import { MSK_BASE, MSK_TOKEN_KEY as TOKEN_KEY, MSK_USER_KEY as USER_KEY, MSK_PENDING_KEY as PENDING_KEY } from './config';
 import { platform, openUrl, androidShell } from '../../platform';
 interface StorageLike {
@@ -68,7 +68,7 @@ export class MskAuth {
     const session = crypto.randomUUID();
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('授权等待已超时，请重新连接。')), 300_000);
-    const abort = AbortSignal.any([timeout.signal, ...(signal ? [signal] : [])]);
+    const { signal: abort, dispose: disposeAbort } = combineSignals([timeout.signal, signal]);
     let unlisten: (() => void) | undefined;
     let end: (() => Promise<unknown>) | undefined;
     let onResume: (() => void) | undefined;
@@ -117,7 +117,7 @@ export class MskAuth {
       if (platform === 'android') androidShell()?.setPref('miauth_callback', '');
       return result;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(timer); disposeAbort();
       unlisten?.();
       if (onResume) { window.removeEventListener('focus', onResume); document.removeEventListener('visibilitychange', onResume); }
       await end?.();

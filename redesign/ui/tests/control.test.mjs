@@ -10,7 +10,7 @@ function load(name, config, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: () => config, setTimeout, clearTimeout, console, ...globals });
+  vm.runInNewContext(code, { exports, require: () => config, setTimeout, clearTimeout, console, AbortController, DOMException, ...globals });
   return exports;
 }
 
