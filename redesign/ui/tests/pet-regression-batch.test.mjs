@@ -79,7 +79,9 @@ function resizeHarness(sf = 1.5, mirror = false) {
   const core = { invoke: async (command, args) => { if (command === 'set_pet_bounds') return bounds.impl(args); } };
   const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api, '@tauri-apps/api/core': core,
     './platform': { platform: 'tauri' }, './settings': { ...settings, saveSettings: s => saved.push({ ...s }) },
-  }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {} } },
+  }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {}, style: {} } },
+    window: { get innerWidth() { return size.width / sf; }, get innerHeight() { return size.height / sf; } },
+    requestAnimationFrame: fn => setImmediate(() => fn(0)),
     console: { warn: (...args) => warnings.push(args) } });
   const app = Object.create(PetApp.prototype);
   Object.assign(app, { _windowSettingsRevision: 0, _windowSettingsTask: Promise.resolve(), _windowResizeRemainder: { x: 0, y: 0 },
@@ -88,6 +90,9 @@ function resizeHarness(sf = 1.5, mirror = false) {
     _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
       getStaticBounds: () => ({ minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 }) },
     _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _cancelSnapAnimation() {}, setFpsCap() {}, setMirrored() {},
+    // 这些用例验证原生几何补偿（启动恢复、换显示器时仍走这条路径）：不按显示器开足容量，
+    // 外窗尺寸跟随比例，每次设置都重新走一次完整补偿。
+    _scaleLimitsFrom: () => null,
     _syncChatAnchor: anchor => anchors.push(anchor), _broadcastSettings() {},
     _tauriWindow: { setAlwaysOnTop: async () => {},
       outerPosition: async () => { await pause('before-position'); return { ...pos }; },
@@ -102,6 +107,8 @@ function resizeHarness(sf = 1.5, mirror = false) {
       setPosition: async target => { await pause('position-before-effect'); events.push('position'); pos = { ...target }; positions.push(pos); await pause('position'); },
     },
   });
+  // 每次设置都走原生几何补偿路径（不进入固定容量的窗内缩放）。
+  Object.defineProperty(app, '_deskCapacityReady', { get: () => false, set() {} });
   /** 位置写入失败（尺寸已生效）：原子提交只改尺寸后拒绝，单独 setPosition 也拒绝。 */
   const failPosition = message => {
     const setPosition = app._tauriWindow.setPosition, original = bounds.impl;
@@ -539,4 +546,53 @@ test('重置位置已生效但 IPC 拒绝后，下一次真实拖动不跳回旧
     assert.equal(h.saved.at(-1).posX, expected.x);
     assert.equal(h.saved.at(-1).posY, expected.y);
   }
+});
+
+test('Windows 固定容量外窗：缩放只改窗内舞台，脚底浮点不动，反向输入从当前显示比例继续', () => {
+  const W = 800, H = 1200;
+  const { PetApp } = load('pet-app', { './platform': { platform: 'tauri' }, './settings': { saveSettings() {} } },
+    { window: { innerWidth: W, innerHeight: H, devicePixelRatio: 1 } });
+  const app = Object.create(PetApp.prototype);
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const queued = [], anchors = [];
+  const stage = { style: {} };
+  Object.assign(app, { _wrapWindow: false, _dpr: 1, _chatView: null, _deskScale: null, _deskCapacityReady: true,
+    _stageKey: '', _settings: { scale: 1, mirror: false }, _scaleFactor: 1, _winPhysX: 0, _winPhysY: 0,
+    _canvas: { width: 400, height: 600, parentElement: stage },
+    _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1, getStaticBounds: () => bounds },
+    _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _persistDesktopPos() {}, _syncChatAnchor() { anchors.push(1); },
+    _queueWindowGeometry: (op, label) => { queued.push(label); return new Promise(() => {}); } });
+  // 舞台在外窗内的屏幕脚底 = 舞台左上 + 画布内脚底（缓冲 = 舞台 CSS 尺寸，dpr 1）。
+  const screenFoot = () => {
+    const r = app._deskScale ? { left: 0, top: 0, width: W, height: H } : app._stageRect(app._deskRestScale, W, H, 1);
+    app._canvas.width = r.width; app._canvas.height = r.height;
+    const t = app._modelViewportTransform();
+    return { x: r.left + t.originX + ((bounds.minX + bounds.maxX) / 2) * t.scale, y: r.top + t.originY - bounds.minY * t.scale };
+  };
+  const near = (a, b) => assert.ok(Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6, `${a.x},${a.y} vs ${b.x},${b.y}`);
+  let now = 1000;
+  const perf = globalThis.performance.now;
+  globalThis.performance.now = () => now;
+  try {
+  app._layoutStage();
+  assert.deepEqual([stage.style.width, stage.style.height], ['400px', '600px'], '静止舞台 = 当前比例的自然矩形');
+  const foot = screenFoot();
+  app._settings.scale = 0.6; app._setDesktopScaleTarget(0.6);
+  const shown = [];
+  for (let i = 0; i < 6; i++) {
+    now += 16; app._stepDesktopScale(now); app._layoutStage(); shown.push(app._deskScale.shown);
+    near(screenFoot(), foot);
+  }
+  assert.deepEqual([stage.style.width, stage.style.height], [`${W}px`, `${H}px`], '补间期间舞台铺满外窗');
+  assert.ok(shown.every((v, i) => i === 0 || v < shown[i - 1]), '缩小过程单调');
+  const mid = app._deskScale.shown;
+  app._settings.scale = 1.8; app._setDesktopScaleTarget(1.8); now += 16; app._stepDesktopScale(now);
+  assert.ok(app._deskScale.shown > mid, '反向从当前显示值继续');
+  assert.ok(app._deskScale.target <= app._deskCapacityCss() + 1e-9, '目标钳在外窗容量内');
+  for (let i = 0; i < 60; i++) { now += 16; app._stepDesktopScale(now); app._layoutStage(); near(screenFoot(), foot); }
+  assert.equal(app._deskScale, null, '到位且静置后结束补间');
+  app._layoutStage(); near(screenFoot(), foot);
+  assert.deepEqual(queued, [], '缩放全程不触发任何原生窗口几何');
+  assert.ok(anchors.length > 0, 'chat 锚点随显示比例更新');
+  } finally { globalThis.performance.now = perf; }
 });
