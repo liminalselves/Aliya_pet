@@ -304,9 +304,17 @@ fn open_url(url: String) -> Result<(), String> {
 /// 缩放时一次性提交 pet 窗口的位置与尺寸（物理像素）。分开 set_size + set_position
 /// 时窗口先沿左上角伸缩一帧，角色会先跳走再被补偿拉回。
 #[tauri::command]
+/// chat 按同一几何同步就位（模型局部锚点与窗口尺寸无关，缩放不需要前端重报）。
 fn set_pet_bounds(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
     if w == 0 || h == 0 { return Err("invalid pet bounds".into()); }
+    chat_window::begin_pet_bounds(&app, chat_window::PetAnchor { x, y, w: w as i32, h: h as i32 });
+    let result = apply_pet_bounds(&pet, x, y, w, h);
+    chat_window::end_pet_bounds(&app);
+    result
+}
+
+fn apply_pet_bounds(pet: &tauri::WebviewWindow, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER};
@@ -394,6 +402,8 @@ fn main() {
             chat_window::sync_chat_anchor,
             chat_window::set_chat_state,
             chat_window::send_chat_cue,
+            chat_window::chat_layout,
+            chat_window::set_chat_layout,
             miauth::miauth_begin,
             miauth::miauth_end
         ])

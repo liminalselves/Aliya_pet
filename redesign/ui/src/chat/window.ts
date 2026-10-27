@@ -28,7 +28,27 @@ if (platform === 'tauri') {
   // 表演提示经壳广播（chat-cue 全局事件），保证 pet 即使未聚焦也能收到。
   controller.onCue = cue => { void invoke('send_chat_cue', { cue }).catch(() => {}); };
   controller.onCancelPerformance = () => { void emitTo('pet', 'chat-cancel', {}); };
-  startHitMaskRelay();
+  const relayHitMask = startHitMaskRelay();
+  // 卡片随角色显示大小逐帧变化（pet 前端上报，壳换算）：首个布局不补间，之后 CSS 短过渡平滑相邻帧。
+  type Layout = { zoom: number; width: number };
+  let layoutApplied = false;
+  const applyLayout = (layout: Layout | null) => {
+    if (!layout || !(layout.zoom > 0)) return;
+    if (!layoutApplied) document.body.classList.add('chat-layout-init');
+    document.body.style.setProperty('--chat-zoom', String(layout.zoom));
+    if (layout.width > 0) document.body.style.setProperty('--chat-width', `${layout.width}px`);
+    if (!layoutApplied) {
+      layoutApplied = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('chat-layout-init')));
+    }
+    relayHitMask();
+  };
+  await listen<Layout>('chat-layout', e => applyLayout(e.payload));
+  applyLayout(await invoke<Layout | null>('chat_layout').catch((): Layout | null => null));
+  // 补间结束补报命中掩码（过渡期间由 500ms 轮询兜底）。
+  document.addEventListener('transitionend', e => {
+    if ((e.target as Element | null)?.classList?.contains('chat-shell')) relayHitMask();
+  });
 }
 
 /**
@@ -36,7 +56,7 @@ if (platform === 'tauri') {
  * 面板外的透明区域点击穿透到下层窗口（chat 外窗高度固定，面板上方的透明区覆盖着 pet）。
  * 面板显隐/伸缩由 ResizeObserver 即时触发，另以 500ms 轮询兜底窗口移动与 DPI 变化；几何未变不发送。
  */
-function startHitMaskRelay(): void {
+function startHitMaskRelay(): () => void {
   const COLS = 64;
   let lastKey = '';
   let pending = false;
@@ -81,4 +101,5 @@ function startHitMaskRelay(): void {
   const observer = new ResizeObserver(schedule);
   for (const el of document.querySelectorAll<HTMLElement>('.gal-panel, .chat-composer')) observer.observe(el);
   setInterval(schedule, 500);
+  return schedule;
 }

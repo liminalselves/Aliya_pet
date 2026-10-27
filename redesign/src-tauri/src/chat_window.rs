@@ -6,14 +6,12 @@
 //!
 //! 几何契约（物理像素）：
 //! - chat 永远吸附在 pet 正下方、水平居中，像萝莉斯桌宠那样是模型的延伸；
-//!   宽度按 pet 逻辑宽度推导（宽 = pet 宽 × 1.18），高度固定 CHAT_HEIGHT_CSS；
-//!   窗口窄于 CHAT_LAYOUT_MIN_W_CSS 时整页等比缩放（set_zoom），高度/脚底偏移同比，
-//!   pet 切换尺寸时 chat 跟随缩放；
-//! - 窗口底边恒定：底边 = pet 底边 + FOOT_OFFSET（贴住脚线），与布局态无关。
-//!   输入框锚在窗口底部，面板出现/收起/换页只在 DOM 内向上伸缩，外窗不变；
-//! - 外窗不随内容 resize：WebView2 resize 时位图滞后于窗框（残影/黑块/闪烁，
-//!   单步也无法避免），透明区域由命中掩码穿透；
-//!   平滑感由 DOM 内 CSS/WAAPI 动画承担（见 chat.css / view.ts）；
+//!   卡片视觉宽 = pet 窗宽 × 1.18（按角色当前显示大小折算，钳 150–560），窄于 380 时
+//!   按 380 排版、整卡 CSS transform 等比缩小，脚线偏移同比；
+//! - 外窗尺寸恒定（CHAT_WINDOW_W/H_CSS），不随内容、也不随 pet 缩放 resize：
+//!   WebView2 resize/set_zoom 时位图滞后于窗框（残影/黑块/闪烁，单步也无法避免）。
+//!   pet 前端逐帧按角色显示大小 `set_chat_layout(width)`，壳换算缩放后以
+//!   `chat-layout {zoom,width}` 转给页面，卡片与角色同帧缩放；壳侧只做平移；
 //! - pet 贴近屏幕底边、下方放不下时只向上移回工作区内；
 //! - chat 不提供独立拖动；pet 拖动/缩放时 chat 严格跟随（允许随之越出
 //!   工作区——窗口越界规范只对 pet 生效，chat 是 pet 的影子）。
@@ -77,8 +75,10 @@ pub struct ChatRuntime {
     pub typing: bool,
     /// pet 隐藏前 chat 是否打开；pet 恢复时据此带回 chat。
     pub open_before_pet_hide: bool,
-    /// 最近一次下发给 chat WebView 的缩放（千分比），未变不重复设置。
-    zoom_milli: Option<u32>,
+    /// 最近一次下发给页面的卡片布局，未变不重复广播。
+    layout: Option<ChatLayout>,
+    /// 缩放预告的 pet 外窗几何；存在时代替实时窗口快照。
+    pending_pet: Option<PetAnchor>,
 }
 
 pub type ChatRuntimeState = Arc<Mutex<ChatRuntime>>;
@@ -155,58 +155,109 @@ pub struct WorkRect {
     pub h: i32,
 }
 
-/// chat 逻辑宽度按 pet 逻辑宽度推导：宽 = pet 宽 × 1.18（钳 150–560）。
-/// 模型多大对话框多大，视觉上是 pet 的延伸。
-pub fn chat_width_for_pet(pet_w_css: f64) -> f64 {
-    (pet_w_css * 1.18).clamp(150.0, 560.0)
-}
-
-/// 页面排版的最小逻辑宽度（CSS px）。窗口比它窄时不再挤压排版，而是整页等比缩小
-/// （WebView 缩放 = 窗口宽 / 本值）：小模型旁的输入框、按钮、字号随模型一起变小，
-/// 不会出现「人很小、输入框很大」。窗口高度与脚底偏移同比缩放。
+/// 卡片视觉宽与 pet 窗宽之比（pet 前端折算后上报，这里只作未上报时的回退）。
+pub const CHAT_WIDTH_RATIO: f64 = 1.18;
+pub const CHAT_MIN_W_CSS: f64 = 150.0;
+pub const CHAT_MAX_W_CSS: f64 = 560.0;
+/// 卡片最小排版宽（CSS px）：比它窄时按它排版并整卡等比缩小，小模型旁的输入框、
+/// 按钮、字号随模型一起变小，不挤压排版。
 pub const CHAT_LAYOUT_MIN_W_CSS: f64 = 380.0;
+/// 卡片排版区高度（CSS px，缩放前），chat.css `.chat-shell` 同值。
+#[cfg_attr(not(test), allow(dead_code))]
+pub const CHAT_SHELL_H_CSS: f64 = 324.0;
+/// 外窗底边低于 pet 脚底的距离（CSS px）；卡片底边 = 脚底 + 本值 × 缩放 − 6 × 缩放，
+/// 差额由页面 `bottom: calc(56px × (1 − zoom))` 吸收（chat.css 同值）。
+pub const FOOT_OFFSET_CSS: f64 = 56.0;
+/// 外窗固定尺寸（CSS px）：容得下最宽、最高的卡片。
+pub const CHAT_WINDOW_W_CSS: f64 = CHAT_MAX_W_CSS;
+pub const CHAT_WINDOW_H_CSS: f64 = CHAT_SHELL_H_CSS + FOOT_OFFSET_CSS;
 
-/// 窗口逻辑宽度对应的页面缩放（1 = 不缩放）。
-pub fn chat_zoom_for_width(w_css: f64) -> f64 {
-    (w_css / CHAT_LAYOUT_MIN_W_CSS).clamp(0.4, 1.0)
+/// 卡片视觉宽对应的页面布局：缩放 = 视觉宽 / 最小排版宽（≤1），排版宽 = 视觉宽 / 缩放。
+pub fn chat_layout_for_width(visual_w_css: f64) -> ChatLayout {
+    let w = visual_w_css.clamp(CHAT_MIN_W_CSS, CHAT_MAX_W_CSS);
+    let zoom = ((w / CHAT_LAYOUT_MIN_W_CSS).clamp(0.4, 1.0) * 1000.0).round() / 1000.0;
+    ChatLayout { zoom, width: (w / zoom * 2.0).round() / 2.0 }
 }
 
-/// chat 窗口固定高度（CSS px），容纳最高的回复页/会话屏。内容伸缩全在 DOM 内补间，
-/// 透明区经命中掩码穿透到 pet：随内容 resize 外窗会让 WebView2 位图滞后于窗框，
-/// 每次收放输入框都闪一下（单步 resize 同样无法避免）。
-pub const CHAT_HEIGHT_CSS: f64 = 330.0;
-
-/// 由 Live2D 可见矩形计算 chat 左上角：水平居中，且窗口底边恒为
-/// pet 底边 + `foot_offset`（面板盖住角色腿部、输入框压在脚线上，
-/// 底边不随布局态漂移）。这是萝莉斯式布局的关键——对话框是角色的延伸，
-/// 而不是在模型外窗下方另挂一个网页。水平方向：pet 中心在屏内时把 chat
-/// 钳回工作区（chat 比 pet 宽，贴边时纯居中会把发送按钮切出屏幕）；
-/// pet 中心出屏说明桌宠被拖出桌面，chat 作为影子跟随越界，不拉回。
-/// 若窗口仍超出工作区底部，则只向上移动到工作区底边。
+/// 由 Live2D 可见矩形计算 chat 外窗左上角。外窗固定 `win_w × win_h`，卡片
+/// （视觉宽 `card_w`）水平居中于外窗、底边比外窗底边高 `lift`；外窗底边恒为
+/// pet 底边 + `foot_offset`（面板盖住角色腿部、输入框压在脚线上）。
+/// 避让只针对可见卡片而不是透明外窗：pet 中心在屏内时把卡片钳回工作区（贴边时
+/// 纯居中会把发送按钮切出屏幕），外窗本身可以越出屏幕；pet 中心出屏说明桌宠被
+/// 拖出桌面，chat 作为影子跟随越界，不拉回。卡片超出工作区底部时整窗上移。
 pub fn chat_position(
     pet: PetAnchor,
-    chat_w: i32,
-    chat_h: i32,
+    card_w: i32,
+    win_w: i32,
+    win_h: i32,
     foot_offset: i32,
+    lift: i32,
     work: Option<WorkRect>,
 ) -> (i32, i32) {
-    if pet.w <= 0 || pet.h <= 0 || chat_w <= 0 || chat_h <= 0 {
+    if pet.w <= 0 || pet.h <= 0 || card_w <= 0 || win_w <= 0 || win_h <= 0 {
         return (pet.x, pet.y);
     }
-    let mut x = pet.x + (pet.w - chat_w) / 2;
-    let mut y = pet.y + pet.h + foot_offset - chat_h;
+    let mut card_x = pet.x + (pet.w - card_w) / 2;
+    let mut y = pet.y + pet.h + foot_offset - win_h;
     if let Some(wa) = work {
         if wa.w > 0 && wa.h > 0 {
             let pet_cx = pet.x + pet.w / 2;
-            if chat_w <= wa.w && pet_cx >= wa.x && pet_cx <= wa.x + wa.w {
-                x = x.clamp(wa.x, wa.x + wa.w - chat_w);
+            if card_w <= wa.w && pet_cx >= wa.x && pet_cx <= wa.x + wa.w {
+                card_x = card_x.clamp(wa.x, wa.x + wa.w - card_w);
             }
-            if y + chat_h > wa.y + wa.h {
-                y = wa.y + wa.h - chat_h;
+            let card_bottom = y + win_h - lift;
+            if card_bottom > wa.y + wa.h {
+                y -= card_bottom - (wa.y + wa.h);
             }
         }
     }
-    (x, y)
+    (card_x + card_w / 2 - win_w / 2, y)
+}
+
+/// 页面卡片布局：缩放与视觉宽度（CSS px）。
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct ChatLayout {
+    pub zoom: f64,
+    pub width: f64,
+}
+
+/// 页面启动时拉取最近一次卡片布局（事件可能先于页面加载发出）。
+#[tauri::command]
+pub fn chat_layout(runtime: State<ChatRuntimeState>) -> Option<ChatLayout> {
+    runtime.lock().ok().and_then(|r| r.layout)
+}
+
+/// pet 外窗即将改为 `bounds`（物理像素）：登记预告几何，chat 立即按终点就位；
+/// SetWindowPos 期间同步到达的 Resized 事件也读预告，不会按半途几何跳一下。
+/// 原生调用结束后由 `end_pet_bounds` 清除。
+pub fn begin_pet_bounds(app: &AppHandle, bounds: PetAnchor) {
+    if let Ok(mut r) = app.state::<ChatRuntimeState>().lock() {
+        r.pending_pet = Some(bounds);
+    }
+    position_chat(app, app.state::<ChatAnchorState>().inner());
+}
+
+/// pet 前端逐帧上报卡片视觉宽（CSS px，按角色当前显示大小折算）：换算布局转给页面，
+/// 并按新卡片宽重算工作区避让。值未变不广播。
+#[tauri::command]
+pub fn set_chat_layout(app: AppHandle, anchor: State<ChatAnchorState>, width: f64) -> Result<(), String> {
+    if !width.is_finite() || width <= 0.0 { return Err("invalid chat width".into()); }
+    let layout = chat_layout_for_width(width);
+    let changed = app.state::<ChatRuntimeState>().lock()
+        .map(|mut r| if r.layout == Some(layout) { false } else { r.layout = Some(layout); true })
+        .unwrap_or(false);
+    if changed {
+        let _ = app.emit_to("chat", "chat-layout", layout);
+        position_chat(&app, &anchor);
+    }
+    Ok(())
+}
+
+pub fn end_pet_bounds(app: &AppHandle) {
+    if let Ok(mut r) = app.state::<ChatRuntimeState>().lock() {
+        r.pending_pet = None;
+    }
+    position_chat(app, app.state::<ChatAnchorState>().inner());
 }
 
 /// 打开（或聚焦）chat 窗口，并按锚点定位；广播打开状态。
@@ -315,28 +366,23 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
 
 // ---------- 内部 ----------
 
-/// 窗口底边超出 pet 底边的距离（CSS px）：输入框贴住脚线又不没进屏幕底。
-const FOOT_OFFSET_CSS: f64 = 56.0;
-
-/// 按锚点定位并缩放 chat：位置与尺寸都实时从 pet 推导，无用户态偏移。
+/// 按锚点定位 chat：外窗尺寸恒定只平移，卡片尺寸经事件交给页面补间。
 fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let Some(chat) = app.get_webview_window("chat") else { return };
     let Some(pet) = current_anchor(app, anchor) else { return };
     let scale = app.get_webview_window("pet").and_then(|pet| pet.scale_factor().ok()).unwrap_or(1.0);
-    let w_css = chat_width_for_pet(pet.w as f64 / scale);
-    let zoom = chat_zoom_for_width(w_css);
-    let w = (w_css * scale).round().max(1.0) as i32;
-    let h = (CHAT_HEIGHT_CSS * zoom * scale).round().max(1.0) as i32;
-    let foot = (FOOT_OFFSET_CSS * zoom * scale).round() as i32;
-    // 先改缩放再改外窗：缩小时先缩内容，窗口随后收窄，不会出现一帧挤压排版。
-    let zoom_milli = (zoom * 1000.0).round() as u32;
-    let zoom_changed = app.state::<ChatRuntimeState>().lock()
-        .map(|mut r| if r.zoom_milli == Some(zoom_milli) { false } else { r.zoom_milli = Some(zoom_milli); true })
-        .unwrap_or(true);
-    if zoom_changed {
-        if let Err(error) = chat.set_zoom(f64::from(zoom_milli) / 1000.0) { eprintln!("[chat] set zoom failed: {error}"); }
+    let stored = app.state::<ChatRuntimeState>().lock().ok().and_then(|r| r.layout);
+    let layout = stored.unwrap_or_else(|| chat_layout_for_width(pet.w as f64 / scale * CHAT_WIDTH_RATIO));
+    if stored.is_none() {
+        if let Ok(mut r) = app.state::<ChatRuntimeState>().lock() { r.layout = Some(layout); }
+        let _ = app.emit_to("chat", "chat-layout", layout);
     }
-    let (x, y) = chat_position(pet, w, h, foot, pet_monitor_work_area(app));
+    let w = (CHAT_WINDOW_W_CSS * scale).round().max(1.0) as i32;
+    let h = (CHAT_WINDOW_H_CSS * scale).round().max(1.0) as i32;
+    let card_w = (layout.width * layout.zoom * scale).round().max(1.0) as i32;
+    let foot = (FOOT_OFFSET_CSS * scale).round() as i32;
+    let lift = ((FOOT_OFFSET_CSS * (1.0 - layout.zoom) + 6.0 * layout.zoom) * scale).round() as i32;
+    let (x, y) = chat_position(pet, card_w, w, h, foot, lift, pet_monitor_work_area(app));
     // 无变化不触碰窗口：每次 set_size/set_position 都会触发 webview 重合成，
     // 锚点同步、打开窗口大多带着未变的几何进来。chat 是无边框窗，
     // outer_size 与 set_size 的物理尺寸一致。
@@ -386,6 +432,10 @@ fn pet_monitor_work_area(app: &AppHandle) -> Option<WorkRect> {
 /// 优先用前端显式上报的锚点；从未上报时回退为原生查询 pet 窗口外接矩形。
 fn current_anchor(app: &AppHandle, anchor: &ChatAnchorState) -> Option<PetAnchor> {
     let local = anchor.lock().ok().and_then(|slot| *slot);
+    let pending = app.state::<ChatRuntimeState>().lock().ok().and_then(|r| r.pending_pet);
+    if let Some(window) = pending {
+        return Some(local.map(|local| local.at_window(window)).unwrap_or(window));
+    }
     let pet = app.get_webview_window("pet")?;
     // pet 是无边框窗口，Win32 GetWindowRect 一次取得原点和尺寸，避免混合两次查询。
     #[cfg(windows)]
@@ -469,8 +519,8 @@ mod tests {
             let moved = local.at_window(PetAnchor { x, y, ..window });
             assert_eq!((moved.x - x, moved.y - y), (30, 60));
             assert_eq!((moved.w, moved.h), (PET.w, PET.h));
-            let before = chat_position(PET, 600, 146, 56, None);
-            let after = chat_position(moved, 600, 146, 56, None);
+            let before = chat_position(PET, 600, 600, 146, 56, 0, None);
+            let after = chat_position(moved, 600, 600, 146, 56, 0, None);
             assert_eq!((after.0 - before.0, after.1 - before.1), (x-window.x, y-window.y));
         }
         let dpi = local.at_window(PetAnchor { w: 1200, h: 2000, ..window });
@@ -517,17 +567,17 @@ mod tests {
     #[test]
     fn chat_bottom_edge_constant_regardless_of_height() {
         // 底边锚定：pet 底 + foot_offset，与窗口高度无关——输入框不随面板伸缩漂移
-        let (x, y) = chat_position(PET, 600, 372, 56, None);
+        let (x, y) = chat_position(PET, 600, 600, 372, 56, 0, None);
         assert_eq!(x, PET.x + (PET.w - 600) / 2);
         assert_eq!(y + 372, PET.y + PET.h + 56);
-        let (_, y2) = chat_position(PET, 600, 118, 56, None);
+        let (_, y2) = chat_position(PET, 600, 600, 118, 56, 0, None);
         assert_eq!(y2 + 118, PET.y + PET.h + 56);
     }
 
     #[test]
     fn bottom_overflow_moves_window_up_but_keeps_bottom_inside() {
         let wa = WorkRect { x: 0, y: 0, w: 3840, h: PET.y + PET.h };
-        let (x, y) = chat_position(PET, 600, 372, 56, Some(wa));
+        let (x, y) = chat_position(PET, 600, 600, 372, 56, 0, Some(wa));
         assert_eq!(y + 372, wa.y + wa.h);
         assert_eq!(x, PET.x + (PET.w - 600) / 2);
     }
@@ -536,52 +586,63 @@ mod tests {
     fn chat_follows_pet_offscreen_without_clamping() {
         // pet 拖出桌面（负坐标）：chat 严格跟随，不拉回工作区
         let off = PetAnchor { x: -4000, y: -1000, ..PET };
-        let (x, y) = chat_position(off, 600, 372, 56, Some(ROOM));
+        let (x, y) = chat_position(off, 600, 600, 372, 56, 0, Some(ROOM));
         assert_eq!(x, -4000 + (PET.w - 600) / 2);
         assert_eq!(y, -1000 + PET.h + 56 - 372);
         // 平移多少跟随多少
         let moved = PetAnchor { x: PET.x + 250, y: PET.y - 130, ..PET };
-        let (x1, y1) = chat_position(PET, 600, 372, 56, Some(ROOM));
-        let (x2, y2) = chat_position(moved, 600, 372, 56, Some(ROOM));
+        let (x1, y1) = chat_position(PET, 600, 600, 372, 56, 0, Some(ROOM));
+        let (x2, y2) = chat_position(moved, 600, 600, 372, 56, 0, Some(ROOM));
         assert_eq!((x2 - x1, y2 - y1), (250, -130));
     }
 
     #[test]
-    fn chat_size_scales_with_pet_width() {
-        // 模型越大对话框越大；超出区间钳住
-        assert!((chat_width_for_pet(400.0) - 472.0).abs() < 1e-9);
-        assert_eq!(chat_width_for_pet(100.0), 150.0);
-        assert_eq!(chat_width_for_pet(900.0), 560.0);
+    fn layout_keeps_wide_cards_unscaled_and_scales_narrow_ones() {
+        // ≥380 按视觉宽排版不缩放；窄于 380 按 380 排版整卡缩小；超出区间钳住
+        assert_eq!(chat_layout_for_width(472.0), ChatLayout { zoom: 1.0, width: 472.0 });
+        assert_eq!(chat_layout_for_width(190.0), ChatLayout { zoom: 0.5, width: 380.0 });
+        assert_eq!(chat_layout_for_width(900.0).width, CHAT_MAX_W_CSS);
+        let tiny = chat_layout_for_width(20.0);
+        assert!((tiny.width * tiny.zoom - CHAT_MIN_W_CSS).abs() < 1.0);
+        // 最大卡片放得进固定外窗
+        assert!(CHAT_MAX_W_CSS <= CHAT_WINDOW_W_CSS);
+        assert!(CHAT_SHELL_H_CSS + FOOT_OFFSET_CSS <= CHAT_WINDOW_H_CSS);
     }
 
     #[test]
-    fn small_chat_scales_page_instead_of_squeezing_layout() {
-        assert_eq!(chat_zoom_for_width(472.0), 1.0);
-        assert_eq!(chat_zoom_for_width(CHAT_LAYOUT_MIN_W_CSS), 1.0);
-        assert!((chat_zoom_for_width(190.0) - 0.5).abs() < 1e-9);
-        // 页面逻辑宽 = 窗口宽 / 缩放，窄窗下恒等于最小排版宽。
-        let w = chat_width_for_pet(180.0);
-        assert!((w / chat_zoom_for_width(w) - CHAT_LAYOUT_MIN_W_CSS).abs() < 1e-9);
+    fn card_stays_centered_on_pet_inside_wider_fixed_window() {
+        // 外窗比卡片宽：卡片中心对齐模型中心，外窗按卡片反推
+        let (x, y) = chat_position(PET, 300, 460, 500, 65, 15, None);
+        assert_eq!(x + 230, PET.x + PET.w / 2);
+        assert_eq!(y + 500, PET.y + PET.h + 65);
+        // 贴右缘：钳的是卡片，外窗可越出工作区
+        let edge = PetAnchor { x: ROOM.w - 300, ..PET };
+        let (x2, _) = chat_position(edge, 300, 460, 500, 65, 15, Some(ROOM));
+        assert_eq!(x2 + 230 + 150, ROOM.w);
+        // 卡片底边越出工作区底：整窗上移到卡片贴底
+        let wa = WorkRect { x: 0, y: 0, w: 3840, h: PET.y + PET.h };
+        let (_, y3) = chat_position(PET, 300, 460, 500, 65, 15, Some(wa));
+        assert_eq!(y3 + 500 - 15, wa.h);
     }
 
     #[test]
     fn chat_clamps_into_work_area_when_pet_near_edge() {
         // pet 贴右边缘但中心在屏内：chat 比 pet 宽，纯居中会把右半切出屏幕，钳回工作区
         let edge = PetAnchor { x: ROOM.w - 300, ..PET };
-        let (x, _) = chat_position(edge, 600, 372, 56, Some(ROOM));
+        let (x, _) = chat_position(edge, 600, 600, 372, 56, 0, Some(ROOM));
         assert_eq!(x, ROOM.x + ROOM.w - 600);
         // pet 中心已出屏（被拖出桌面）：不钳制，影子跟随
         let out = PetAnchor { x: ROOM.w + 300, ..PET };
-        let (x2, _) = chat_position(out, 600, 372, 56, Some(ROOM));
+        let (x2, _) = chat_position(out, 600, 600, 372, 56, 0, Some(ROOM));
         assert_eq!(x2, out.x + (out.w - 600) / 2);
     }
 
     #[test]
     fn degenerate_anchor_falls_back_to_anchor_origin() {
         let degenerate = PetAnchor { w: 0, h: 100, ..PET };
-        assert_eq!(chat_position(degenerate, 600, 372, 56, None), (degenerate.x, degenerate.y));
+        assert_eq!(chat_position(degenerate, 600, 600, 372, 56, 0, None), (degenerate.x, degenerate.y));
         let degenerate2 = PetAnchor { w: 100, h: -1, ..PET };
-        assert_eq!(chat_position(degenerate2, 600, 372, 56, None), (degenerate2.x, degenerate2.y));
-        assert_eq!(chat_position(PET, 0, 372, 56, None), (PET.x, PET.y));
+        assert_eq!(chat_position(degenerate2, 600, 600, 372, 56, 0, None), (degenerate2.x, degenerate2.y));
+        assert_eq!(chat_position(PET, 0, 0, 372, 56, 0, None), (PET.x, PET.y));
     }
 }

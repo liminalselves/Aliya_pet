@@ -42,6 +42,8 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     private var pendingOverlay = false
     private var menuDialog: Dialog? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    /** 本次选择器里相机的输出文件；用户选了拍照且成功时作为结果交回网页。 */
+    private var cameraOutput: java.io.File? = null
     private var downloadBytes: ByteArray? = null
     private val saveFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val bytes = downloadBytes
@@ -60,7 +62,18 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         }
     }
     private val filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data))
+        val camera = cameraOutput
+        cameraOutput = null
+        val picked = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        // 相机不回传 data（结果写在 EXTRA_OUTPUT）：选图结果为空且拍照文件有内容即为拍照。
+        val value = when {
+            picked != null && picked.isNotEmpty() -> picked
+            result.resultCode == RESULT_OK && camera != null && camera.length() > 0 ->
+                arrayOf(androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", camera))
+            else -> null
+        }
+        if (value == null) camera?.delete()
+        fileCallback?.onReceiveValue(value)
         fileCallback = null
     }
     private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -143,13 +156,41 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         fileCallback?.onReceiveValue(null)
         fileCallback = callback
         try {
-            filePicker.launch(params.createIntent())
+            filePicker.launch(fileChooserIntent(params))
         } catch (_: android.content.ActivityNotFoundException) {
             fileCallback?.onReceiveValue(null)
             fileCallback = null
+            cameraOutput = null
             Toast.makeText(this, R.string.toast_no_file_picker, Toast.LENGTH_LONG).show()
         }
     })
+
+    /** 图片类选择：系统选择器里同时提供「相机」与相册/文件；其他类型保持系统默认选择器。 */
+    private fun fileChooserIntent(params: WebChromeClient.FileChooserParams): Intent {
+        val base = params.createIntent()
+        val types = params.acceptTypes.filter { it.isNotBlank() }
+        val imageOnly = types.isNotEmpty() && types.all { it.startsWith("image/") }
+        cameraOutput?.delete()
+        cameraOutput = null
+        if (!imageOnly) return base
+        val capture = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+        if (capture.resolveActivity(packageManager) == null) return base
+        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+        // 清掉上次遗留的拍照文件，cache 目录不累积。
+        dir.listFiles()?.forEach { it.delete() }
+        val file = java.io.File(dir, "photo-${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        capture.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+        capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        cameraOutput = file
+        val gallery = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        return Intent.createChooser(gallery, getString(R.string.chooser_image)).apply {
+            putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(capture))
+        }
+    }
 
     override fun onStart() {
         super.onStart()

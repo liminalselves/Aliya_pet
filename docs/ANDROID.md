@@ -45,10 +45,20 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
   alpha，保留缓冲在分块 GPU 上每帧多一次整屏拷贝）；Windows 保留两者防缩放闪帧。
 - 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
   不用固定高度估算键盘。原生背景与菜单颜色映射共享 `styles/tokens.css`。
-- `WebChromeClient` 接系统文件选择器，托管配置可导入文件；document-start 脚本
+- `WebChromeClient` 接系统文件选择器，托管配置可导入文件；聊天发图（accept 全为 image/*）时
+  选择器附带系统相机（`ACTION_IMAGE_CAPTURE` 输出到 `cache/camera/`，经 FileProvider
+  `${applicationId}.files` 授权）。未声明 CAMERA 权限，因此无需运行时授权；document-start 脚本
   在创建 Blob 的 frame 中截取下载，交给系统「另存为」。保存不需要存储全盘权限；
   该导出通道要求 WebView 支持 `DOCUMENT_START_SCRIPT`，旧系统 WebView 需更新。
 - 普通 HTTP(S) 外链交给浏览器，音频可随互动播放。当前没有后台聊天通知功能。
+
+### 聊天背景
+
+主界面可在设置「聊天背景」里选：无背景（默认）、预设、自定义上传，并调背景暗化（0–80%）。
+预设清单在 `ui/src/chat-background.ts` `PRESET_BACKGROUNDS`，图片在 `ui/assets/backgrounds/`
+（当前三张为占位 SVG，替换文件或增删条目即可）。自定义图压缩到长边 ≤ 2048 后存 IndexedDB
+（`aliya_backgrounds`），设置里只存选中 id、暗化值与换图标记。背景层高度钉住首个视口，
+软键盘弹出不挤压；切换时新图解码后淡入。悬浮窗不加载背景。
 
 ### 授权回跳
 

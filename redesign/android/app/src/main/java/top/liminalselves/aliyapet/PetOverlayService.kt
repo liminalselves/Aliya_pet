@@ -1,5 +1,6 @@
 package top.liminalselves.aliyapet
 
+import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,6 +16,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.animation.PathInterpolator
 import android.view.WindowManager
 import android.webkit.WebView
 import androidx.core.app.NotificationCompat
@@ -87,6 +89,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragLastRawY = 0f
     private var dragMaxSpeed = 0f
     private var windowAttached = false
+    /** 贴边归位动画（原生驱动，与 tokens.css --al-ease 同一条曲线）。 */
+    private var snapAnimator: ValueAnimator? = null
 
     // ---------- 像素掩码穿透 ----------
     private data class HitMask(val cols: Int, val rows: Int, val data: ByteArray)
@@ -196,6 +200,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun onDestroy() {
         windowAttached = false
+        snapAnimator?.cancel()
+        snapAnimator = null
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {
@@ -315,6 +321,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                             cancel.action = MotionEvent.ACTION_CANCEL
                             web.dispatchTouchEvent(cancel)
                             cancel.recycle()
+                            // 归位途中被抓起：停在当前位置，拖动从此刻的窗口与指针接着算，不跳。
+                            if (snapAnimator != null) {
+                                cancelSnapAnimation(notify = true)
+                                dragStartParamX = params.x
+                                dragStartParamY = params.y
+                                dragStartRawX = ev.rawX
+                                dragStartRawY = ev.rawY
+                            }
                             nativeDragging = true
                             evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
                         }
@@ -328,9 +342,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                             // 全域停靠：窗口可整个拖出屏幕（用户明确要求）；
                             // 钳到「完全出屏」域仅防 WM 参数溢出，找回走设置页重置位置
                             val (sw, sh) = screenPhysical()
-                            params.x = (dragStartParamX + dx.roundToInt())
+                            params.x = (dragStartParamX + (ev.rawX - dragStartRawX).roundToInt())
                                 .coerceIn(-params.width, sw)
-                            params.y = (dragStartParamY + dy.roundToInt())
+                            params.y = (dragStartParamY + (ev.rawY - dragStartRawY).roundToInt())
                                 .coerceIn(-params.height, sh)
                             wm.updateViewLayout(web, params)
                             true
@@ -433,6 +447,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {
         if (!windowAttached || nativeDragging) return
+        cancelSnapAnimation(notify = false)
         val w = (wCss * density).roundToInt().coerceAtLeast(8)
         val h = (hCss * density).roundToInt().coerceAtLeast(8)
         // 固定窗口架构：矩形由前端按静态包围盒一次算定，壳不再钳制——
@@ -443,6 +458,51 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         params.height = h
         wm.updateViewLayout(web, params)
         // 位置持久化在前端（petX/petY 现在指角色原点而非窗口左上角）
+    }
+
+    override fun animateWindowTo(xCss: Float, yCss: Float, durationMs: Int) {
+        if (!windowAttached || nativeDragging) return
+        cancelSnapAnimation(notify = false)
+        val fromX = params.x
+        val fromY = params.y
+        val toX = (xCss * density).roundToInt()
+        val toY = (yCss * density).roundToInt()
+        if (fromX == toX && fromY == toY) {
+            evalJs("window.__pet && window.__pet.onNativeSnapEnd && window.__pet.onNativeSnapEnd(true);")
+            return
+        }
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = durationMs.coerceIn(0, 1000).toLong()
+            interpolator = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+            addUpdateListener {
+                if (!windowAttached || snapAnimator !== it) return@addUpdateListener
+                val t = it.animatedValue as Float
+                params.x = (fromX + (toX - fromX) * t).roundToInt()
+                params.y = (fromY + (toY - fromY) * t).roundToInt()
+                try { wm.updateViewLayout(web, params) } catch (_: Exception) {}
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (snapAnimator !== animation) return
+                    snapAnimator = null
+                    if (!cancelled) evalJs("window.__pet && window.__pet.onNativeSnapEnd && window.__pet.onNativeSnapEnd(true);")
+                }
+            })
+        }
+        snapAnimator = animator
+        animator.start()
+    }
+
+    /** 停止归位动画；notify=true 时把窗口当前位置回报前端（被抓起打断）。 */
+    private fun cancelSnapAnimation(notify: Boolean) {
+        val animator = snapAnimator ?: return
+        snapAnimator = null
+        animator.cancel()
+        if (notify) {
+            evalJs("window.__pet && window.__pet.onNativeSnapInterrupted && window.__pet.onNativeSnapInterrupted(${params.x / density}, ${params.y / density});")
+        }
     }
 
     /** 前端上报像素占用掩码（0/1 字符串，cols×rows 覆盖整个窗口）。 */

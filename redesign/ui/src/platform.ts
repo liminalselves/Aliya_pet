@@ -22,6 +22,8 @@ export interface AndroidShell {
   setWindowPos(xCss: number, yCss: number): void;
   /** 原子设置窗口矩形（CSS px）：内容贴合模式下逐帧调用。 */
   setWindowRect(xCss: number, yCss: number, wCss: number, hCss: number): void;
+  /** 窗口平滑平移（CSS px，原生动画）；完成回调 __pet.onNativeSnapEnd，被抓起打断回调 onNativeSnapInterrupted。 */
+  animateWindowTo?(xCss: number, yCss: number, durationMs: number): void;
   /** 容器类型：activity=App 内全屏 / overlay=悬浮窗。 */
   getMode(): string;
   openUrl(url: string): void;

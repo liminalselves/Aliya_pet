@@ -4,7 +4,7 @@ import { Typewriter } from './typewriter';
 import { MskAuth } from './msk/auth';
 import { DEFAULT_MSK_ORIGIN, MSK_BASE, mskSessionKey } from './msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from './msk/control-bridge';
-import { ALIYA_CHARACTER_ID, MskClient, type MskSession } from './msk/client';
+import { ALIYA_CHARACTER_ID, MAX_UPLOAD_BYTES, MskClient, type MskSession } from './msk/client';
 import { MskChatProvider } from './msk/provider';
 import { MskMessageRenderer, type MskRendered } from './rendering/renderer';
 import { normalizeRegexRules } from './rendering/rules';
@@ -95,6 +95,9 @@ export class ChatView {
   private readonly composer: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly status: HTMLElement;
+  /** 待发送图片：选中即本地预览；发送时上传，拿到 Drive 文件后缓存（失败重发不重复上传）。 */
+  private attachment: { blob: Blob; name: string; url: string; uploaded: import('./rendering/types').DriveFileLike | null } | null = null;
+  private uploading = false;
 
   constructor(readonly controller: ChatController, private readonly auth: MskAuth,
     private readonly onOpen: (open: boolean) => void, private readonly storage?: ChatStorage) {
@@ -108,8 +111,9 @@ export class ChatView {
           <footer class="gal-footer"><span class="page-hint"></span></footer>
         </section>
         <form class="chat-composer" hidden>
+          <div class="composer-attachment" hidden><img alt="待发送的图片"><button type="button" class="remove-attachment" title="移除图片" aria-label="移除图片"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button><span class="attachment-state"></span></div>
           <div class="composer-row"><textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea><span class="composer-action"><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" disabled><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg></button><button type="submit" class="send" title="发送（Enter）" aria-label="发送"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
-          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="attach" title="发送图片" aria-label="发送图片"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7.2" cy="8.2" r="1.45" fill="currentColor"/><path d="M3.2 14.2l4.1-3.9 2.9 2.6 2.4-2.1 4.2 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></button><input type="file" class="attach-input" accept="image/*" hidden><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
         </form>
       </div>`;
     document.body.append(this.root);
@@ -138,6 +142,22 @@ export class ChatView {
     this.get('.app-settings').hidden = platform === 'web';
     this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; this.reportLayout(); };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
+    const picker = this.get<HTMLInputElement>('.attach-input');
+    this.get('.attach').onclick = () => { if (!this.attachBlocked()) picker.click(); };
+    picker.onchange = () => {
+      const file = picker.files?.[0];
+      picker.value = '';
+      if (file) this.setAttachment(file);
+    };
+    this.get('.remove-attachment').onclick = () => { if (!this.uploading) this.setAttachment(null); };
+    // 粘贴图片（截图后 Ctrl+V）直接作为附件。
+    this.input.addEventListener('paste', e => {
+      const item = Array.from(e.clipboardData?.items ?? []).find(i => i.kind === 'file' && i.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (!file || this.attachBlocked()) return;
+      e.preventDefault();
+      this.setAttachment(file);
+    });
     this.input.addEventListener('compositionstart', () => { this.composing = true; });
     this.input.addEventListener('compositionend', () => { this.composing = false; });
     this.input.onkeydown = e => {
@@ -145,7 +165,7 @@ export class ChatView {
     };
     this.input.oninput = () => {
       this.syncComposerState();
-      const max = platform === 'android' ? 112 : 64;
+      const max = platform === 'android' ? 112 : 88;
       this.input.style.height = 'auto'; this.input.style.height = `${Math.min(max, this.input.scrollHeight)}px`;
       this.reportLayout();
     };
@@ -279,7 +299,11 @@ export class ChatView {
     if (!this.composer?.classList || !this.input) return;
     const busy = this.controller.busy === true;
     const ready = this.screen === 'ready';
-    this.composer.classList.toggle('empty', !this.input.value.trim());
+    this.composer.classList.toggle('empty', !this.input.value.trim() && !this.attachment);
+    const attach = this.composer.querySelector<HTMLButtonElement>('.attach');
+    if (attach) attach.disabled = this.attachBlocked();
+    const remove = this.composer.querySelector<HTMLButtonElement>('.remove-attachment');
+    if (remove) remove.disabled = this.uploading || busy;
     this.composer.classList.toggle('busy', busy);
     this.composer.classList.toggle('errored', !busy && !!this.controller.error);
     this.input.disabled = !ready;
@@ -299,6 +323,11 @@ export class ChatView {
   }
   private reset(): AbortSignal {
     this.operation?.abort(); this.operation = new AbortController(); ++this.sequence;
+    if (this.uploading) {
+      this.uploading = false;
+      this.root.querySelector('.composer-attachment')?.classList.remove('uploading');
+      const state = this.root.querySelector('.attachment-state'); if (state) state.textContent = '';
+    }
     this.controller.stop(); this.clearPlayback(); this.clearRendering(); this.renderer?.cancelAll();
     return this.operation.signal;
   }
@@ -373,7 +402,7 @@ export class ChatView {
    * 外窗高度固定（Windows chat 窗不随内容 resize，见 chat_window.rs），面板伸缩全在 DOM 内补间。
    */
   private reportLayout(): void {
-    const composerHeight = this.composer.hidden ? 0 : this.composer.getBoundingClientRect().height;
+    const composerHeight = this.composer.hidden ? 0 : this.composer.offsetHeight;
     document.body.style.setProperty('--chat-composer-height', `${composerHeight}px`);
     if (this.replyActive && this.playing && !this.typewriter?.typing) this.lockPanel();
   }
@@ -510,13 +539,71 @@ export class ChatView {
   }
   private disconnect(): void {
     this.reset(); this.auth.logout(); this.activeSession = null;
-    this.controller.replaceHistory([]); this.input.value = ''; this.showConnect('已退出账号。'); this.notify();
+    this.controller.replaceHistory([]); this.input.value = ''; this.setAttachment(null); this.showConnect('已退出账号。'); this.notify();
+  }
+  private attachBlocked(): boolean {
+    return this.screen !== 'ready' || this.controller?.busy === true || this.uploading;
+  }
+  /** 选中/替换/移除待发送图片（一条消息一张，与服务端一致）。 */
+  private setAttachment(file: Blob | null, name = 'image'): void {
+    if (this.attachment) URL.revokeObjectURL(this.attachment.url);
+    this.attachment = null;
+    const box = this.get('.composer-attachment');
+    const state = this.get('.attachment-state');
+    state.textContent = ''; box.classList.remove('failed', 'uploading');
+    if (file && !file.type.startsWith('image/')) { this.status.textContent = '只能发送图片。'; file = null; }
+    else if (file && file.size > MAX_UPLOAD_BYTES) { this.status.textContent = '图片太大了（上限 20MB）。'; file = null; }
+    if (file) {
+      const fileName = file instanceof File && file.name ? file.name : `${name}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+      this.attachment = { blob: file, name: fileName, url: URL.createObjectURL(file), uploaded: null };
+      this.get<HTMLImageElement>('.composer-attachment img').src = this.attachment.url;
+      if (this.status.textContent === '只能发送图片。' || this.status.textContent === '图片太大了（上限 20MB）。') this.status.textContent = '';
+    }
+    const show = !!this.attachment;
+    if (show && box.hidden) { box.hidden = false; box.classList.remove('attach-in'); void box.offsetWidth; box.classList.add('attach-in'); }
+    else if (!show) box.hidden = true;
+    this.syncComposerState();
+    this.reportLayout();
+    if (show && platform === 'tauri') this.input.focus();
   }
   private send(): void {
-    if (this.screen !== 'ready' || this.controller.busy || this.composing) return;
-    const text = this.input.value.trim(); if (!text) return;
-    this.input.value = ''; this.input.style.height = ''; this.syncComposerState();
-    this.showPending(); void this.controller.send(text);
+    if (this.screen !== 'ready' || this.controller.busy || this.composing || this.uploading) return;
+    const text = this.input.value.trim();
+    const attachment = this.attachment;
+    if (!text && !attachment) return;
+    if (!attachment) {
+      this.input.value = ''; this.input.style.height = ''; this.syncComposerState();
+      this.showPending(); void this.controller.send(text);
+      return;
+    }
+    void this.sendWithImage(text, attachment);
+  }
+  /** 先上传图片拿 fileId 再发消息；上传失败保留图片与文字，可直接重发。 */
+  private async sendWithImage(text: string, attachment: NonNullable<ChatView['attachment']>): Promise<void> {
+    const sequence = this.sequence;
+    const box = this.get('.composer-attachment');
+    const state = this.get('.attachment-state');
+    let file = attachment.uploaded;
+    if (!file) {
+      this.uploading = true; box.classList.remove('failed'); box.classList.add('uploading');
+      state.textContent = '上传中'; this.status.textContent = ''; this.syncComposerState();
+      try {
+        file = await new MskClient(this.auth.token).uploadFile(attachment.blob, attachment.name, this.operation?.signal);
+      } catch (e) {
+        if (sequence !== this.sequence || this.attachment !== attachment) return;
+        box.classList.add('failed'); state.textContent = '上传失败';
+        this.status.textContent = this.error(e);
+        return;
+      } finally {
+        if (sequence === this.sequence) { this.uploading = false; box.classList.remove('uploading'); this.syncComposerState(); }
+      }
+      // 上传期间换了会话/图片：本次结果作废。
+      if (sequence !== this.sequence || this.attachment !== attachment || this.screen !== 'ready') return;
+      attachment.uploaded = file;
+    }
+    this.input.value = ''; this.input.style.height = '';
+    this.setAttachment(null);
+    this.showPending(); void this.controller.send(text, file);
   }
   private changed(): void {
     const c = this.controller;
@@ -634,7 +721,7 @@ export class ChatView {
   /** 停掉进行中的补间，基准取当前可见高度：随后的新目标从这里接着过渡。 */
   private stopMorph(): void {
     if (!this.morph) return;
-    this.panelHeight = this.panel.getBoundingClientRect().height;
+    this.panelHeight = this.panel.offsetHeight;
     this.morph.cancel(); this.morph = null;
   }
   /**
@@ -646,11 +733,11 @@ export class ChatView {
     // 进行中的补间会覆盖 CSS 高度，量到的是中间帧（锁矮的根因），先停掉。
     this.stopMorph();
     // 旧锁高仍钉着面板：此刻可见高就是补间起点，同步起补间，不等 ResizeObserver。
-    const from = this.panel.style.getPropertyValue('--chat-panel-height') ? this.panel.getBoundingClientRect().height : 0;
+    const from = this.panel.style.getPropertyValue('--chat-panel-height') ? this.panel.offsetHeight : 0;
     const max = parseFloat(getComputedStyle(this.panel).maxHeight);
     this.root.classList.add('layout-measuring');
     let height = 0;
-    try { height = Math.ceil(this.panel.getBoundingClientRect().height); }
+    try { height = Math.ceil(this.panel.offsetHeight); }
     finally { this.root.classList.remove('layout-measuring'); }
     if (Number.isFinite(max) && max > 0) height = Math.min(height, Math.floor(max));
     if (height > 0) this.panel.style.setProperty('--chat-panel-height', `${height}px`);

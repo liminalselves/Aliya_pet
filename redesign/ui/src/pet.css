@@ -133,3 +133,13 @@ body.android-main { background:var(--al-bg-0); }
    开关聊天时平滑过渡，角色缓缓上移/回落而不是瞬间跳位。 */
 body.android-main #stage { inset:56px 0 20px; transition:bottom var(--al-t-slow) var(--al-ease); }
 body.android-main.chat-open #stage { bottom:116px; }
+
+/* Android 主界面聊天背景（chat-background.ts）：铺在角色画布之下，高度钉住首个视口，
+   软键盘弹出不挤压；两层图交替淡入，遮罩 --bg-dim 保证角色与文字可读。 */
+.chat-bg { position:fixed; left:0; top:0; width:100%; height:100%; z-index:0; pointer-events:none; overflow:hidden; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
+.chat-bg.active { opacity:1; }
+.chat-bg img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
+.chat-bg img.shown { opacity:1; }
+.chat-bg-dim { position:absolute; inset:0; background:var(--al-bg-0); opacity:var(--bg-dim,.35); transition:opacity var(--al-t-med) var(--al-ease); }
+body.android-main #stage { z-index:1; }
+@media (prefers-reduced-motion: reduce) { .chat-bg, .chat-bg img { transition:none; } }
