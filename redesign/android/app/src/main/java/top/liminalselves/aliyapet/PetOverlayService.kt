@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.graphics.Region
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -44,7 +46,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
         private const val BASE_ASPECT = 0.64f
 
-        /** 透明区穿透后恢复可触摸的延迟（ms）：覆盖一次点按/滑动手势时长。 */
+        /** Android 12L 及以下兼容路径：透明区穿透后恢复可触摸的延迟。 */
         private const val PASS_THROUGH_MS = 350L
 
         fun start(ctx: Context) {
@@ -96,7 +98,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private data class HitMask(val cols: Int, val rows: Int, val data: ByteArray)
     // Publish dimensions and pixels together across the bridge and touch threads.
     @Volatile private var hitMask: HitMask? = null
-    /** 穿透期间忽略 DOWN 命中测试（窗口本就收不到，保险）。 */
+    /** Android 12L 及以下兼容路径：穿透期间忽略 DOWN 命中测试。 */
     @Volatile private var passThrough = false
     /** 窗外触摸上报节流（视线跟随）。 */
     private var lastOutsideTouchMs = 0L
@@ -168,6 +170,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         try {
             wm.addView(web, params)
             windowAttached = true
+            web.post { applyTouchableRegion() }
         } catch (_: SecurityException) {
             stopSelf()
             return
@@ -264,8 +267,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     /**
      * 原生拖动（悬浮窗标准方案）+ 透明区穿透 + 窗外触摸：
-     * DOWN 先过像素掩码：透明 → 本手势切 NOT_TOUCHABLE 穿透给下层；
-     * 不透明 → 放行给 WebView（点击/抚摸）；位移超 touchSlop 且前端未声明
+     * Android 13+ 由系统 TouchableRegion 在 DOWN 前完成剪影命中；旧系统收到 DOWN 后
+     * 走 NOT_TOUCHABLE 兼容路径。不透明区放行给 WebView（点击/抚摸）；位移超 touchSlop 且前端未声明
      * 互动手势时壳接管：按 raw 位移直接 updateViewLayout，事件不再透给 WebView；
      * UP/CANCEL 结束并把总位移（CSS px）回传前端做吸附/持久化。
      * ACTION_OUTSIDE（窗外触摸）节流上报前端做视线跟随。
@@ -275,7 +278,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     tapCandidate = false
-                    if (isTransparentAt(ev.x, ev.y)) {
+                    if (Build.VERSION.SDK_INT < 33 && isTransparentAt(ev.x, ev.y)) {
                         lastTapAt = 0L
                         // 角色透明区：本手势穿透到下层应用（延迟恢复可触摸）
                         passThrough = true
@@ -412,7 +415,37 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         return mask.data[gy * mask.cols + gx].toInt() == 0
     }
 
-    /** 切换窗口可触摸性（透明区穿透用）。 */
+    /**
+     * Android 13+：在输入分发前把窗口的可触摸区域裁成人物剪影。
+     * Region 使用窗口本地物理坐标，因此拖动窗口时无需逐帧重建，会与人物同步移动。
+     */
+    private fun applyTouchableRegion() {
+        if (Build.VERSION.SDK_INT < 33 || !windowAttached) return
+        val region = Region()
+        val mask = hitMask
+        if (mask != null && params.width > 0 && params.height > 0) {
+            for (row in 0 until mask.rows) {
+                val top = row * params.height / mask.rows
+                val bottom = ((row + 1) * params.height + mask.rows - 1) / mask.rows
+                var col = 0
+                while (col < mask.cols) {
+                    if (mask.data[row * mask.cols + col].toInt() == 0) {
+                        col++
+                        continue
+                    }
+                    val start = col
+                    while (col < mask.cols && mask.data[row * mask.cols + col].toInt() != 0) col++
+                    val left = start * params.width / mask.cols
+                    val right = (col * params.width + mask.cols - 1) / mask.cols
+                    region.op(Rect(left, top, right, bottom), Region.Op.UNION)
+                }
+            }
+        }
+        // 尚无掩码时人物也未完成渲染，空区域可避免加载期间出现隐形触摸墙。
+        web.rootSurfaceControl?.setTouchableRegion(region)
+    }
+
+    /** Android 12L 及以下兼容：收到透明 DOWN 后暂时切换整窗可触摸性。 */
     private fun setTouchable(touchable: Boolean) {
         if (!windowAttached) return
         val f = if (touchable) {
@@ -457,6 +490,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         params.width = w
         params.height = h
         wm.updateViewLayout(web, params)
+        web.post { applyTouchableRegion() }
         // 位置持久化在前端（petX/petY 现在指角色原点而非窗口左上角）
     }
 
@@ -508,7 +542,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     /** 前端上报像素占用掩码（0/1 字符串，cols×rows 覆盖整个窗口）。 */
     override fun setHitMask(cols: Int, rows: Int, data: String) {
         if (cols <= 0 || rows <= 0 || data.length != cols * rows) return
-        hitMask = HitMask(cols, rows, ByteArray(data.length) { if (data[it] == '1') 1 else 0 })
+        val mask = HitMask(cols, rows, ByteArray(data.length) { if (data[it] == '1') 1 else 0 })
+        hitMask = mask
+        if (Build.VERSION.SDK_INT >= 33 && ::web.isInitialized) {
+            web.post {
+                // 只应用最新掩码，避免 JavaBridge 连续上报时旧任务覆盖新剪影。
+                if (hitMask === mask) applyTouchableRegion()
+            }
+        }
     }
 
     override fun moveWindowBy(dxCss: Float, dyCss: Float) {
@@ -523,6 +564,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         params.width = (wCss * density).roundToInt().coerceAtLeast(8)
         params.height = (hCss * density).roundToInt().coerceAtLeast(8)
         wm.updateViewLayout(web, params)
+        web.post { applyTouchableRegion() }
     }
 
     override fun setWindowPos(xCss: Float, yCss: Float) {
