@@ -70,11 +70,12 @@ export class ChatController {
       (this.latest.status === 'error' || this.latest.status === 'stopped');
   }
 
-  async send(input: string): Promise<void> {
+  /** file 为已上传到 Drive 的图片（一条消息最多一张）；有图时文本可为空。 */
+  async send(input: string, file: ChatMessage['file'] = null): Promise<void> {
     const text = input.trim();
-    if (!text || text.length > 2000) return;
+    if ((!text && !file?.id) || text.length > 2000) return;
     this.stop();
-    this.messages.push({ id: this.id(), role: 'user', text, status: 'complete' });
+    this.messages.push({ id: this.id(), role: 'user', text, file: file ?? null, status: 'complete' });
     // 保留完整轮次，从最早的 user 开始；不把过期片段混入新请求。
     if (this.messages.length > MAX_MESSAGES - 1) this.messages.splice(0, 2);
     await this.generate();
@@ -99,7 +100,7 @@ export class ChatController {
     const request = new AbortController();
     this._request = request;
     const context = this.messages.filter(m => m.role === 'user' || m.status === 'complete')
-      .map(({ role, text }) => ({ role, text }));
+      .map(({ role, text, file }) => ({ role, text, file }));
     const answer: ChatMessage = { id: this.id(), role: 'assistant', text: '', status: 'pending' };
     this.messages.push(answer);
     this.error = '';

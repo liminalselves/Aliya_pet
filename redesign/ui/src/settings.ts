@@ -25,6 +25,12 @@ export interface PetSettings {
   showGeneratedImages: boolean;
   /** 省电模式：帧率上限降为 15fps（移动端主要收益）。 */
   batterySaver?: boolean;
+  /** Android 主界面聊天背景：'none' / 预设 id / 'custom'（见 chat-background.ts）。 */
+  chatBackground: string;
+  /** 背景暗化遮罩 0–0.8：保证角色与文字可读。 */
+  chatBackgroundDim: number;
+  /** 自定义背景更新标记（换图时递增，主界面据此重新读取 IndexedDB）。 */
+  chatBackgroundRev?: number;
 }
 
 const STORAGE_KEY = 'aliya_pet_settings_v1';
@@ -49,6 +55,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   randomSpeechMinutes: 5,
   showGeneratedImages: true,
   batterySaver: false,
+  chatBackground: 'none',
+  chatBackgroundDim: 0.35,
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -119,6 +127,9 @@ export function loadSettings(): PetSettings {
       ...DEFAULT_SETTINGS,
       ...parsed,
       scale: clampScale(Number(parsed.scale ?? 1.0)),
+      chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
+      chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
+        ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,
       randomSpeechMinutes: Math.min(
         Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
         120

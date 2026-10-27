@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 相机拍照的临时输出目录（FileProvider 授权给相机应用写入）。 -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

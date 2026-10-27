@@ -24,6 +24,9 @@ class ShellBridge(private val host: Host) {
         /** 原子设置窗口矩形（CSS px）：内容贴合模式下前端逐帧下发。 */
         fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {}
 
+        /** 窗口平滑平移到 (x,y)（CSS px），原生动画按刷新率驱动；结束回调前端 onNativeSnapEnd。 */
+        fun animateWindowTo(xCss: Float, yCss: Float, durationMs: Int) {}
+
         /** activity=App 内全屏；overlay=悬浮窗（前端据此切换内容贴合渲染）。 */
         fun getMode(): String = "activity"
 
@@ -84,6 +87,11 @@ class ShellBridge(private val host: Host) {
     @JavascriptInterface
     fun setWindowRect(x: Float, y: Float, w: Float, h: Float) {
         main.post { host.setWindowRect(x, y, w, h) }
+    }
+
+    @JavascriptInterface
+    fun animateWindowTo(x: Float, y: Float, durationMs: Int) {
+        main.post { host.animateWindowTo(x, y, durationMs) }
     }
 
     @JavascriptInterface

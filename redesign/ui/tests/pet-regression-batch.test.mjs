@@ -327,7 +327,7 @@ test('聊天按页锁高取自然高并按 max-height 钳制；测量后恢复�
   view.root = { classList: { add() { measuring = true; }, remove() { measuring = false; } } };
   view.panel = { hidden: false, style: { setProperty(k, v) { styles.set(k, v); }, removeProperty(k) { styles.delete(k); }, getPropertyValue: k => styles.get(k) ?? '' },
     classList: { contains: () => false },
-    getBoundingClientRect() { return { height: measuring ? naturalHeight : 50 }; } };
+    get offsetHeight() { return measuring ? naturalHeight : 50; } };
   view.morph = null;
   assert.equal(view.lockPanel(), 96); assert.equal(measuring, false);
   assert.equal(styles.get('--chat-panel-height'), '96px');

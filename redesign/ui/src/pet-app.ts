@@ -1,5 +1,6 @@
 import { ChatController, type ChatStorage } from './chat/controller';
 import { MskAuth } from './chat/msk/auth';
+import { ChatBackgroundLayer } from './chat-background';
 import { ChatView } from './chat/view';
 import { ChatPerformance } from './chat/performance';
 import { CubismFramework } from '@framework/live2dcubismframework';
@@ -133,6 +134,17 @@ export class PetApp {
   private _snapHintTimer: ReturnType<typeof setTimeout> | null = null;
   private _globalMouse: { x: number; y: number } | null = null;
   private _dpr = 1;
+  /** Windows 缩放补间状态（_runScaleAnimation）；target 随设置实时更新。 */
+  private _scaleAnim: { target: number; running: boolean } | null = null;
+  private _scaleAnimDone = 0;
+  /** 缩放缓动时间常数（ms）：指数逼近，连续拖动滑杆时跟手、松手后柔和落定。 */
+  private static readonly _scaleEaseMs = 55;
+  private _chatLayoutWidth = 0;
+  /** Android 主界面聊天背景层（悬浮窗不创建）。 */
+  private _chatBackground: ChatBackgroundLayer | null = null;
+  private _chatBackgroundKey = '';
+  /** 悬浮窗原生贴边动画进行中（原点已是终点，窗口正由壳平移）。 */
+  private _nativeSnapping = false;
   /** 悬浮窗壳正在原生拖动（窗口由壳独占，暂停矩形下发）。 */
   private _nativeDragging = false;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
@@ -583,110 +595,195 @@ export class PetApp {
 
     // 窗口层
     if (platform === 'android') {
+      if (!this._wrapWindow) {
+        this._chatBackground ??= new ChatBackgroundLayer();
+        const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
+        if (key !== this._chatBackgroundKey) {
+          this._chatBackgroundKey = key;
+          void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
+        }
+      }
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
     }
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
-      this._queueWindowGeometry(async () => {
-          if (revision !== this._windowSettingsRevision) return;
-          const m = await import('@tauri-apps/api/window');
-          // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
-          let mon: import('@tauri-apps/api/window').Monitor | null = null;
-          try {
-            mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
-          } catch {
-            mon = null;
-          }
-          // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
-          //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
-          const { baseW, baseH } = this._baseWindowSize();
-          let scale = s.scale;
-          const limits = this._scaleLimitsFrom(mon, baseW, baseH);
-          if (limits) {
-            scale = Math.min(Math.max(scale, limits.minS), limits.maxS);
-          }
-          if (revision !== this._windowSettingsRevision) return;
-          const chatOpen = this._chatView?.isOpen ?? false;
-          const roomW = mon ? mon.workArea.size.width / mon.scaleFactor : 1000;
-          const roomH = mon ? mon.workArea.size.height / mon.scaleFactor : 900;
-          const width = chatOpen ? Math.min(roomW, Math.max(680, baseW * scale)) : baseW * scale;
-          const height = chatOpen ? Math.min(roomH, Math.max(560, Math.min(760, baseH * scale))) : baseH * scale;
-          document.body.classList.toggle('chat-mobile', chatOpen && width < 580);
-          // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
-          const beforePos = await win.outerPosition();
-          const beforeSize = await win.innerSize();
-          if (revision !== this._windowSettingsRevision) return;
-          // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
-          const mirror = s.mirror;
-          const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
-          const anchor = {
-            x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
-            y: beforePos.y + beforeFoot.y + this._windowResizeRemainder.y,
-          };
-          // 在调用前登记补偿：Promise 拒绝不代表原生尺寸没有改变。
-          this._windowResizeRecovery = async (publish = true) => {
-            const afterSize = await win.innerSize();
-            const sf = await win.scaleFactor();
-            const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
-            const target = restoredPosition ?? {
-              x: Math.round(anchor.x - afterFoot.x), y: Math.round(anchor.y - afterFoot.y),
-            };
-            const current = await win.outerPosition();
-            if (current.x !== target.x || current.y !== target.y) {
-              await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
-            }
-            this._windowResizeRemainder = restoredPosition ? { x: 0, y: 0 } : {
-              x: anchor.x - target.x - afterFoot.x, y: anchor.y - target.y - afterFoot.y,
-            };
-            this._rebaseWindowPosition(target, beforePos, positionRevision);
-            this._scaleFactor = sf; this._metricsSynced = true;
-            this._windowResizeRecovery = null;
-            this._windowGeometryError = null;
-            if (publish && positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging &&
-                revision === this._windowSettingsRevision) this._persistDesktopPos();
-            if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
-          };
-          // 预测缩放后的物理尺寸，位置与尺寸同一次原生调用落定（脚底不先跳再拉回）；
-          // 系统若钳制了尺寸，下面的补偿按实测尺寸再校正一次位置。
-          const sf = await win.scaleFactor();
-          const predicted = { width: Math.max(1, Math.round(width * sf)), height: Math.max(1, Math.round(height * sf)) };
-          const predictedFoot = this._windowFootOffset(predicted, mirror, chatOpen);
-          const target = restoredPosition ?? {
-            x: Math.round(anchor.x - predictedFoot.x), y: Math.round(anchor.y - predictedFoot.y),
-          };
-          // 角色大小补间：放大先扩窗再在画布内长大；缩小先在原窗内缩完再收窗（否则先被裁切）。
-          const rect = this._canvas?.getBoundingClientRect?.();
-          const fromCss = this._scaleTweenValue() ?? (rect ? this._naturalScaleCss(rect.width, rect.height, chatOpen) : 0);
-          const toCss = this._naturalScaleCss(width, height, chatOpen);
-          const animate = fromCss > 0 && toCss > 0 && Math.abs(toCss / fromCss - 1) > 0.005
-            && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-          if (animate && toCss < fromCss) {
-            this._scaleTween = { from: fromCss, to: toCss, start: performance.now(), settled: false };
-            await new Promise(resolve => setTimeout(resolve, PetApp._scaleTweenMs));
-          } else if (animate) {
-            this._scaleTween = { from: fromCss, to: toCss, start: null, settled: false };
-          }
-          let resizeError: unknown;
-          try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            await invoke('set_pet_bounds', { x: target.x, y: target.y, w: predicted.width, h: predicted.height });
-          } catch (error) { resizeError = error; }
-          try { await this._windowResizeRecovery(); }
-          finally {
-            const tween = this._scaleTween;
-            if (tween && animate) {
-              // 系统可能钳制尺寸：终点改为实测窗口的自然比例，播完无缝撤销。
-              const after = this._canvas?.getBoundingClientRect?.();
-              if (after?.height) tween.to = this._naturalScaleCss(after.width, after.height, chatOpen) || tween.to;
-              if (tween.start == null) tween.start = performance.now();
-              tween.settled = true;
-            }
-          }
-          if (resizeError) throw resizeError;
-        }, 'Failed to apply pet window settings');
+      if (this._canAnimateScale(restoredPosition)) {
+        const anim = this._scaleAnim ??= { target: s.scale, running: false };
+        anim.target = s.scale;
+        if (!anim.running) this._startScaleAnimation(anim);
+        return;
+      }
+      this._queueWindowGeometry(() => this._applyDesktopGeometry(s, revision, positionRevision, restoredPosition),
+        'Failed to apply pet window settings');
     }
+  }
+
+  /** Windows 外窗几何一步落定（启动恢复、少动态效果、无法逐帧补间时）。 */
+  private async _applyDesktopGeometry(s: PetSettings, revision: number, positionRevision: number,
+    restoredPosition: { x: number; y: number } | null): Promise<void> {
+    const win = this._tauriWindow;
+    if (!win) return;
+    if (revision !== this._windowSettingsRevision) return;
+    const m = await import('@tauri-apps/api/window');
+    // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
+    let mon: import('@tauri-apps/api/window').Monitor | null = null;
+    try {
+      mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+    } catch {
+      mon = null;
+    }
+    // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
+    //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
+    const { baseW, baseH } = this._baseWindowSize();
+    let scale = s.scale;
+    const limits = this._scaleLimitsFrom(mon, baseW, baseH);
+    if (limits) {
+      scale = Math.min(Math.max(scale, limits.minS), limits.maxS);
+    }
+    if (revision !== this._windowSettingsRevision) return;
+    const chatOpen = this._chatView?.isOpen ?? false;
+    const roomW = mon ? mon.workArea.size.width / mon.scaleFactor : 1000;
+    const roomH = mon ? mon.workArea.size.height / mon.scaleFactor : 900;
+    const width = chatOpen ? Math.min(roomW, Math.max(680, baseW * scale)) : baseW * scale;
+    const height = chatOpen ? Math.min(roomH, Math.max(560, Math.min(760, baseH * scale))) : baseH * scale;
+    document.body.classList.toggle('chat-mobile', chatOpen && width < 580);
+    // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
+    const beforePos = await win.outerPosition();
+    const beforeSize = await win.innerSize();
+    if (revision !== this._windowSettingsRevision) return;
+    // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
+    const mirror = s.mirror;
+    const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
+    const anchor = {
+      x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
+      y: beforePos.y + beforeFoot.y + this._windowResizeRemainder.y,
+    };
+    // 在调用前登记补偿：Promise 拒绝不代表原生尺寸没有改变。
+    this._windowResizeRecovery = async (publish = true) => {
+      const afterSize = await win.innerSize();
+      const sf = await win.scaleFactor();
+      const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
+      const target = restoredPosition ?? {
+        x: Math.round(anchor.x - afterFoot.x), y: Math.round(anchor.y - afterFoot.y),
+      };
+      const current = await win.outerPosition();
+      if (current.x !== target.x || current.y !== target.y) {
+        await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
+      }
+      this._windowResizeRemainder = restoredPosition ? { x: 0, y: 0 } : {
+        x: anchor.x - target.x - afterFoot.x, y: anchor.y - target.y - afterFoot.y,
+      };
+      this._rebaseWindowPosition(target, beforePos, positionRevision);
+      this._scaleFactor = sf; this._metricsSynced = true;
+      this._windowResizeRecovery = null;
+      this._windowGeometryError = null;
+      if (publish && positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging &&
+          revision === this._windowSettingsRevision) this._persistDesktopPos();
+      if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
+    };
+    // 预测缩放后的物理尺寸，位置与尺寸同一次原生调用落定（脚底不先跳再拉回）；
+    // 系统若钳制了尺寸，下面的补偿按实测尺寸再校正一次位置。
+    const sf = await win.scaleFactor();
+    const predicted = { width: Math.max(1, Math.round(width * sf)), height: Math.max(1, Math.round(height * sf)) };
+    const predictedFoot = this._windowFootOffset(predicted, mirror, chatOpen);
+    const target = restoredPosition ?? {
+      x: Math.round(anchor.x - predictedFoot.x), y: Math.round(anchor.y - predictedFoot.y),
+    };
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_pet_bounds', { x: target.x, y: target.y, w: predicted.width, h: predicted.height });
+    } catch (error) { await this._windowResizeRecovery(); throw error; }
+    await this._windowResizeRecovery();
+  }
+
+  private _animationsAllowed(): boolean {
+    return platform === 'tauri' && !!this._canvas?.parentElement && typeof window.matchMedia === 'function'
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  private _canAnimateScale(restoredPosition: { x: number; y: number } | null): boolean {
+    return !restoredPosition && !this._chatView && this._metricsSynced && !!this._model?.isReady() && this._animationsAllowed();
+  }
+
+  private _startScaleAnimation(anim: { target: number; running: boolean }): void {
+    anim.running = true;
+    void this._queueWindowGeometry(() => this._runScaleAnimation(anim), 'Failed to animate pet scale')
+      .finally(() => {
+        // 循环收尾与新目标到达之间的竞态：目标在收尾后又变了就接着补间。
+        if (!anim.running && Math.abs(anim.target - this._scaleAnimDone) > 1e-9 && this._canAnimateScale(null)) this._startScaleAnimation(anim);
+      });
+  }
+
+  /**
+   * Windows 缩放补间：外窗逐帧按同一比例缩放（宽高比不变、脚底固定），角色始终按窗口自然适配。
+   * WebView2 在原生 resize 后会把上一帧整体拉伸到新窗口显示一两帧；外窗与角色严格同比时，
+   * 这一帧拉伸恰好就是下一帧该有的样子，因此连续拖动滑杆也不闪、不抽。
+   * 画内补间 + 外窗分步落定会让拉伸帧与真实比例不一致（角色先跳大/跳位再归位），不能用。
+   */
+  private async _runScaleAnimation(anim: { target: number; running: boolean }): Promise<void> {
+    const win = this._tauriWindow;
+    try {
+      if (!win) return;
+      const m = await import('@tauri-apps/api/window');
+      let mon: import('@tauri-apps/api/window').Monitor | null = null;
+      try { mon = (await m.currentMonitor()) ?? (await m.primaryMonitor()); } catch { mon = null; }
+      const { baseW, baseH } = this._baseWindowSize();
+      const limits = this._scaleLimitsFrom(mon, baseW, baseH);
+      const clamp = (v: number) => limits ? Math.min(Math.max(v, limits.minS), limits.maxS) : v;
+      const [pos, size, sf] = await Promise.all([win.outerPosition(), win.innerSize(), win.scaleFactor()]);
+      const mirror = this._settings.mirror;
+      const foot0 = this._windowFootOffset(size, mirror, false);
+      const anchor = { x: pos.x + foot0.x + this._windowResizeRemainder.x, y: pos.y + foot0.y + this._windowResizeRemainder.y };
+      const positionRevision = this._windowPositionRevision ?? 0;
+      this._scaleTween = null;
+      let current = size.height / sf / baseH;
+      let geo = { x: pos.x, y: pos.y, w: size.width, h: size.height };
+      let last = performance.now();
+      const { invoke } = await import('@tauri-apps/api/core');
+      for (;;) {
+        const target = clamp(anim.target);
+        if (Math.abs(current / target - 1) < 0.002) current = target;
+        else {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          const now = performance.now();
+          const dt = Math.min(64, Math.max(1, now - last));
+          last = now;
+          current += (target - current) * (1 - Math.exp(-dt / PetApp._scaleEaseMs));
+          if (Math.abs(current / target - 1) < 0.002) current = target;
+        }
+        const w = Math.max(1, Math.round(baseW * current * sf));
+        const h = Math.max(1, Math.round(baseH * current * sf));
+        const foot = this._windowFootOffset({ width: w, height: h }, mirror, false);
+        const next = { x: Math.round(anchor.x - foot.x), y: Math.round(anchor.y - foot.y), w, h };
+        if (next.x !== geo.x || next.y !== geo.y || next.w !== geo.w || next.h !== geo.h) {
+          await invoke('set_pet_bounds', next);
+          geo = next;
+          this._winPhysX = next.x; this._winPhysY = next.y;
+        }
+        if (current === target && target === clamp(anim.target)) break;
+      }
+      const foot = this._windowFootOffset({ width: geo.w, height: geo.h }, mirror, false);
+      this._windowResizeRemainder = { x: anchor.x - geo.x - foot.x, y: anchor.y - geo.y - foot.y };
+      this._scaleFactor = sf; this._metricsSynced = true;
+      this._scaleAnimDone = anim.target;
+      if (positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging) this._persistDesktopPos();
+      this._syncChatAnchor({ cssW: geo.w / sf, cssH: geo.h / sf });
+    } finally {
+      anim.running = false;
+    }
+  }
+
+  /** chat 卡片宽 = pet 窗口宽 × 1.18（逐帧上报，壳侧钳制并换算整卡缩放）。 */
+  private _reportChatLayout(): void {
+    if (platform !== 'tauri' || !this._metricsSynced || !this._model?.isReady()) return;
+    const stageW = this._canvas.parentElement?.getBoundingClientRect().width ?? 0;
+    if (!(stageW > 0)) return;
+    const width = Math.round(stageW * 1.18);
+    if (width === this._chatLayoutWidth) return;
+    this._chatLayoutWidth = width;
+    void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_layout', { width })).catch(() => {});
   }
 
   /** 所有应用侧原生几何写入共用队列；已开始的副作用不能用 revision 丢弃。 */
@@ -1102,6 +1199,11 @@ export class PetApp {
 
   private _cancelSnapAnimation(): void {
     this._snapAnimToken++;
+    if (this._nativeSnapping) {
+      // 原点已是终点：下一帧把窗口矩形下发到终点（壳收到 setWindowRect 即停掉原生动画）。
+      this._nativeSnapping = false;
+      this._rectInited = false;
+    }
     this._snapAnimation?.cancel();
     this._snapAnimation = null;
     if (this._snapHintTimer) clearTimeout(this._snapHintTimer);
@@ -1205,6 +1307,19 @@ export class PetApp {
 
   private _animateOriginTo(tx: number, ty: number, durMs = 220): void {
     this._cancelSnapAnimation();
+    const shell = androidShell();
+    if (shell?.animateWindowTo && this._rectInited && !this._scaleTween
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      // 原生动画按屏幕刷新率逐帧 updateViewLayout，不经 JS 帧循环（省电模式 15fps 下也平滑）。
+      // 原点与已应用矩形同步改到终点：角色在窗口内相对静止，只有窗口平移。
+      const dx = tx - this._originCssX, dy = ty - this._originCssY;
+      this._originCssX = tx; this._originCssY = ty;
+      this._appliedRectX = Math.round(this._appliedRectX + dx);
+      this._appliedRectY = Math.round(this._appliedRectY + dy);
+      this._nativeSnapping = true;
+      shell.animateWindowTo(this._appliedRectX, this._appliedRectY, durMs);
+      return;
+    }
     const sx = this._originCssX;
     const sy = this._originCssY;
     void this._animateSnap(progress => {
@@ -1727,6 +1842,23 @@ export class PetApp {
    * 悬浮窗原生拖动结束：壳回传全程位移（CSS px）。
    * 原点/已应用矩形同步平移（渲染锚定不变），随后吸附归位（缓动）+ 持久化。
    */
+  /** 原生贴边动画播完：位置已是终点，持久化。 */
+  public onNativeSnapEnd(): void {
+    if (!this._nativeSnapping) return;
+    this._nativeSnapping = false;
+    this._persistWrapOrigin();
+  }
+
+  /** 原生贴边动画被抓起打断：窗口停在 (x,y)，原点按窗口实际位移回退。 */
+  public onNativeSnapInterrupted(xCss: number, yCss: number): void {
+    if (!this._nativeSnapping) return;
+    this._nativeSnapping = false;
+    this._originCssX += xCss - this._appliedRectX;
+    this._originCssY += yCss - this._appliedRectY;
+    this._appliedRectX = xCss;
+    this._appliedRectY = yCss;
+  }
+
   public onNativeDragEnd(dxCss: number, dyCss: number, maxSpeedPxPerSec: number, cancelled: boolean): void {
     this._coordination.activity();
     this._nativeDragging = false;
@@ -1777,6 +1909,7 @@ export class PetApp {
         (this._globalMouse.y - this._winPhysY - rect.top * this._scaleFactor) / h);
     }
     this._update(dt);
+    if (platform === 'tauri') this._reportChatLayout();
     // 贴合模式先下发窗口矩形（渲染矩阵使用同一套矩形，变化有一帧过渡）
     if (this._wrapWindow) this._syncWrapWindow();
     this._render();

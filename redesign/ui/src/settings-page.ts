@@ -29,6 +29,7 @@ import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
+import { CUSTOM_BACKGROUND, NO_BACKGROUND, PRESET_BACKGROUNDS, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
 import './settings.css';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
@@ -546,6 +547,144 @@ const chatBox = section('聊天');
     (v) => update({ showGeneratedImages: v })
   );
   refs.showGeneratedImages.setAttribute('aria-label', '显示生成配图');
+}
+
+// ---- 聊天背景（仅 Android 主界面）----
+if (platform === 'android') {
+  const box = section('聊天背景');
+  const grid = document.createElement('div');
+  grid.className = 'bg-grid';
+  grid.setAttribute('role', 'radiogroup');
+  grid.setAttribute('aria-label', '聊天背景');
+  box.appendChild(grid);
+  const status = document.createElement('p');
+  status.className = 'hint bg-status';
+  status.setAttribute('role', 'status');
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*';
+  picker.hidden = true;
+  box.appendChild(picker);
+  let customUrl: string | null = null;
+  let hasCustom = false;
+  const tiles = new Map<string, HTMLButtonElement>();
+  const tile = (id: string, name: string, preview: string | null, extraClass = '') => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `bg-tile ${extraClass}`.trim();
+    b.setAttribute('role', 'radio');
+    const thumb = document.createElement('span');
+    thumb.className = 'bg-thumb';
+    if (preview) thumb.style.backgroundImage = `url("${preview}")`;
+    const label = document.createElement('span');
+    label.className = 'bg-name';
+    label.textContent = name;
+    b.append(thumb, label);
+    grid.appendChild(b);
+    tiles.set(id, b);
+    return b;
+  };
+  const sync = () => {
+    for (const [id, b] of tiles) {
+      const on = settings.chatBackground === id;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+    const custom = tiles.get(CUSTOM_BACKGROUND)!;
+    const thumb = custom.querySelector<HTMLElement>('.bg-thumb')!;
+    thumb.style.backgroundImage = customUrl ? `url("${customUrl}")` : '';
+    custom.classList.toggle('empty', !hasCustom);
+    custom.querySelector('.bg-name')!.textContent = hasCustom ? '自定义' : '上传图片';
+    actions.hidden = !hasCustom;
+    dimRow.classList.toggle('inactive', settings.chatBackground === NO_BACKGROUND);
+  };
+  tile(NO_BACKGROUND, '无背景', null, 'plain').addEventListener('click', () => { update({ chatBackground: NO_BACKGROUND }); sync(); });
+  for (const p of PRESET_BACKGROUNDS) {
+    tile(p.id, p.name, p.url).addEventListener('click', () => { update({ chatBackground: p.id }); sync(); });
+  }
+  tile(CUSTOM_BACKGROUND, '上传图片', null, 'custom').addEventListener('click', () => {
+    if (hasCustom) { update({ chatBackground: CUSTOM_BACKGROUND }); sync(); }
+    else picker.click();
+  });
+  const actions = document.createElement('div');
+  actions.className = 'bg-actions';
+  const replace = document.createElement('button');
+  replace.type = 'button';
+  replace.className = 'act';
+  replace.textContent = '更换自定义图';
+  replace.addEventListener('click', () => picker.click());
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'act';
+  remove.textContent = '删除自定义图';
+  remove.addEventListener('click', async () => {
+    try { await deleteCustomBackground(); } catch { /* 已不存在 */ }
+    hasCustom = false;
+    if (customUrl) URL.revokeObjectURL(customUrl);
+    customUrl = null;
+    update({ chatBackground: settings.chatBackground === CUSTOM_BACKGROUND ? NO_BACKGROUND : settings.chatBackground,
+      chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1 });
+    status.textContent = '';
+    sync();
+  });
+  actions.append(replace, remove);
+  box.appendChild(actions);
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    picker.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { status.textContent = '请选择图片文件。'; box.appendChild(status); return; }
+    status.textContent = '正在处理图片…';
+    box.appendChild(status);
+    try {
+      const saved = await saveCustomBackground(file);
+      if (customUrl) URL.revokeObjectURL(customUrl);
+      customUrl = URL.createObjectURL(saved);
+      hasCustom = true;
+      update({ chatBackground: CUSTOM_BACKGROUND, chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1 });
+      status.textContent = '';
+      status.remove();
+    } catch (e) {
+      status.textContent = e instanceof Error && e.message ? e.message : '图片保存失败，请重试。';
+    }
+    sync();
+  });
+  // 遮罩：数值越大背景越暗，角色与对话框越清楚。
+  const dimRow = document.createElement('div');
+  dimRow.className = 'row';
+  const dimLabel = document.createElement('div');
+  dimLabel.className = 'label';
+  dimLabel.textContent = '背景暗化';
+  const dimWrap = document.createElement('div');
+  dimWrap.className = 'slider-row';
+  dimWrap.style.flex = '1';
+  dimWrap.style.marginLeft = '12px';
+  const dim = document.createElement('input');
+  dim.type = 'range';
+  dim.min = '0';
+  dim.max = '80';
+  dim.step = '5';
+  dim.value = String(Math.round(settings.chatBackgroundDim * 100));
+  dim.setAttribute('aria-label', '背景暗化');
+  const dimVal = document.createElement('span');
+  dimVal.className = 'val';
+  dimVal.textContent = `${dim.value}%`;
+  dim.addEventListener('input', () => {
+    dimVal.textContent = `${dim.value}%`;
+    paintSliderFill(dim);
+    update({ chatBackgroundDim: Number(dim.value) / 100 });
+  });
+  paintSliderFill(dim);
+  dimWrap.append(dim, dimVal);
+  dimRow.append(dimLabel, dimWrap);
+  box.appendChild(dimRow);
+  sync();
+  void loadCustomBackground().then(blob => {
+    if (!blob) return;
+    hasCustom = true;
+    customUrl = URL.createObjectURL(blob);
+    sync();
+  });
 }
 
 // ---- 窗口 ----
