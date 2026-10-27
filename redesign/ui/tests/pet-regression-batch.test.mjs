@@ -203,6 +203,18 @@ test('快捷尺寸保留三档循环，两次放大的实际尺寸增量相等',
   assert.equal(nextSizePreset(0.2, 0.2, 0.2), 0.2);
 });
 
+test('首次启动默认缩放取设置页滑杆的 40%', async () => {
+  const { scaleToPercent, scaleRangeFor, DEFAULT_SCALE_PERCENT } = load('settings');
+  for (const sf of [1, 1.25, 1.5, 2]) {
+    const h = resizeHarness(sf);
+    const scale = await h.app._defaultScale();
+    const range = scaleRangeFor(3000 / sf, 2400 / sf);
+    const percent = scaleToPercent(scale, range.minS, range.maxS);
+    assert.ok(Math.abs(percent - DEFAULT_SCALE_PERCENT) < 0.5, `sf=${sf} percent=${percent}`);
+    assert.ok(scale >= range.minS && scale <= range.maxS, `sf=${sf} scale=${scale}`);
+  }
+});
+
 test('快捷切换按设备范围等步长缩放，连续点击不丢档位且脚底不漂移', async () => {
   for (const sf of [1, 1.5, 2]) {
     const h = resizeHarness(sf), foot = h.foot();

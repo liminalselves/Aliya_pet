@@ -685,7 +685,7 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
  class Mood{onMoodChanged(){}}
  class AI{play(name){calls.push(name)}express(name){calls.push(name)}clearExpression(){}setMood(name){calls.push(name)}}
  const {PetApp}=load('pet-app',{
-  './platform':{platform:'tauri'},'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
+  './platform':{platform:'tauri'},'./settings':load('settings'),'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
   './dialogue/bubble':{DialogueBubble:class{}},'./interaction/interaction':{InteractionService:class{}},
   './behavior':{BehaviorService:Behavior},'./emotion':{MoodEngine:Mood},'./pet-ai':{PetAI:AI},
  },{document:{getElementById:()=>({})},window:{},fetch:async()=>{fetchStarted.resolve();await fetchGate.promise;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
@@ -728,7 +728,7 @@ test('Tauri监听失败降级加载模型，可见提示重试只补装失败项
    if(name==='tray-action'&&failing)throw new Error('listen IPC failed');
    assert.equal(listeners.has(name),false,'成功项不能重复注册');listeners.set(name,handler);return ()=>{};
   }},
-  './startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
+  './settings':load('settings'),'./startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
   './pet-model':{PetModel:Model},'./dialogue/bubble':{DialogueBubble:class{}},
   './interaction/interaction':{InteractionService:class{onClick(){clicks++}}},
   './behavior':{BehaviorService:class{setActionMeta(){}start(){}}},

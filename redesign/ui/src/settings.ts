@@ -48,7 +48,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   posY: null,
   alwaysOnTop: true,
   snapEdges: true,
-  scale: 1.0,
+  // 无本地存档且拿不到屏幕尺寸时的兜底值；首次启动会换算成滑杆的 40%（见 pet-app）。
+  scale: 0.4,
   autoActions: true,
   mirror: false,
   randomSpeech: false,
@@ -71,6 +72,9 @@ export function clampScale(v: number): number {
  */
 export const SCALE_PERCENT_MIN = 10;
 export const SCALE_PERCENT_MAX = 100;
+
+/** 首次启动的默认缩放档（百分比域）：滑杆显示 40%。 */
+export const DEFAULT_SCALE_PERCENT = 40;
 
 /** 实际缩放 → 显示百分比（结果钳制在 [10, 100]）。 */
 export function scaleToPercent(
@@ -118,6 +122,22 @@ export function nextSizePreset(
   return percentToScale(next, minS, maxS);
 }
 
+/**
+ * 屏幕工作区（逻辑像素）→ 实际缩放范围：最小 56×72，最大不超出工作区。
+ * 设置页滑杆与首次启动的默认值共用，避免两处换算公式漂移。
+ */
+export function scaleRangeFor(
+  screenW: number,
+  screenH: number
+): { minS: number; maxS: number } {
+  const minS = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
+  const maxS = Math.max(
+    minS,
+    Math.min(screenW / BASE_WINDOW_W, screenH / BASE_WINDOW_H)
+  );
+  return { minS, maxS };
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -145,5 +165,14 @@ export function saveSettings(s: PetSettings): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   } catch {
     // 存储不可用时设置仅本次会话有效
+  }
+}
+
+/** 本地是否已有存档（首次启动为 false，据此换算默认缩放）。 */
+export function hasSavedSettings(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
   }
 }

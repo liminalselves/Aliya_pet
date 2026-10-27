@@ -18,10 +18,14 @@ import { MoodEngine } from './emotion';
 import { PetAI } from './pet-ai';
 import {
   PetSettings,
+  DEFAULT_SCALE_PERCENT,
   clampScale,
+  hasSavedSettings,
   loadSettings,
   nextSizePreset,
+  percentToScale,
   saveSettings,
+  scaleRangeFor,
 } from './settings';
 import {
   platform,
@@ -433,6 +437,12 @@ export class PetApp {
       }
     }
 
+    // 首次启动：默认缩放取设置页滑杆的 40%，已有存档则尊重用户设置
+    if (!hasSavedSettings()) {
+      const defaultScale = await this._defaultScale();
+      if (defaultScale != null) this._settings.scale = defaultScale;
+    }
+
     // 启动时全量应用设置（含窗口位置/缩放/置顶恢复）
     this.applySettings(this._settings, true);
     this._flushPendingShellActions();
@@ -572,6 +582,42 @@ export class PetApp {
     } catch {
       return { minS: 0.15, maxS: 2.0 };
     }
+  }
+
+  /**
+   * 首次启动（无本地存档）的默认缩放：换算成设置页滑杆的 40%。
+   * 范围按工作区逻辑尺寸推导（与设置页同一公式）；取不到屏幕尺寸时返回 null。
+   */
+  private async _defaultScale(): Promise<number | null> {
+    let screenW = 0;
+    let screenH = 0;
+    if (platform === 'android') {
+      try {
+        const m = JSON.parse(androidShell()?.getMetrics() ?? '') as {
+          screenW: number;
+          screenH: number;
+        };
+        screenW = m.screenW;
+        screenH = m.screenH - 88; // 安卓底部系统栏
+      } catch {
+        return null;
+      }
+    } else if (platform === 'tauri') {
+      try {
+        const m = await import('@tauri-apps/api/window');
+        const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+        if (!mon) return null;
+        screenW = mon.workArea.size.width / mon.scaleFactor;
+        screenH = mon.workArea.size.height / mon.scaleFactor;
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+    if (!(screenW > 0 && screenH > 0)) return null;
+    const { minS, maxS } = scaleRangeFor(screenW, screenH);
+    return percentToScale(DEFAULT_SCALE_PERCENT, minS, maxS);
   }
 
   /** 托盘「切换尺寸」：在设备范围内按最小→中点→最大等步长循环。 */
