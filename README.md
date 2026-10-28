@@ -65,7 +65,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 | 组件 | 版本 / 说明 |
 | --- | --- |
 | Node.js | Vite 8 要求 `^20.19.0 || >=22.12.0`；推荐 Node.js 24 LTS |
-| Rust + cargo | Windows 壳（Tauri） |
+| Rust + cargo | Windows 壳（Tauri），使用 MSVC 工具链 |
+| Visual Studio Build Tools 2022 | Windows 构建：安装「使用 C++ 的桌面开发」工作负载（含 MSVC 与 Windows SDK） |
+| WebView2 Runtime | Windows 运行环境；未安装时需安装 Microsoft Edge WebView2 Evergreen Runtime |
 | Android SDK | platform 36 + JDK 17/21（构建 APK） |
 | Live2D Cubism Web SDK | 5-r.5，已随仓库入库 |
 
@@ -73,7 +75,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 
 ### Windows
 
-```bash
+以下命令使用 **PowerShell**，从仓库根目录开始执行。
+
+```powershell
 cd redesign
 npm ci                     # 安装 Tauri CLI（首次克隆或依赖更新后）
 cd ui
@@ -85,16 +89,20 @@ npm run dev
 # 临时连接指定实例：
 npm run dev -- http://127.0.0.1:3000
 # 如需 CDP 调试端口：
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
+npm run dev
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 ```
 
-打包安装版：`cd redesign && npm run build`。Tauri 会先自动构建共享前端，
+打包安装版：在上述 `redesign/` 目录运行 `npm run build`。Tauri 会先自动构建共享前端，
 默认连接 `https://misskey.liminalselves.top`（详见 `docs/BUILD.md`，SDK 已随仓库入库）。
 产物：`redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<版本>_x64-setup.exe`（另有同版本 MSI）。两种安装器均为简体中文，NSIS 安装器与卸载器使用 Aliya 图标。
 
 ### Android
 
-```bash
+以下命令使用 **PowerShell**，从仓库根目录开始执行。
+
+```powershell
 # 1. 安装前端依赖并构建共享前端（产物进入 redesign/ui/dist）
 cd redesign/ui
 npm ci
@@ -102,13 +110,15 @@ npm run build
 
 # 2. 构建 APK
 cd ../android
-gradlew.bat assembleDebug            # 或 assembleRelease
+.\gradlew.bat assembleDebug            # 或 assembleRelease
 
 # 3. 安装到设备
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先** `ui:build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
+在 **Bash（Linux / macOS / Git Bash）** 中，前端构建和安装命令不变；构建 APK 时，在 `redesign/android/` 下先执行 `chmod +x gradlew`，再用 `./gradlew assembleDebug`（或 `./gradlew assembleRelease`）替代 `.\gradlew.bat` 命令。
+
+> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先**在 `redesign/ui/` 运行 `npm run build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
 
 ## 项目结构
 
@@ -222,7 +232,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 | Component | Version / Notes |
 | --- | --- |
 | Node.js | Vite 8 requires `^20.19.0 || >=22.12.0`; Node.js 24 LTS recommended |
-| Rust + cargo | Windows shell (Tauri) |
+| Rust + cargo | Windows shell (Tauri), using the MSVC toolchain |
+| Visual Studio Build Tools 2022 | Windows build: install the “Desktop development with C++” workload (including MSVC and the Windows SDK) |
+| WebView2 Runtime | Windows runtime; install Microsoft Edge WebView2 Evergreen Runtime if missing |
 | Android SDK | platform 36 + JDK 17/21 (APK build) |
 | Live2D Cubism Web SDK | 5-r.5, committed to the repo |
 
@@ -230,7 +242,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 
 #### Windows
 
-```bash
+Use **PowerShell**, starting from the repository root.
+
+```powershell
 cd redesign
 npm ci                     # Install the Tauri CLI (first clone or dependency update)
 cd ui
@@ -242,15 +256,19 @@ npm run dev
 # Temporarily target a specific instance:
 npm run dev -- http://127.0.0.1:3000
 # With a CDP debug port:
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
+npm run dev
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 ```
 
-Release build: `cd redesign && npm run build`. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`; the SDK is committed to the repo).
+Release build: run `npm run build` from the `redesign/` directory reached above. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`; the SDK is committed to the repo).
 Artifact: `redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<version>_x64-setup.exe` (plus an MSI of the same version). Both installers use Simplified Chinese; the NSIS installer and uninstaller use the Aliya icon.
 
 #### Android
 
-```bash
+Use **PowerShell**, starting from the repository root.
+
+```powershell
 # 1. Install frontend dependencies and build the shared UI
 cd redesign/ui
 npm ci
@@ -258,13 +276,15 @@ npm run build
 
 # 2. Build the APK
 cd ../android
-gradlew.bat assembleDebug            # or assembleRelease
+.\gradlew.bat assembleDebug            # or assembleRelease
 
 # 3. Install on a device
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `ui:build` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
+In **Bash (Linux / macOS / Git Bash)**, the frontend build and installation commands are unchanged. To build the APK, run `chmod +x gradlew` in `redesign/android/`, then use `./gradlew assembleDebug` (or `./gradlew assembleRelease`) instead of the `.\gradlew.bat` command.
+
+> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `npm run build` in `redesign/ui/` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
 
 ### Project Structure
 
