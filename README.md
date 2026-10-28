@@ -177,9 +177,32 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 
 ## 许可与声明
 
-- 本仓库当前**未附带开源许可证文件**；使用与分发前请先与作者确认授权范围。
-- **Live2D Cubism SDK**（Core / Framework）随仓库提供，使用与分发须遵守 `third_party/cubism-web-sdk/` 内的许可及声明。
-- 本程序为**二创桌宠**，角色 Aliya 原创出自《彼方的她》（Liminal Selves），版权归原作者所有。
+### 免责声明
+
+本程序（Aliya Pet）与以下列出的所有游戏、开发者、发行商、个人、团体、公司均无任何关系、联系：
+
+- 游戏《彼方的她-Aliya》（Aliya: Timelink）：[Steam 商店](https://store.steampowered.com/app/2704110/)
+- 开发者【瞳电游工作室】（TDGame Studio）：[B站官号](https://space.bilibili.com/1104337773)、[Steam](https://store.steampowered.com/developer/tdgame)
+- 发行商【AnotherIndie】：[官网](https://anotherindie.com.cn/)、[Steam](https://store.steampowered.com/publisher/AnotherIndie)
+
+本程序中的角色美术，以《彼方的她-Aliya》（Aliya: Timelink）的游戏内原始素材为基础，经 AI 图像生成辅助加工后，重新绘制并绑定为 Live2D 模型（含 `.moc3` 模型文件、贴图、动作与表情数据）。
+
+上述游戏内原始素材及角色形象的著作权归原作者与各自权利人所有，本程序对原素材不主张任何权利，亦未获其授权或认可。
+
+本程序由多位作者共同完成，程序代码与项目贡献归 **liminalselves** 组织所有。其中 Live2D 模型文件、贴图、动作与表情数据由本项目作者之一制作：AI 加工、重新绘制与绑定均由其完成，由此形成的这部分内容属于其创作，未经许可不得提取或再分发；作为基于原作素材的衍生内容，这部分仍受原作权利约束，AI 加工不改变原作权属，也不构成获得授权。
+
+本程序为**二创桌宠**。角色 Aliya 及其名称、形象均原创于《彼方的她-Aliya》（Aliya: Timelink），相关版权归游戏开发者【瞳电游工作室】（TDGame Studio）所有，本程序不享有其中任何权利。
+
+本程序为非盈利性质的粉丝向项目，非官方作品。
+
+如权利人认为上述使用方式不妥，可通过 GitHub Issue 联系，本程序将在收到通知后移除相关内容。
+
+### 许可
+
+- **程序代码**：**保留所有权利**。源码公开仅供审阅与协作，未授予使用、修改或再分发的许可；版权归 **liminalselves** 组织所有。
+- **美术资产**（`redesign/ui/assets/` 下除第三方文件外的部分：Live2D 模型文件、贴图、动作与表情数据、背景、图标、对话文本）：**保留所有权利**。允许在非商业前提下随本程序原样分发并注明出处；禁止商用，禁止拆分提取模型、贴图或动作单独再分发。
+- **角色 IP**：角色 Aliya 的形象与名称权利归原作方，上述美术条款只在作者有权处分的范围内有效，不构成对角色形象的使用授权。
+- **第三方组件**（Live2D Cubism SDK 与 Core、Cubism WebGL 着色器、Noto Serif SC 字体）：适用其各自许可，不受上述条款约束，清单与要点见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## English
 
@@ -343,6 +366,29 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 
 ### License & Notices
 
-- This repository currently ships **without an open-source license file**; please confirm the scope of authorization with the author before use or distribution.
-- The **Live2D Cubism SDK** (Core / Framework) is included in this repository. Use and redistribution are subject to the licenses and notices under `third_party/cubism-web-sdk/`.
-- This program is a **fan-made (derivative) desktop pet**. The character Aliya originates from *Liminal Selves* (《彼方的她》); all rights belong to the original creators.
+#### Disclaimer
+
+This program (Aliya Pet) has no relationship or connection with any of the games, developers, publishers, individuals, groups, or companies listed below:
+
+- The game *Aliya: Timelink* (《彼方的她-Aliya》): [Steam](https://store.steampowered.com/app/2704110/)
+- The developer 【瞳电游工作室】(TDGame Studio): [Bilibili](https://space.bilibili.com/1104337773), [Steam](https://store.steampowered.com/developer/tdgame)
+- The publisher 【AnotherIndie】: [Website](https://anotherindie.com.cn/), [Steam](https://store.steampowered.com/publisher/AnotherIndie)
+
+The character artwork in this program is based on in-game original assets from *Aliya: Timelink* (《彼方的她-Aliya》), processed with the aid of AI image generation and then redrawn and rigged into a Live2D model (including the `.moc3` file, textures, motions and expression data).
+
+The copyright in those in-game original assets and in the character's likeness belongs to the original creators and their respective rights holders; this program claims no rights to the original assets and has not been authorized or endorsed by them.
+
+This program is a joint work of several authors, and the code and project contributions are attributed to the **liminalselves** organization. The Live2D model files, textures, motions and expression data were created by one of the project's authors: the AI-assisted processing, redrawing and rigging were all carried out by that author, and the resulting content is that author's creative work and may not be extracted or redistributed without permission; as derivative content based on the original assets, however, it remains subject to the original rights. AI processing neither changes ownership of the original work nor constitutes authorization.
+
+This program is a **fan-made (derivative) desktop pet**. The character Aliya, together with her name and likeness, originates from *Aliya: Timelink* (《彼方的她-Aliya》); all related copyrights are owned by the developer 【瞳电游工作室】(TDGame Studio), and this program claims no rights to them.
+
+This program is a non-commercial fan project and is not an official product.
+
+Should a rights holder consider this use inappropriate, please reach out via GitHub Issue; the relevant content will be removed upon notice.
+
+#### License
+
+- **Source code**: **all rights reserved**. The source is published for review and collaboration only; no permission to use, modify or redistribute it is granted. Copyright in the code is held by the **liminalselves** organization.
+- **Art assets** (everything under `redesign/ui/assets/` except the third-party files below — Live2D model files, textures, motions and expression data, backgrounds, icons, dialogue text): **all rights reserved**. Non-commercial redistribution of the program as a whole with attribution is allowed; commercial use, and extracting or redistributing the model, textures or motions separately, are not.
+- **Character IP**: rights in the character Aliya's likeness and name belong to the original rights holders. The asset terms above apply only to what the author is entitled to license, and grant no rights to the character itself.
+- **Third-party components** (Live2D Cubism SDK and Core, Cubism WebGL shaders, Noto Serif SC font): governed by their own licenses and not by the terms above; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
