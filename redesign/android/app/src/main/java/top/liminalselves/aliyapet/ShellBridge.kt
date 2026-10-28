@@ -50,10 +50,13 @@ class ShellBridge(private val host: Host) {
 
         /**
          * 像素占用掩码（0/1 字符串，cols×rows 覆盖整个窗口）：
-         * 悬浮窗壳在 ACTION_DOWN 命中透明格时临时切 NOT_TOUCHABLE 穿透给下层。
-         * 实现直接落 volatile（JavaBridge 线程调用，UI 线程读）。
+         * Android 13+ 壳在输入分发前设置 TouchableRegion；旧版仅临时切换 NOT_TOUCHABLE，
+         * 无法重新分发已经收到的首个 DOWN。实现直接落 volatile（JavaBridge 线程调用，UI 线程读）。
          */
         fun setHitMask(cols: Int, rows: Int, data: String) {}
+
+        /** 独立原生气泡：文本、人物窗口内锚点及 CSS 样式；空文本隐藏。 */
+        fun setDialogueBubble(json: String) {}
 
         /** 设置页全量设置 JSON：壳转发给桌宠 WebView 实时应用。 */
         fun notifySettings(json: String) {}
@@ -136,6 +139,11 @@ class ShellBridge(private val host: Host) {
     fun setHitMask(cols: Int, rows: Int, data: String) {
         // 命中掩码：JavaBridge 线程直写 volatile，UI 线程在 DOWN 时读
         host.setHitMask(cols, rows, data)
+    }
+
+    @JavascriptInterface
+    fun setDialogueBubble(json: String) {
+        main.post { host.setDialogueBubble(json) }
     }
 
     @JavascriptInterface

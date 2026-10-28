@@ -523,6 +523,200 @@ for (const platform of ['tauri', 'android', 'web']) {
   });
 }
 
+test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大小和三行气泡空间不变', () => {
+  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => null } });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
+  for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
+    const baseH = 675 * 1.18 * scale, contentScale = baseH / 1.30 / 1.1;
+    const app = Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr,
+      _originCssX: -120, _originCssY: 650, _contentScaleCss: contentScale,
+      _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
+        getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
+    });
+    const oldBottom = app._originCssY - (bounds.minY + bounds.maxY) / 2 * contentScale + baseH / 2;
+    const headY = app._originCssY - bounds.maxY * contentScale;
+    const r = app._fixedWindowRect();
+    assert.ok(r.h < baseH + 88 - 1, '必须缩小实际外窗，而不是仅修改气泡样式');
+    assert.ok(r.h >= baseH, '不裁减人物动作区域');
+    near(r.y + r.h, oldBottom);
+    near(r.w, baseH * 0.5 / 1.1);
+    assert.ok(headY - r.y >= 88 - 1e-6, '保留三行气泡所需高度、头部间隙和顶部边距');
+    app._appliedRectX = r.x; app._appliedRectY = r.y;
+    const t = app._modelViewportTransform();
+    near(t.scale, contentScale * dpr);
+    for (const [x, y] of [[bounds.minX, bounds.maxY], [0.05, bounds.minY]]) {
+      near(r.x + (t.originX + x * t.scale) / dpr, app._originCssX + x * contentScale);
+      near(r.y + (t.originY - y * t.scale) / dpr, app._originCssY - y * contentScale);
+    }
+    const el = { style: {}, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
+    app._bubble = { isActive: true, el };
+    app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
+    app._positionBubble();
+    const top = Number.parseFloat(el.style.top);
+    assert.ok(top >= 4);
+    assert.ok(top + app._bubbleScaledH <= r.h, '多行气泡不超出窗口');
+    assert.ok(top + app._bubbleScaledH + 6 <= headY - r.y + 0.51, '不挤占人物头部');
+    const fixed = app._fixedWindowRect();
+    app._bubble.isActive = false;
+    assert.deepEqual(app._fixedWindowRect(), fixed, '气泡显隐不反复调整窗口表面');
+  }
+});
+
+test('独立原生气泡取消人物气泡带，保留动作余量、脚底与缩放补间的头顶锚点', () => {
+  const shell = { setDialogueBubble() {} };
+  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell } });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
+  for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
+    const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
+    const sent = [];
+    const app = Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400,
+      _originCssX: -120, _originCssY: 650, _contentScaleCss: s,
+      _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
+        getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
+      _androidBubble: { sync: (...args) => sent.push(args), hide: () => sent.push('hide') },
+      _bubble: { isActive: true, el: { textContent: '独立气泡不会被人物窗口裁掉' } },
+    });
+    const r = app._fixedWindowRect();
+    near(r.h, baseH);
+    near(r.y + r.h, 650 - (bounds.minY + bounds.maxY) / 2 * s + baseH / 2);
+    app._appliedRectX = r.x; app._appliedRectY = r.y;
+    app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
+    const t = app._modelViewportTransform();
+    near(r.y + (t.originY - bounds.maxY * t.scale) / dpr, 650 - bounds.maxY * s);
+    near(t.scale / dpr, s);
+    app._scaleTweenValue = () => s * 0.7;
+    app._positionBubble();
+    const shown = app._modelViewportTransform();
+    near(sent.at(-1)[2], (shown.originY - bounds.maxY * shown.scale) / dpr);
+    near(sent.at(-1)[3], r.w); near(sent.at(-1)[4], r.h); // 复用原窗口的气泡缩放口径。
+    app._bubble.isActive = false; app._positionBubble();
+    assert.equal(sent.at(-1), 'hide');
+    assert.deepEqual(app._fixedWindowRect(), r, '气泡显隐不重配人物窗口');
+  }
+});
+
+test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消立即同步', () => {
+  let now = 0;
+  const calls = [];
+  const { AndroidDialogueBubble } = load('dialogue/android-bubble', {}, {
+    performance: { now: () => now }, getComputedStyle: () => assert.fail('样式由气泡页面直接加载，不在桥接中重画'),
+  });
+  const bubble = new AndroidDialogueBubble(json => calls.push(JSON.parse(json)));
+  bubble.sync('第一页', 100, 20, 260, 500);
+  for (let i = 0; i < 60; i++) { now += 16; bubble.sync('第一页', 100, 20, 260, 500); }
+  assert.equal(calls.length, 1, '静止气泡没有逐帧通信或重读 CSS');
+  now = 1000; bubble.sync('第一页', 100, 22, 260, 500);
+  now = 1016; bubble.sync('第一页', 100, 24, 260, 500);
+  assert.equal(calls.length, 2, '动作锚点变化限频');
+  bubble.sync('第二页\n<纯文本>', 100, 24, 260, 500);
+  assert.equal(calls.length, 3, '翻页不受动作限频影响');
+  assert.equal(calls.at(-1).text, '第二页\n<纯文本>');
+  assert.equal(calls.at(-1).viewportWidth, 260);
+  assert.equal(calls.at(-1).viewportHeight, 500);
+  bubble.close(); bubble.close();
+  assert.equal(calls.length, 4); assert.equal(calls.at(-1).closing, true);
+  bubble.sync('第二页\n<纯文本>', 100, 24, 260, 500);
+  assert.equal(calls.length, 5, '相同台词也能打断淡出并立即恢复');
+  bubble.hide(); bubble.hide();
+  assert.equal(calls.length, 6); assert.equal(calls.at(-1).text, '');
+});
+
+test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
+  const classes = new Set();
+  const el = { id: '', style: {}, textContent: '', offsetWidth: 200, offsetHeight: 60,
+    classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
+  const { DialogueBubble } = load('dialogue/bubble', {}, { document: { createElement: () => el } });
+  const bubble = new DialogueBubble({ appendChild() {} });
+  const { createBubbleRenderer } = load('dialogue/bubble-window');
+  const render = createBubbleRenderer(bubble);
+  const size = render({ text: '<纯文本>\n第二行', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(el.textContent, '<纯文本>\n第二行');
+  assert.equal(classes.has('turn'), false, '首次显示保留原来的弹入');
+  assert.equal(size.width, 102, '按原窗口宽度缩放，不重设排版字号');
+  assert.equal(size.bottom, 32.2, '定位保持原来的气泡底边与头顶间距');
+  render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(classes.has('turn'), true, '翻页仍走原 turn 样式');
+  render({ closing: true });
+  assert.equal(classes.has('closing'), true);
+  render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(classes.has('closing'), false, '打断淡出不留下隐藏计时器');
+  render({ text: '' });
+  assert.equal(el.style.display, 'none');
+  for (const prop of ['font', 'fontSize', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
+    assert.equal(el.style[prop], undefined, `${prop} 必须保留原 pet.css 定义`);
+  }
+});
+
+test('Android 左下角贴边在松手时保存终点，进入 App 打断动画也不丢位置', () => {
+  const saved = [], prefs = [], animations = [];
+  const settings = load('settings');
+  const shell = {
+    getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+    setPref: (key, value) => prefs.push([key, value]),
+    animateWindowTo: (x, y, duration) => animations.push({ x, y, duration }),
+  };
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => shell },
+    './settings': { ...settings, saveSettings: value => saved.push({ ...value }) },
+  }, { window: { matchMedia: () => ({ matches: false }) } });
+  const app = Object.create(PetApp.prototype);
+  Object.assign(app, {
+    _wrapWindow: true, _settings: { ...settings.DEFAULT_SETTINGS, snapEdges: true },
+    _originCssX: 30, _originCssY: 760, _appliedRectX: -50, _appliedRectY: 500,
+    _contentScaleCss: 100, _rectInited: true, _nativeSnapping: false, _scaleTween: null,
+    _model: { getStaticBounds: () => ({ minX: -0.2, maxX: 0.2, minY: -1, maxY: 1 }) },
+    _cancelSnapAnimation() {},
+  });
+  app._onDragFinishedAndroid();
+  assert.deepEqual(prefs, [['petX', '20'], ['petY', '700']], '必须在原生动画结束回调之前双写最终原点');
+  assert.equal(saved.at(-1).posX, 20); assert.equal(saved.at(-1).posY, 700);
+  assert.equal(animations.length, 1);
+});
+
+for (const entry of ['resume', 'startup']) {
+  test(`Android 主界面${entry}不把旧坐标写回悬浮窗存档`, () => {
+    const storage = new Map();
+    const settings = load('settings', {}, {
+      localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    });
+    const shell = {
+      getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+      setPref() {},
+    };
+    const { PetApp } = load('pet-app', {
+      './platform': { platform: 'android', androidShell: () => shell }, './settings': settings,
+    });
+    const stale = { ...settings.DEFAULT_SETTINGS, posX: 360, posY: 360, snapEdges: false };
+    settings.saveSettings(stale);
+    const makeApp = wrap => Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: wrap, _settings: { ...stale }, _baseFpsCap: 30, _hitAreas: {}, _canvas: { style: {} },
+      _originCssX: stale.posX, _originCssY: stale.posY, _appliedRectX: 280, _appliedRectY: 160,
+      _contentScaleCss: 100, _rectInited: false, _model: null, _scaleTween: null,
+      _coordination: { activity() {} }, _chatBackground: { apply() {} },
+      _cancelSnapAnimation() {}, setPaused() {}, _reloadAfterContextLoss() {},
+    });
+    // 主界面 WebView 留在后台，悬浮窗是另一个持有同一份存储的实例。
+    const main = makeApp(false), overlay = makeApp(true);
+    for (const target of [{ x: 30, y: 700 }, { x: 120, y: 650 }]) {
+      overlay.onNativeDragEnd(target.x - overlay._originCssX, target.y - overlay._originCssY, 0, true);
+      if (entry === 'resume') main.onShellEvent('resume');
+      else main.applySettings({ ...stale }, true); // 主界面异步加载完成时也不能回写初始化快照。
+      assert.deepEqual([settings.loadSettings().posX, settings.loadSettings().posY], [target.x, target.y]);
+      assert.deepEqual([main.settings.posX, main.settings.posY], [target.x, target.y]);
+      const restored = makeApp(true);
+      restored.applySettings(settings.loadSettings(), true);
+      assert.deepEqual([restored._originCssX, restored._originCssY], [target.x, target.y], '退出后新悬浮窗恢复最后拖动位置');
+      main.applySettings({ ...main.settings, batterySaver: true }, false);
+      assert.equal(settings.loadSettings().batterySaver, true, '其他设置仍正常保存');
+      assert.deepEqual([settings.loadSettings().posX, settings.loadSettings().posY], [target.x, target.y]);
+    }
+  });
+}
+
 test('真实拖动收尾不持久化尺寸已生效但补偿失败的位置', async () => {
   for (const sf of [1, 1.5, 2]) {
     const h = resizeHarness(sf), before = h.foot();

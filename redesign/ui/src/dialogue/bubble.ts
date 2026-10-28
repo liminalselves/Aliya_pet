@@ -13,8 +13,8 @@ export class DialogueBubble {
   /** 淡出计时器：动画结束才 display:none；重新展示前必须取消。 */
   private _hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(container: HTMLElement) {
-    this._el = document.createElement('div');
+  constructor(container: HTMLElement, el?: HTMLDivElement) {
+    this._el = el ?? document.createElement('div');
     this._el.id = 'dialogue-bubble';
     this._el.style.display = 'none';
     container.appendChild(this._el);
@@ -28,6 +28,10 @@ export class DialogueBubble {
   get el(): HTMLDivElement {
     return this._el;
   }
+
+  /** 独立展示窗口复用同一套翻页与显隐动效，会话计时仍由人物窗口管理。 */
+  showPage(text: string): void { this._show(text); }
+  hidePage(immediate = false): void { this._hide(immediate); }
 
   /** 播放一次完整台词会话（覆盖进行中的会话）。 */
   async play(resolved: ResolvedDialogue): Promise<void> {

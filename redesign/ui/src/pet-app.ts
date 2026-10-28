@@ -9,6 +9,7 @@ import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
+import { AndroidDialogueBubble } from './dialogue/android-bubble';
 import { HitAreas } from './interaction/hit-areas';
 import { showStartupNotice } from './startup-notice';
 import { InteractionService } from './interaction/interaction';
@@ -66,6 +67,7 @@ export class PetApp {
   private _shellSyncNotice: HTMLElement | null = null;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
+  private _androidBubble: AndroidDialogueBubble | null = null;
   private _interaction: InteractionService = null;
   private _behavior: BehaviorService = null;
   private _moodEngine: MoodEngine = null;
@@ -220,8 +222,13 @@ export class PetApp {
   /** 窗口尺寸余量：窗口 = 675×scale × 1.18（对齐 Flutter ComputeTargetPixelSize）。 */
   private static readonly _windowMarginRatio = 1.18;
 
-  /** 悬浮窗顶部永久预留的气泡带高度（CSS px，≈3 行气泡 + 间隙）。 */
+  /** 悬浮窗静态头顶所需的气泡空间（CSS px，含画布已有顶部余量，≈3 行气泡 + 间隙）。 */
   private static readonly _WRAP_BUBBLE_BAND = 88;
+
+  /** 旧 Android 壳保留 DOM 气泡路径；新壳不再为气泡扩大人物外窗。 */
+  private _hasNativeBubble(): boolean {
+    return this._wrapWindow && platform === 'android' && typeof androidShell()?.setDialogueBubble === 'function';
+  }
 
   /** 气泡适配缓存：文本/视口变化时重算等比缩放（见 _positionBubble）。 */
   private _bubbleFitKey = '';
@@ -252,8 +259,10 @@ export class PetApp {
 
     // 悬浮窗：窗口逐帧包裹角色剪影，透明区域不挡下层触摸（真穿透）。
     this._wrapWindow = isAndroidOverlay();
-    // 气泡带样式钩子（顶部预留带 + 行数钳制，见 pet.css body.overlay-wrap）
+    // 旧壳 DOM 气泡的行数钳制；支持独立窗口时只借用它的样式与会话状态。
     if (this._wrapWindow) document.body.classList.add('overlay-wrap');
+    // 页面重载时也清掉上一次 JS 会话留下的原生气泡。
+    if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
 
     this._gl = this._canvas.getContext('webgl2', {
@@ -375,7 +384,13 @@ export class PetApp {
     // 逻辑层装配
     await Promise.all([this._dialogue.loadAll(), this._hitAreas.load()]);
     const stage = document.getElementById('stage');
+    this._androidBubble?.hide();
     this._bubble = new DialogueBubble(stage);
+    const shell = this._hasNativeBubble() ? androidShell() : null;
+    this._androidBubble = shell
+      ? new AndroidDialogueBubble(shell.setDialogueBubble.bind(shell)) : null;
+    // 保留 DOM 会话/分页状态与 CSS 样式来源，但不在人物窗口里绘制第二份气泡。
+    if (this._androidBubble) this._bubble.el.style.visibility = 'hidden';
     this._interaction = new InteractionService({
       hitAreas: this._hitAreas,
       getTarget: () => (this._model?.isReady() ? this._model : null),
@@ -634,8 +649,14 @@ export class PetApp {
    */
   public applySettings(s: PetSettings, restoreWindow = false): void {
     this._cancelSnapAnimation();
-    // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
-    if (!restoreWindow && this._settings) s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
+    // 主界面不拥有悬浮窗位置：后台期间另一 WebView 可能已保存新坐标，不能回写本实例的旧快照。
+    if (platform === 'android' && !this._wrapWindow) {
+      const latest = loadSettings();
+      s = { ...s, posX: latest.posX, posY: latest.posY };
+    } else if (!restoreWindow && this._settings) {
+      // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
+      s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
+    }
     this._settings = s;
     const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
@@ -1006,7 +1027,8 @@ export class PetApp {
     let scale = s.scale;
     if (this._screenW > 0 && this._screenH > 0) {
       const minS = Math.max(56 / baseW, 72 / baseH);
-      const maxS = Math.max(minS, Math.min(this._screenW / baseW, (this._screenH - PetApp._WRAP_BUBBLE_BAND) / baseH));
+      const bubbleBand = this._hasNativeBubble() ? 0 : PetApp._WRAP_BUBBLE_BAND;
+      const maxS = Math.max(minS, Math.min(this._screenW / baseW, (this._screenH - bubbleBand) / baseH));
       scale = Math.min(Math.max(scale, minS), maxS);
     }
     if (this._wrapWindow) {
@@ -1440,8 +1462,10 @@ export class PetApp {
         if (charT <= zone) ty -= charT;
         else if (charB >= m.screenH - zone) ty += m.screenH - charB;
         if (tx !== this._originCssX || ty !== this._originCssY) {
+          // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
+          this._persistWrapOrigin(tx, ty);
           this._animateOriginTo(tx, ty);
-          return; // 动画末帧持久化
+          return;
         }
       }
     }
@@ -1449,13 +1473,13 @@ export class PetApp {
   }
 
   /** 持久化悬浮窗原点（localStorage + 壳侧 SharedPreferences 双写）。 */
-  private _persistWrapOrigin(): void {
+  private _persistWrapOrigin(x = this._originCssX, y = this._originCssY): void {
     const shell = androidShell();
-    this._settings.posX = this._originCssX;
-    this._settings.posY = this._originCssY;
+    this._settings.posX = x;
+    this._settings.posY = y;
     saveSettings(this._settings);
-    shell?.setPref('petX', String(Math.round(this._originCssX)));
-    shell?.setPref('petY', String(Math.round(this._originCssY)));
+    shell?.setPref('petX', String(Math.round(x)));
+    shell?.setPref('petY', String(Math.round(y)));
   }
 
   private _animateOriginTo(tx: number, ty: number, durMs = 220): void {
@@ -1937,6 +1961,7 @@ export class PetApp {
       this._cancelInteraction();
       this._resetDragState();
       this._bubble?.cancel();
+      this._androidBubble?.hide();
       androidShell()?.setInteracting(false);
       this._chatPerformance?.cancel();
     }
@@ -2079,15 +2104,27 @@ export class PetApp {
 
   /**
    * 气泡锚定角色头部（可见才算，~30fps 几个 DOM 读写的成本可忽略）：
-   * 气泡底边 = 动态剪影顶 − 6px。窗口顶部气泡带永远容得下
-   * （带 88 ≥ 气泡限高 76 + 间隙），不再出现气泡钉在窗口顶「飞天」。
+   * 原生独立窗口不受人物画布裁切，并使用实际渲染头顶（含缩放补间）。
+   * 旧壳 DOM 路径在静态头顶上方共留 88px，动作抬头时钳在人物窗口顶边内。
    */
   private _positionBubble(): void {
     const bubble = this._bubble;
-    if (!bubble?.isActive) return;
+    if (!bubble?.isActive) {
+      if (bubble?.el.classList?.contains('closing')) this._androidBubble?.close();
+      else this._androidBubble?.hide();
+      return;
+    }
     const b = this._model?.getDynamicBounds();
-    if (!b) return;
+    if (!b) { this._androidBubble?.hide(); return; }
     const rect = this._canvas.getBoundingClientRect();
+    if (this._androidBubble) {
+      // 共享实际渲染变换，缩放补间中也跟随当前头顶；移动由壳用窗口坐标同步。
+      const t = this._modelViewportTransform();
+      const headY = (t.originY - b.maxY * t.scale) / this._dpr;
+      this._androidBubble.sync(bubble.el.textContent ?? '', rect.width / 2, headY,
+        rect.width, rect.height);
+      return;
+    }
     const vpW = rect.width || 1;
     const vpH = rect.height || 1;
     let headTopCss: number;
@@ -2277,11 +2314,10 @@ export class PetApp {
    * 逐帧不需要任何 grow/shrink/包络跟踪，从根上杜绝重排抽搐。
    * 透明区域的交互由像素掩码穿透接管（见 _maybeSendHitMask）。
    *
-   * 布局：顶部预留气泡带，下方内容区 = 675×1.18×scale（与非贴合模式同基准），
-   * 静态剪影中心锚在内容区中心（四向等距余量，动作向任何方向甩都有空间）。
+   * 布局：内容区 = 675×1.18×scale（与非贴合模式同基准），静态剪影居中。
+   * 新壳气泡使用独立原生窗口，人物只保留动作余量；旧壳继续复用顶部余量并补足气泡空间。
    */
   private _fixedWindowRect(): { x: number; y: number; w: number; h: number } {
-    const band = PetApp._WRAP_BUBBLE_BAND;
     const b = this._model?.getStaticBounds() ?? null;
     // 缩放补间期间按起止两端较大的比例给窗口（脚底同锚，大窗包住小角色），不逐帧改窗。
     const tween = this._scaleTween;
@@ -2291,6 +2327,8 @@ export class PetApp {
     const baseH = 675 * PetApp._windowMarginRatio * this._settings.scale * k;
     const baseW =
       baseH * (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
+    const topPadding = b && s > 0 ? Math.max(0, (baseH - (b.maxY - b.minY) * s) / 2) : 0;
+    const band = this._hasNativeBubble() ? 0 : Math.max(0, PetApp._WRAP_BUBBLE_BAND - topPadding);
     // 比例 s 下保持脚底不动的原点（模型 Y 轴朝上 → 屏幕坐标减）
     const originY = this._originCssY + (b ? b.minY * (s - s0) : 0);
     const ccx = this._originCssX + (b ? ((b.minX + b.maxX) / 2) * s0 : 0);
@@ -2358,14 +2396,16 @@ export class PetApp {
     }
     this._hitMaskLastMs = now;
 
-    // 掩码只覆盖可交互区域（舞台 ∪ 聊天入口 ∪ 提示），区域外由壳一律穿透；
-    // 固定容量外窗很大，铺满整窗会让每格变粗。
+    // Windows 携带区域矩形，只采样舞台 ∪ 聊天入口 ∪ 提示，避免大外窗降低精度。
+    // Android 桥只传网格、不传区域矩形，因此必须按整窗采样，不能把局部剪影拉满外窗。
     const canvasRect = this._canvas.getBoundingClientRect();
     const extra = [
       ...(this._chatView?.hitRects() ?? (this._chatLauncher && !this._chatLauncher.hidden ? [this._chatLauncher.getBoundingClientRect()] : [])),
       ...(this._shellSyncNotice ? [this._shellSyncNotice.getBoundingClientRect()] : []),
     ];
-    const region = PetApp._clipRect(PetApp._unionRect([canvasRect, ...extra]), window.innerWidth, window.innerHeight);
+    const region = androidWrap
+      ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+      : PetApp._clipRect(PetApp._unionRect([canvasRect, ...extra]), window.innerWidth, window.innerHeight);
     this._hitMaskRect = region;
     const cols = PetApp._hitMaskCols;
     const rows = Math.max(
@@ -2424,7 +2464,7 @@ export class PetApp {
     this._hitMaskInteracting = interacting;
     this._hitMaskGeometry = geometry;
     if (androidWrap) {
-      // Android 悬浮窗：壳在 ACTION_DOWN 命中透明格时临时切 NOT_TOUCHABLE 穿透
+      // Android 悬浮窗：API 33+ 在输入分发前按整窗掩码裁剪可触摸区域。
       let csv = '';
       for (let i = 0; i < data.length; i++) csv += data[i];
       androidShell()?.setHitMask(cols, rows, csv);

@@ -40,6 +40,8 @@ export interface AndroidShell {
   setInteracting(interacting: boolean): void;
   /** 像素占用掩码（0/1 字符串， cols×rows 覆盖整个窗口）：壳命中透明区时穿透触摸。 */
   setHitMask(cols: number, rows: number, data: string): void;
+  /** 独立台词气泡：JSON 含文本、窗口内锚点和适配视口；空文本隐藏，closing 淡出。 */
+  setDialogueBubble?(json: string): void;
   /** 设置页全量设置变更（JSON）：壳转发给桌宠页实时生效。 */
   notifySettings(json: string): void;
   /** 设置页动作转发（play-action/express/set-mood 等 tray-action 形状 JSON）给桌宠页。 */

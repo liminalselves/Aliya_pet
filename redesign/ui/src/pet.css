@@ -67,7 +67,6 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   line-height: 1.6;
   text-align: center;
   letter-spacing: 0.01em;
-  box-shadow: var(--al-shadow-2);
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
@@ -108,8 +107,8 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   transition: opacity var(--al-t-out) var(--al-ease-in), scale var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
-/* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），
-   气泡落在带内——窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
+/* 安卓悬浮窗内容贴合模式：头顶气泡空间复用画布顶部余量（见 pet-app _WRAP_BUBBLE_BAND），
+   不足的部分才向上扩窗；窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
    translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
 body.overlay-wrap #dialogue-bubble {
   top: 6px;
