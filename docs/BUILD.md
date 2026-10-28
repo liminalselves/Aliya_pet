@@ -25,8 +25,10 @@ clone 后即可构建，无需手动准备。
 ## 图标资源
 
 - Windows 窗口、托盘及安装包共用 `redesign/src-tauri/icons/tray.ico`（16–256px）；NSIS 的 `installerIcon` / `uninstallerIcon` 显式指向该文件。`build.rs` 监听图标变化，更新后运行正常发布构建即可重新嵌入。
-- Android 启动图标位于 `res/mipmap-*`；自适应前景保留底图完整构图，缩放到 108dp 画布中央的 72dp 区域，由系统应用遮罩。通知小图标为 `res/drawable/ic_notification.xml` 的单色 A。
+- Android 应用图标和圆形图标统一声明为 `@mipmap/ic_aliya`（`res/mipmap-anydpi-v26/ic_aliya.xml`），不再沿用旧占位图标的 `ic_launcher` 入口；自适应前景位于 `res/mipmap-*`，保留底图完整构图，缩放到 108dp 画布中央的 72dp 区域，由系统应用遮罩。通知大图标从 Manifest 的应用图标读取，通知头部的应用图标由系统显示；状态栏小图标仍为 `res/drawable/ic_notification.xml` 的单色 A。覆盖升级后若厂商通知栏仍显示旧图标，先从通知「退出」再重新开启悬浮模式；仍未刷新时重启设备，无需卸载或清除应用数据。
 - 四个 Web 页面共用 `redesign/ui/assets/icon.png`。
+
+OriginOS 6 实机验证：安装包已使用新图标时，覆盖安装、刷新内存缓存并重建通知后，左侧仍可能显示旧占位图标；本次重启手机后，测试者人工确认左侧已更换为新图标。验证过程未卸载应用或清除应用数据。
 
 ## Windows（Tauri）
 

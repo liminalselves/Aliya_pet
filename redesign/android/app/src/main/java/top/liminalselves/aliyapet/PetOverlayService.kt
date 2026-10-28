@@ -240,10 +240,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
     }
 
-    /** 应用图标位图：用于通知展开态，避免和桌面图标长得不一样。 */
-    private fun appIconBitmap(): Bitmap? {
+    /** 从 Manifest 读取当前应用图标，与系统通知头部、桌面图标共用入口。 */
+    private fun appIconBitmap(): Bitmap {
         // 自适应图标在 API 26+ 是 XML，只能先把 drawable 画到位图上。
-        val drawable = ContextCompat.getDrawable(this, R.mipmap.ic_launcher) ?: return null
+        val drawable = packageManager.getApplicationIcon(applicationInfo)
         val size = 192
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         drawable.setBounds(0, 0, size, size)
