@@ -9,6 +9,7 @@ import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
+import { fitBubble } from './dialogue/bubble-fit';
 import { AndroidDialogueBubble } from './dialogue/android-bubble';
 import { HitAreas } from './interaction/hit-areas';
 import { showStartupNotice } from './startup-notice';
@@ -223,16 +224,16 @@ export class PetApp {
   private static readonly _windowMarginRatio = 1.18;
 
   /** 悬浮窗静态头顶所需的气泡空间（CSS px，含画布已有顶部余量，≈3 行气泡 + 间隙）。 */
-  private static readonly _WRAP_BUBBLE_BAND = 88;
+  private static readonly _WRAP_BUBBLE_BAND = 116;
 
   /** 旧 Android 壳保留 DOM 气泡路径；新壳不再为气泡扩大人物外窗。 */
   private _hasNativeBubble(): boolean {
     return this._wrapWindow && platform === 'android' && typeof androidShell()?.setDialogueBubble === 'function';
   }
 
-  /** 气泡适配缓存：文本/视口变化时重算等比缩放（见 _positionBubble）。 */
+  /** 气泡适配缓存：文本/视口变化时重算字号与换行（见 _positionBubble）。 */
   private _bubbleFitKey = '';
-  private _bubbleScaledH = 0;
+  private _bubbleFitH = 0;
 
   /** 鼠标穿透掩码列数（行数按窗口纵横比推导）。 */
   /** 原生穿透掩码列数：48 列时一格 ≈ 8 CSS px，头顶发梢旁的整格透明区也会被吞点击。 */
@@ -2105,7 +2106,7 @@ export class PetApp {
   /**
    * 气泡锚定角色头部（可见才算，~30fps 几个 DOM 读写的成本可忽略）：
    * 原生独立窗口不受人物画布裁切，并使用实际渲染头顶（含缩放补间）。
-   * 旧壳 DOM 路径在静态头顶上方共留 88px，动作抬头时钳在人物窗口顶边内。
+   * 旧壳 DOM 路径在静态头顶上方共留 116px（20px 字号的三行），动作抬头时钳在人物窗口顶边内。
    */
   private _positionBubble(): void {
     const bubble = this._bubble;
@@ -2141,42 +2142,20 @@ export class PetApp {
       headTopCss = vpH / 2 - minY * natural - (b.maxY - minY) * s;
     }
     const el = bubble.el;
-    // 小窗口适配：气泡按视口等比缩小（transform scale 保形缩放，
-    // 不重排成窄长列），避免小缩放下气泡占满窗口盖住角色/被窗口裁切
+    // 小窗口适配：只收字号、必要时按可用宽度换行（不整体 transform 缩放，
+    // 否则 14px 的字在小窗口会被缩到看不清）。见 dialogue/bubble-fit.ts。
     const fitKey = `${el.textContent}|${Math.round(vpW)}x${Math.round(vpH)}`;
     if (fitKey !== this._bubbleFitKey) {
       this._bubbleFitKey = fitKey;
-      // 先量自然尺寸：width:max-content 摆脱 fit-content 被包含块宽度截断
-      // （否则小窗口量出的是视口宽、多行高，缩放系数失真）
-      el.style.transform = 'none';
-      el.style.width = 'max-content';
-      el.style.maxWidth = this._wrapWindow ? '260px' : '300px';
-      const w0 = el.offsetWidth || 1;
-      const h0 = el.offsetHeight || 1;
-      let k = Math.min(1, (vpW * 0.94) / w0, (vpH * 0.62) / h0);
-      k = Math.min(Math.max(k, 0.3), 1);
-      if (k < 0.999) {
-        // 布局盒比窗口宽时 margin auto 居中失效（Blink 把 auto 边距钳为 0，
-        // 盒子左对齐、缩放中心偏到窗口右侧 → 气泡右半边被窗口裁掉）。
-        // 改用 left:50% + translateX(-50%) 强制居中（不依赖 auto 边距），
-        // 再在变换里叠加缩放；origin 取顶部，top 按缩放后高度定位才精确。
-        el.style.margin = '0';
-        el.style.left = '50%';
-        el.style.right = 'auto';
-        el.style.width = `${w0}px`;
-        el.style.maxWidth = 'none';
-        el.style.transformOrigin = '50% 0%';
-        el.style.transform = `translateX(-50%) scale(${k})`;
-      } else {
-        el.style.margin = '';
-        el.style.left = '';
-        el.style.right = '';
-        el.style.maxWidth = '';
-      }
-      this._bubbleScaledH = h0 * k;
+      const fit = fitBubble(el, {
+        viewportWidth: vpW,
+        viewportHeight: vpH,
+        maxWidth: this._wrapWindow ? 260 : 300,
+      });
+      this._bubbleFitH = fit.height;
     }
     // 舞台上方的透明外窗也可以容纳气泡（固定容量外窗），只钳在窗口顶边内。
-    const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headTopCss - this._bubbleScaledH - 6);
+    const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headTopCss - this._bubbleFitH - 6);
     el.style.top = `${Math.round(top)}px`;
   }
 

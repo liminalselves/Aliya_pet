@@ -1,5 +1,6 @@
 import '../pet.css';
 import { DialogueBubble } from './bubble';
+import { fitBubble } from './bubble-fit';
 
 interface BubblePage {
   text?: string;
@@ -19,23 +20,19 @@ export function createBubbleRenderer(bubble: DialogueBubble) {
       bubble.showPage(page.text);
       text = page.text;
     }
-    // 与人物窗口原有的小窗适配算法一致，保留原来的缩放及换行宽度。
-    el.style.width = 'max-content';
-    el.style.maxWidth = '260px';
-    const width = el.offsetWidth || 1, height = el.offsetHeight || 1;
-    const scale = Math.min(1, Math.max(0.3, Math.min(
-      (page.viewportWidth ?? 300) * 0.94 / width,
-      (page.viewportHeight ?? 800) * 0.62 / height,
-    )));
-    // 四周只保留原版弹入/淡出的位移与旋转尾巴所需空间。
+    // 与人物窗口同一套小窗适配：只收字号 + 按可用宽度换行，不做整体缩放。
+    const fit = fitBubble(el, {
+      viewportWidth: page.viewportWidth ?? 300,
+      viewportHeight: page.viewportHeight ?? 800,
+      maxWidth: 260,
+    });
+    // 四周只保留弹入/淡出的位移与旋转尾巴所需空间；窗口宽度=气泡宽+8，水平居中由 4px 边距保证。
     el.style.margin = '0';
-    el.style.left = `${4 + width * scale / 2}px`;
+    el.style.left = '4px';
     el.style.right = 'auto';
     el.style.top = '4px';
-    el.style.transformOrigin = '50% 0';
-    el.style.transform = `translateX(-50%) scale(${scale})`;
-    return { width: Math.ceil(width * scale) + 8, height: Math.ceil((height + 8) * scale) + 8,
-      bottom: 4 + height * scale };
+    return { width: Math.ceil(fit.width) + 8, height: Math.ceil(fit.height) + 8,
+      bottom: 4 + fit.height };
   };
 }
 

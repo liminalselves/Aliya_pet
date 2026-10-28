@@ -524,7 +524,10 @@ for (const platform of ['tauri', 'android', 'web']) {
 }
 
 test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大小和三行气泡空间不变', () => {
-  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => null } });
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => null },
+    './dialogue/bubble-fit': load('dialogue/bubble-fit'),
+  });
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
@@ -538,11 +541,11 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
     const oldBottom = app._originCssY - (bounds.minY + bounds.maxY) / 2 * contentScale + baseH / 2;
     const headY = app._originCssY - bounds.maxY * contentScale;
     const r = app._fixedWindowRect();
-    assert.ok(r.h < baseH + 88 - 1, '必须缩小实际外窗，而不是仅修改气泡样式');
+    assert.ok(r.h < baseH + 116 - 1, '必须缩小实际外窗，而不是仅修改气泡样式');
     assert.ok(r.h >= baseH, '不裁减人物动作区域');
     near(r.y + r.h, oldBottom);
     near(r.w, baseH * 0.5 / 1.1);
-    assert.ok(headY - r.y >= 88 - 1e-6, '保留三行气泡所需高度、头部间隙和顶部边距');
+    assert.ok(headY - r.y >= 116 - 1e-6, '保留三行气泡所需高度、头部间隙和顶部边距');
     app._appliedRectX = r.x; app._appliedRectY = r.y;
     const t = app._modelViewportTransform();
     near(t.scale, contentScale * dpr);
@@ -556,8 +559,8 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
     app._positionBubble();
     const top = Number.parseFloat(el.style.top);
     assert.ok(top >= 4);
-    assert.ok(top + app._bubbleScaledH <= r.h, '多行气泡不超出窗口');
-    assert.ok(top + app._bubbleScaledH + 6 <= headY - r.y + 0.51, '不挤占人物头部');
+    assert.ok(top + app._bubbleFitH <= r.h, '多行气泡不超出窗口');
+    assert.ok(top + app._bubbleFitH + 6 <= headY - r.y + 0.51, '不挤占人物头部');
     const fixed = app._fixedWindowRect();
     app._bubble.isActive = false;
     assert.deepEqual(app._fixedWindowRect(), fixed, '气泡显隐不反复调整窗口表面');
@@ -627,17 +630,22 @@ test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消�
 
 test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
   const classes = new Set();
-  const el = { id: '', style: {}, textContent: '', offsetWidth: 200, offsetHeight: 60,
+  const el = { id: '', style: {}, textContent: '', offsetHeight: 60,
+    // 适配会把换行宽度写回 style.width，这里让 offsetWidth 跟随它（真浏览器同样如此）。
+    get offsetWidth() { return Number.parseFloat(this.style.width) || 200; },
     classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
   const { DialogueBubble } = load('dialogue/bubble', {}, { document: { createElement: () => el } });
   const bubble = new DialogueBubble({ appendChild() {} });
-  const { createBubbleRenderer } = load('dialogue/bubble-window');
+  const { createBubbleRenderer } = load('dialogue/bubble-window', {
+    './bubble-fit': load('dialogue/bubble-fit'),
+  });
   const render = createBubbleRenderer(bubble);
   const size = render({ text: '<纯文本>\n第二行', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(el.textContent, '<纯文本>\n第二行');
   assert.equal(classes.has('turn'), false, '首次显示保留原来的弹入');
-  assert.equal(size.width, 102, '按原窗口宽度缩放，不重设排版字号');
-  assert.equal(size.bottom, 32.2, '定位保持原来的气泡底边与头顶间距');
+  // 窗口 100px 时可用宽度 94px：气泡按可用宽换行（不再整体缩放），窗口宽 = 气泡宽 + 8。
+  assert.equal(size.width, 102, '窗口随气泡实际宽度收紧');
+  assert.equal(size.bottom, 64, '气泡底边取未缩放高度，不再按缩放系数回算');
   render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(classes.has('turn'), true, '翻页仍走原 turn 样式');
   render({ closing: true });

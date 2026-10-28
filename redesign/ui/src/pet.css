@@ -54,7 +54,9 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
   box-sizing: border-box;
   width: fit-content;
-  max-width: min(82%, 300px);
+  /* 与 JS 适配（dialogue/bubble-fit.ts，94% 可用宽）保持一致，避免 CSS 先于脚本
+     把本来能放下的台词折成两行。 */
+  max-width: min(94%, 300px);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   padding: 9px 15px 10px;
@@ -63,7 +65,8 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   background: var(--al-bg-2);
   color: var(--al-text-1);
   font-family: var(--al-font-serif);
-  font-size: 14px;
+  /* 台词字号下限 20px（dialogue/bubble-fit.ts 的 minFont）：小窗只换行不缩字。 */
+  font-size: 20px;
   font-weight: 400;
   line-height: 1.6;
   text-align: left;
@@ -112,9 +115,10 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
    translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
 body.overlay-wrap #dialogue-bubble {
   top: 6px;
-  max-width: min(260px, 92%);
+  max-width: min(260px, 94%);
   transform: translateZ(0);
-  max-height: 76px;
+  /* 20px 字号下 3 行：3×32（line-height 1.6）+ 上下内边距 19 + 边框 2 = 117 */
+  max-height: 117px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
