@@ -41,7 +41,8 @@ body[data-snap-edge~="top"]::after { border-top-color: var(--al-accent-emphasis)
 body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emphasis); }
 @keyframes snap-confirm { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
 
-/* 台词气泡：角色头顶居中，不拦截指针。
+/* 台词气泡：沿用 app 记录页的暖石墨台词卡片、常规字重与左对齐，保留头顶尾巴。
+   不透明底色让桌面背景不透字，尾巴与主体叠合处也不会因透明度叠加出现色差。
    居中用 left:0;right:0+margin auto——left:50% 会把可用宽度压成窗口右半，
    max-content 下气泡被迫窄列换行。text-size-adjust 关掉 WebView 字体放大。 */
 #dialogue-bubble {
@@ -58,21 +59,21 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   text-size-adjust: 100%;
   padding: 9px 15px 10px;
   border-radius: var(--al-r-l);
-  border: 1px solid var(--al-line-strong);
-  background: var(--al-surface-card-strong);
+  border: 1px solid var(--al-line);
+  background: var(--al-bg-2);
   color: var(--al-text-1);
   font-family: var(--al-font-serif);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.6;
-  text-align: center;
-  letter-spacing: 0.01em;
+  text-align: left;
+  letter-spacing: normal;
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
   z-index: 10;
-  /* display:none→block 会重放该动画，即每次翻页/新台词弹入 */
-  animation: bubble-pop var(--al-t-med) var(--al-ease);
+  /* 与 app 面板一致：轻上浮淡入，不缩放文字；翻页只淡入。 */
+  animation: bubble-in var(--al-t-med) var(--al-ease);
 }
 
 /* 指向角色的小尾巴 */
@@ -85,14 +86,14 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   height: 10px;
   margin-left: -5px;
   background: inherit;
-  border-right: 1px solid var(--al-line-strong);
-  border-bottom: 1px solid var(--al-line-strong);
+  border-right: 1px solid var(--al-line);
+  border-bottom: 1px solid var(--al-line);
   transform: rotate(45deg);
 }
 
-/* scale 走独立属性，不碰 transform（overlay-wrap 的 translateZ 合成层提示不被覆盖） */
-@keyframes bubble-pop {
-  from { opacity: 0; scale: 0.92; translate: 0 4px; }
+/* translate 走独立属性，不覆盖 JS 的居中/小窗缩放与 overlay-wrap 的合成层提示。 */
+@keyframes bubble-in {
+  from { opacity: 0; translate: 0 4px; }
 }
 
 /* 翻页/被新台词打断：气泡不重弹，只让文字淡入（opacity 走独立动画，不动 transform/scale） */
@@ -102,9 +103,8 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
 /* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切；出场加速。 */
 #dialogue-bubble.closing {
   opacity: 0;
-  scale: 0.95;
   translate: 0 3px;
-  transition: opacity var(--al-t-out) var(--al-ease-in), scale var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
+  transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
 /* 安卓悬浮窗内容贴合模式：头顶气泡空间复用画布顶部余量（见 pet-app _WRAP_BUBBLE_BAND），

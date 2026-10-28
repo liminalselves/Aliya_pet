@@ -50,5 +50,5 @@ if (typeof document !== 'undefined') {
   };
   host.__renderDialogueBubble = render;
   // 先加载原字体，再测量文字，避免首次显示发生字体替换与气泡尺寸跳动。
-  void document.fonts.load('500 14px "Aliya Serif"').then(() => host.BubbleHost?.ready());
+  void document.fonts.load('400 14px "Aliya Serif"').then(() => host.BubbleHost?.ready());
 }
