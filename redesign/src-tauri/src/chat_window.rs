@@ -6,7 +6,7 @@
 //!
 //! 几何契约（物理像素）：
 //! - chat 永远吸附在 pet 正下方、水平居中，像萝莉斯桌宠那样是模型的延伸；
-//!   卡片视觉宽 = pet 窗宽 × 1.18（按角色当前显示大小折算，钳 150–560），窄于 380 时
+//!   卡片视觉宽 = pet 窗宽 × 1.18（按角色当前显示大小折算，钳 250–560，下限≈40% 人物尺寸），窄于 380 时
 //!   按 380 排版、整卡 CSS transform 等比缩小，脚线偏移同比；
 //! - 外窗尺寸恒定（CHAT_WINDOW_W/H_CSS），不随内容、也不随 pet 缩放 resize：
 //!   WebView2 resize/set_zoom 时位图滞后于窗框（残影/黑块/闪烁，单步也无法避免）。
@@ -157,7 +157,9 @@ pub struct WorkRect {
 
 /// 卡片视觉宽与 pet 窗宽之比（pet 前端折算后上报，这里只作未上报时的回退）。
 pub const CHAT_WIDTH_RATIO: f64 = 1.18;
-pub const CHAT_MIN_W_CSS: f64 = 150.0;
+/// 卡片最小视觉宽（CSS px）：约等于人物缩到 40% 时的卡片宽（≈0.4 × 自然窗宽 × 1.18）。
+/// 再小整卡就要继续等比缩，正文（13px × zoom）会掉到 8.6px 以下而看不清。
+pub const CHAT_MIN_W_CSS: f64 = 250.0;
 pub const CHAT_MAX_W_CSS: f64 = 560.0;
 /// 卡片最小排版宽（CSS px）：比它窄时按它排版并整卡等比缩小，小模型旁的输入框、
 /// 按钮、字号随模型一起变小，不挤压排版。
@@ -600,9 +602,12 @@ mod tests {
     fn layout_keeps_wide_cards_unscaled_and_scales_narrow_ones() {
         // ≥380 按视觉宽排版不缩放；窄于 380 按 380 排版整卡缩小；超出区间钳住
         assert_eq!(chat_layout_for_width(472.0), ChatLayout { zoom: 1.0, width: 472.0 });
-        assert_eq!(chat_layout_for_width(190.0), ChatLayout { zoom: 0.5, width: 380.0 });
+        // 40% 人物尺寸（≈250px）是下限：再小就停在 250px / zoom 0.658，正文约 8.6px
+        assert_eq!(chat_layout_for_width(250.0), ChatLayout { zoom: 0.658, width: 380.0 });
+        assert_eq!(chat_layout_for_width(190.0), ChatLayout { zoom: 0.658, width: 380.0 });
         assert_eq!(chat_layout_for_width(900.0).width, CHAT_MAX_W_CSS);
         let tiny = chat_layout_for_width(20.0);
+        assert_eq!(tiny.width, 380.0);
         assert!((tiny.width * tiny.zoom - CHAT_MIN_W_CSS).abs() < 1.0);
         // 最大卡片放得进固定外窗
         assert!(CHAT_MAX_W_CSS <= CHAT_WINDOW_W_CSS);
