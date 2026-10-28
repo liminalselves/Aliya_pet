@@ -17,6 +17,15 @@
     {"id":"aliya_time_deep_night_012","text":"宇宙也花了很久呢","weight":1.0,"minRepeatDays":7,"tags":["rest","science_fiction"],"enabled":true},
     {"id":"aliya_time_deep_night_013","text":"不想睡也先放松一下","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
     {"id":"aliya_time_deep_night_014","text":"夜里的时间走得真快","weight":1.0,"minRepeatDays":7,"tags":["rest","daily"],"enabled":true},
-    {"id":"aliya_time_deep_night_015","text":"今天先到这里也可以","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true}
+    {"id":"aliya_time_deep_night_015","text":"今天先到这里也可以","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
+    {"id":"aliya_time_deep_night_016","text":"凌晨的世界只剩我们","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
+    {"id":"aliya_time_deep_night_017","text":"再不睡就要看到日出了","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
+    {"id":"aliya_time_deep_night_018","text":"眼睛一直在提醒你吧","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
+    {"id":"aliya_time_deep_night_019","text":"今天的你已经足够","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_deep_night_020","text":"梦里的航线我来开","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","playful"],"enabled":true},
+    {"id":"aliya_time_deep_night_021","text":"关了屏幕就不困啦","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
+    {"id":"aliya_time_deep_night_022","text":"不睡也别硬撑着","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
+    {"id":"aliya_time_deep_night_023","text":"三点后的想法不算数","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
+    {"id":"aliya_time_deep_night_024","text":"现在睡，我数三下","weight":1.0,"minRepeatDays":7,"tags":["rest","playful"],"enabled":true}
   ]
 }

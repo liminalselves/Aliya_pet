@@ -65,7 +65,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 | 组件 | 版本 / 说明 |
 | --- | --- |
 | Node.js | Vite 8 要求 `^20.19.0 || >=22.12.0`；推荐 Node.js 24 LTS |
-| Rust + cargo | Windows 壳（Tauri） |
+| Rust + cargo | Windows 壳（Tauri），使用 MSVC 工具链 |
+| Visual Studio Build Tools 2022 | Windows 构建：安装「使用 C++ 的桌面开发」工作负载（含 MSVC 与 Windows SDK） |
+| WebView2 Runtime | Windows 运行环境；未安装时需安装 Microsoft Edge WebView2 Evergreen Runtime |
 | Android SDK | platform 36 + JDK 17/21（构建 APK） |
 | Live2D Cubism Web SDK | 5-r.5，已随仓库入库 |
 
@@ -73,7 +75,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 
 ### Windows
 
-```bash
+以下命令使用 **PowerShell**，从仓库根目录开始执行。
+
+```powershell
 cd redesign
 npm ci                     # 安装 Tauri CLI（首次克隆或依赖更新后）
 cd ui
@@ -85,16 +89,20 @@ npm run dev
 # 临时连接指定实例：
 npm run dev -- http://127.0.0.1:3000
 # 如需 CDP 调试端口：
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
+npm run dev
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 ```
 
-打包安装版：`cd redesign && npm run build`。Tauri 会先自动构建共享前端，
+打包安装版：在上述 `redesign/` 目录运行 `npm run build`。Tauri 会先自动构建共享前端，
 默认连接 `https://misskey.liminalselves.top`（详见 `docs/BUILD.md`，SDK 已随仓库入库）。
 产物：`redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<版本>_x64-setup.exe`（另有同版本 MSI）。两种安装器均为简体中文，NSIS 安装器与卸载器使用 Aliya 图标。
 
 ### Android
 
-```bash
+以下命令使用 **PowerShell**，从仓库根目录开始执行。
+
+```powershell
 # 1. 安装前端依赖并构建共享前端（产物进入 redesign/ui/dist）
 cd redesign/ui
 npm ci
@@ -102,13 +110,15 @@ npm run build
 
 # 2. 构建 APK
 cd ../android
-gradlew.bat assembleDebug            # 或 assembleRelease
+.\gradlew.bat assembleDebug            # 或 assembleRelease
 
 # 3. 安装到设备
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先** `ui:build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
+在 **Bash（Linux / macOS / Git Bash）** 中，前端构建和安装命令不变；构建 APK 时，在 `redesign/android/` 下先执行 `chmod +x gradlew`，再用 `./gradlew assembleDebug`（或 `./gradlew assembleRelease`）替代 `.\gradlew.bat` 命令。
+
+> 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先**在 `redesign/ui/` 运行 `npm run build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
 
 ## 项目结构
 
@@ -167,9 +177,24 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 
 ## 许可与声明
 
-- 本仓库当前**未附带开源许可证文件**；使用与分发前请先与作者确认授权范围。
-- **Live2D Cubism SDK**（Core / Framework）随仓库提供，使用与分发须遵守 `third_party/cubism-web-sdk/` 内的许可及声明。
-- 本程序为**二创桌宠**，角色 Aliya 原创出自《彼方的她》（Liminal Selves），版权归原作者所有。
+### 免责声明
+
+本程序（Aliya Pet）与以下列出的所有游戏、开发者、发行商、个人、团体、公司均无任何关系、联系：
+
+- 游戏《彼方的她-Aliya》（Aliya: Timelink）：[Steam 商店](https://store.steampowered.com/app/2704110/)
+- 开发者【瞳电游工作室】（TDGame Studio）：[B站官号](https://space.bilibili.com/1104337773)、[Steam](https://store.steampowered.com/developer/tdgame)
+- 发行商【AnotherIndie】：[官网](https://anotherindie.com.cn/)、[Steam](https://store.steampowered.com/publisher/AnotherIndie)
+
+本程序为**二创桌宠**。角色 Aliya 及其名称、形象均原创于《彼方的她-Aliya》（Aliya: Timelink），相关版权归游戏开发者【瞳电游工作室】（TDGame Studio）所有，本程序不享有其中任何权利。
+
+本程序为非盈利性质的粉丝向项目，非官方作品。
+
+### 许可
+
+- **程序代码**：**保留所有权利**。源码公开仅供审阅与协作，未授予使用、修改或再分发的许可；版权归 **liminalselves** 组织所有。
+- **美术资产**（`redesign/ui/assets/` 下除第三方文件外的部分：Live2D 模型文件、贴图、动作与表情数据、背景、图标、对话文本）：**保留所有权利**。允许在非商业前提下随本程序原样分发并注明出处；禁止商用，禁止拆分提取模型、贴图或动作单独再分发。
+- **角色 IP**：角色 Aliya 的形象与名称权利归原作方，上述美术条款只在作者有权处分的范围内有效，不构成对角色形象的使用授权。
+- **第三方组件**（Live2D Cubism SDK 与 Core、Cubism WebGL 着色器、Noto Serif SC 字体）：适用其各自许可，不受上述条款约束，清单与要点见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## English
 
@@ -222,7 +247,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 | Component | Version / Notes |
 | --- | --- |
 | Node.js | Vite 8 requires `^20.19.0 || >=22.12.0`; Node.js 24 LTS recommended |
-| Rust + cargo | Windows shell (Tauri) |
+| Rust + cargo | Windows shell (Tauri), using the MSVC toolchain |
+| Visual Studio Build Tools 2022 | Windows build: install the “Desktop development with C++” workload (including MSVC and the Windows SDK) |
+| WebView2 Runtime | Windows runtime; install Microsoft Edge WebView2 Evergreen Runtime if missing |
 | Android SDK | platform 36 + JDK 17/21 (APK build) |
 | Live2D Cubism Web SDK | 5-r.5, committed to the repo |
 
@@ -230,7 +257,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 
 #### Windows
 
-```bash
+Use **PowerShell**, starting from the repository root.
+
+```powershell
 cd redesign
 npm ci                     # Install the Tauri CLI (first clone or dependency update)
 cd ui
@@ -242,15 +271,19 @@ npm run dev
 # Temporarily target a specific instance:
 npm run dev -- http://127.0.0.1:3000
 # With a CDP debug port:
-WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 npm run dev
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
+npm run dev
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 ```
 
-Release build: `cd redesign && npm run build`. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`; the SDK is committed to the repo).
+Release build: run `npm run build` from the `redesign/` directory reached above. Tauri builds the shared frontend first and connects to `https://misskey.liminalselves.top` by default (see `docs/BUILD.md`; the SDK is committed to the repo).
 Artifact: `redesign/src-tauri/target/release/bundle/nsis/Aliya Pet_<version>_x64-setup.exe` (plus an MSI of the same version). Both installers use Simplified Chinese; the NSIS installer and uninstaller use the Aliya icon.
 
 #### Android
 
-```bash
+Use **PowerShell**, starting from the repository root.
+
+```powershell
 # 1. Install frontend dependencies and build the shared UI
 cd redesign/ui
 npm ci
@@ -258,13 +291,15 @@ npm run build
 
 # 2. Build the APK
 cd ../android
-gradlew.bat assembleDebug            # or assembleRelease
+.\gradlew.bat assembleDebug            # or assembleRelease
 
 # 3. Install on a device
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `ui:build` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
+In **Bash (Linux / macOS / Git Bash)**, the frontend build and installation commands are unchanged. To build the APK, run `chmod +x gradlew` in `redesign/android/`, then use `./gradlew assembleDebug` (or `./gradlew assembleRelease`) instead of the `.\gradlew.bat` command.
+
+> In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `npm run build` in `redesign/ui/` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
 
 ### Project Structure
 
@@ -323,6 +358,21 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 
 ### License & Notices
 
-- This repository currently ships **without an open-source license file**; please confirm the scope of authorization with the author before use or distribution.
-- The **Live2D Cubism SDK** (Core / Framework) is included in this repository. Use and redistribution are subject to the licenses and notices under `third_party/cubism-web-sdk/`.
-- This program is a **fan-made (derivative) desktop pet**. The character Aliya originates from *Liminal Selves* (《彼方的她》); all rights belong to the original creators.
+#### Disclaimer
+
+This program (Aliya Pet) has no relationship or connection with any of the games, developers, publishers, individuals, groups, or companies listed below:
+
+- The game *Aliya: Timelink* (《彼方的她-Aliya》): [Steam](https://store.steampowered.com/app/2704110/)
+- The developer 【瞳电游工作室】(TDGame Studio): [Bilibili](https://space.bilibili.com/1104337773), [Steam](https://store.steampowered.com/developer/tdgame)
+- The publisher 【AnotherIndie】: [Website](https://anotherindie.com.cn/), [Steam](https://store.steampowered.com/publisher/AnotherIndie)
+
+This program is a **fan-made (derivative) desktop pet**. The character Aliya, together with her name and likeness, originates from *Aliya: Timelink* (《彼方的她-Aliya》); all related copyrights are owned by the developer 【瞳电游工作室】(TDGame Studio), and this program claims no rights to them.
+
+This program is a non-commercial fan project and is not an official product.
+
+#### License
+
+- **Source code**: **all rights reserved**. The source is published for review and collaboration only; no permission to use, modify or redistribute it is granted. Copyright in the code is held by the **liminalselves** organization.
+- **Art assets** (everything under `redesign/ui/assets/` except the third-party files below — Live2D model files, textures, motions and expression data, backgrounds, icons, dialogue text): **all rights reserved**. Non-commercial redistribution of the program as a whole with attribution is allowed; commercial use, and extracting or redistributing the model, textures or motions separately, are not.
+- **Character IP**: rights in the character Aliya's likeness and name belong to the original rights holders. The asset terms above apply only to what the author is entitled to license, and grant no rights to the character itself.
+- **Third-party components** (Live2D Cubism SDK and Core, Cubism WebGL shaders, Noto Serif SC font): governed by their own licenses and not by the terms above; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

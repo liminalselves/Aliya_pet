@@ -9,6 +9,8 @@ import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
+import { fitBubble } from './dialogue/bubble-fit';
+import { AndroidDialogueBubble } from './dialogue/android-bubble';
 import { HitAreas } from './interaction/hit-areas';
 import { showStartupNotice } from './startup-notice';
 import { InteractionService } from './interaction/interaction';
@@ -18,10 +20,14 @@ import { MoodEngine } from './emotion';
 import { PetAI } from './pet-ai';
 import {
   PetSettings,
+  DEFAULT_SCALE_PERCENT,
   clampScale,
+  hasSavedSettings,
   loadSettings,
   nextSizePreset,
+  percentToScale,
   saveSettings,
+  scaleRangeFor,
 } from './settings';
 import {
   platform,
@@ -62,6 +68,7 @@ export class PetApp {
   private _shellSyncNotice: HTMLElement | null = null;
   private _hitAreas = new HitAreas();
   private _bubble: DialogueBubble = null;
+  private _androidBubble: AndroidDialogueBubble | null = null;
   private _interaction: InteractionService = null;
   private _behavior: BehaviorService = null;
   private _moodEngine: MoodEngine = null;
@@ -70,6 +77,7 @@ export class PetApp {
   private _chatLauncher: HTMLElement | null = null;
   /** 聊天入口当前 bottom 缓存（CSS px）：逐帧校正，值不变不写 style。 */
   private _launcherBottomCss = 0;
+  private _launcherLeftCss = 0;
   /** 聊天入口当前缩放系数缓存（写入 --launcher-k）。 */
   private _launcherScaleK = 1;
   private _chat: ChatController | null = null;
@@ -134,11 +142,27 @@ export class PetApp {
   private _snapHintTimer: ReturnType<typeof setTimeout> | null = null;
   private _globalMouse: { x: number; y: number } | null = null;
   private _dpr = 1;
-  /** Windows 缩放补间状态（_runScaleAnimation）；target 随设置实时更新。 */
-  private _scaleAnim: { target: number; running: boolean } | null = null;
-  private _scaleAnimDone = 0;
+  /**
+   * Windows 固定容量外窗：外窗按显示器允许的最大比例一次开足（启动、换显示器时才改），
+   * 角色舞台（#stage）只占窗内当前比例的自然矩形，透明区域由命中掩码穿透。
+   * WebView2 改窗口尺寸时旧位图按新左上角原样显示一两帧，原点移动必然错位或闪空，
+   * 因此缩放全程不改原生窗口。
+   */
+  private _deskCapacityReady = false;
+  /** 静止时舞台代表的比例（缩放补间的起点）。 */
+  private _deskRestScale = 0;
+  private _stageKey = '';
+  /**
+   * 画内缩放补间（CSS px / 模型单位）：舞台临时铺满外窗，角色以静态脚底为锚逐帧逼近 target；
+   * input=最近一次设置输入时刻，静置后舞台收回目标比例的自然矩形。
+   */
+  private _deskScale: { shown: number; target: number; last: number; input: number } | null = null;
   /** 缩放缓动时间常数（ms）：指数逼近，连续拖动滑杆时跟手、松手后柔和落定。 */
   private static readonly _scaleEaseMs = 55;
+  /** 输入静置多久后舞台收回自然矩形（ms）。 */
+  private static readonly _deskScaleSettleMs = 300;
+  /** 命中掩码覆盖的窗口内矩形（CSS px）。 */
+  private _hitMaskRect = { left: 0, top: 0, width: 0, height: 0 };
   private _chatLayoutWidth = 0;
   /** Android 主界面聊天背景层（悬浮窗不创建）。 */
   private _chatBackground: ChatBackgroundLayer | null = null;
@@ -199,12 +223,17 @@ export class PetApp {
   /** 窗口尺寸余量：窗口 = 675×scale × 1.18（对齐 Flutter ComputeTargetPixelSize）。 */
   private static readonly _windowMarginRatio = 1.18;
 
-  /** 悬浮窗顶部永久预留的气泡带高度（CSS px，≈3 行气泡 + 间隙）。 */
-  private static readonly _WRAP_BUBBLE_BAND = 88;
+  /** 悬浮窗静态头顶所需的气泡空间（CSS px，含画布已有顶部余量，≈3 行气泡 + 间隙）。 */
+  private static readonly _WRAP_BUBBLE_BAND = 116;
 
-  /** 气泡适配缓存：文本/视口变化时重算等比缩放（见 _positionBubble）。 */
+  /** 旧 Android 壳保留 DOM 气泡路径；新壳不再为气泡扩大人物外窗。 */
+  private _hasNativeBubble(): boolean {
+    return this._wrapWindow && platform === 'android' && typeof androidShell()?.setDialogueBubble === 'function';
+  }
+
+  /** 气泡适配缓存：文本/视口变化时重算字号与换行（见 _positionBubble）。 */
   private _bubbleFitKey = '';
-  private _bubbleScaledH = 0;
+  private _bubbleFitH = 0;
 
   /** 鼠标穿透掩码列数（行数按窗口纵横比推导）。 */
   /** 原生穿透掩码列数：48 列时一格 ≈ 8 CSS px，头顶发梢旁的整格透明区也会被吞点击。 */
@@ -231,8 +260,10 @@ export class PetApp {
 
     // 悬浮窗：窗口逐帧包裹角色剪影，透明区域不挡下层触摸（真穿透）。
     this._wrapWindow = isAndroidOverlay();
-    // 气泡带样式钩子（顶部预留带 + 行数钳制，见 pet.css body.overlay-wrap）
+    // 旧壳 DOM 气泡的行数钳制；支持独立窗口时只借用它的样式与会话状态。
     if (this._wrapWindow) document.body.classList.add('overlay-wrap');
+    // 页面重载时也清掉上一次 JS 会话留下的原生气泡。
+    if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
 
     this._gl = this._canvas.getContext('webgl2', {
@@ -354,7 +385,13 @@ export class PetApp {
     // 逻辑层装配
     await Promise.all([this._dialogue.loadAll(), this._hitAreas.load()]);
     const stage = document.getElementById('stage');
+    this._androidBubble?.hide();
     this._bubble = new DialogueBubble(stage);
+    const shell = this._hasNativeBubble() ? androidShell() : null;
+    this._androidBubble = shell
+      ? new AndroidDialogueBubble(shell.setDialogueBubble.bind(shell)) : null;
+    // 保留 DOM 会话/分页状态与 CSS 样式来源，但不在人物窗口里绘制第二份气泡。
+    if (this._androidBubble) this._bubble.el.style.visibility = 'hidden';
     this._interaction = new InteractionService({
       hitAreas: this._hitAreas,
       getTarget: () => (this._model?.isReady() ? this._model : null),
@@ -414,6 +451,12 @@ export class PetApp {
         this._originCssX = this._screenW * 0.9;
         this._originCssY = this._screenH * 0.45;
       }
+    }
+
+    // 首次启动：默认缩放取设置页滑杆的 40%，已有存档则尊重用户设置
+    if (!hasSavedSettings()) {
+      const defaultScale = await this._defaultScale();
+      if (defaultScale != null) this._settings.scale = defaultScale;
     }
 
     // 启动时全量应用设置（含窗口位置/缩放/置顶恢复）
@@ -557,6 +600,42 @@ export class PetApp {
     }
   }
 
+  /**
+   * 首次启动（无本地存档）的默认缩放：换算成设置页滑杆的 40%。
+   * 范围按工作区逻辑尺寸推导（与设置页同一公式）；取不到屏幕尺寸时返回 null。
+   */
+  private async _defaultScale(): Promise<number | null> {
+    let screenW = 0;
+    let screenH = 0;
+    if (platform === 'android') {
+      try {
+        const m = JSON.parse(androidShell()?.getMetrics() ?? '') as {
+          screenW: number;
+          screenH: number;
+        };
+        screenW = m.screenW;
+        screenH = m.screenH - 88; // 安卓底部系统栏
+      } catch {
+        return null;
+      }
+    } else if (platform === 'tauri') {
+      try {
+        const m = await import('@tauri-apps/api/window');
+        const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
+        if (!mon) return null;
+        screenW = mon.workArea.size.width / mon.scaleFactor;
+        screenH = mon.workArea.size.height / mon.scaleFactor;
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+    if (!(screenW > 0 && screenH > 0)) return null;
+    const { minS, maxS } = scaleRangeFor(screenW, screenH);
+    return percentToScale(DEFAULT_SCALE_PERCENT, minS, maxS);
+  }
+
   /** 托盘「切换尺寸」：在设备范围内按最小→中点→最大等步长循环。 */
   private async _cycleSize(): Promise<void> {
     const { minS, maxS } = await this._deviceScaleRange();
@@ -571,8 +650,14 @@ export class PetApp {
    */
   public applySettings(s: PetSettings, restoreWindow = false): void {
     this._cancelSnapAnimation();
-    // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
-    if (!restoreWindow && this._settings) s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
+    // 主界面不拥有悬浮窗位置：后台期间另一 WebView 可能已保存新坐标，不能回写本实例的旧快照。
+    if (platform === 'android' && !this._wrapWindow) {
+      const latest = loadSettings();
+      s = { ...s, posX: latest.posX, posY: latest.posY };
+    } else if (!restoreWindow && this._settings) {
+      // 设置页可能携带过期坐标；非启动请求只改变设置，不覆盖最近已确认的位置。
+      s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
+    }
     this._settings = s;
     const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
@@ -609,23 +694,33 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
-      if (this._canAnimateScale(restoredPosition)) {
-        const anim = this._scaleAnim ??= { target: s.scale, running: false };
-        anim.target = s.scale;
-        if (!anim.running) this._startScaleAnimation(anim);
+      if (restoreWindow || !this._deskCapacityReady) {
+        this._deskScale = null;
+        this._queueWindowGeometry(() => this._withHiddenPage(async () => {
+          // 原生尺寸改变前就按舞台布局，WebView2 的旧位图帧被隐藏遮住。
+          this._deskCapacityReady = true;
+          await this._applyDesktopGeometry(s, revision, positionRevision, restoredPosition);
+        }), 'Failed to apply pet window settings');
         return;
       }
-      this._queueWindowGeometry(() => this._applyDesktopGeometry(s, revision, positionRevision, restoredPosition),
-        'Failed to apply pet window settings');
+      // 外窗容量已定：缩放、镜像只改窗内舞台，不触碰原生窗口。
+      if (this._canAnimateScale(null)) this._setDesktopScaleTarget(s.scale);
+      else { this._deskScale = null; this._persistDesktopPos(); this._syncChatAnchor(); }
     }
   }
 
-  /** Windows 外窗几何一步落定（启动恢复、少动态效果、无法逐帧补间时）。 */
+  /**
+   * Windows 外窗几何一步落定：尺寸 = 显示器允许的最大比例的自然窗口（固定容量），脚底锚定。
+   * 舞台脚底与外窗脚底重合，锚定外窗脚底即锚定角色。restoredPosition 是保存的舞台左上角。
+   */
   private async _applyDesktopGeometry(s: PetSettings, revision: number, positionRevision: number,
-    restoredPosition: { x: number; y: number } | null): Promise<void> {
+    restoredPosition: { x: number; y: number } | null,
+    opts: { force?: boolean } = {}): Promise<void> {
     const win = this._tauriWindow;
     if (!win) return;
-    if (revision !== this._windowSettingsRevision) return;
+    // force：容量刷新按当前设置执行，不因期间新的设置输入作废。
+    const stale = () => !opts.force && revision !== this._windowSettingsRevision;
+    if (stale()) return;
     const m = await import('@tauri-apps/api/window');
     // 尺寸上限由显示器逻辑工作区推导；只限制尺寸，不限制窗口位置。
     let mon: import('@tauri-apps/api/window').Monitor | null = null;
@@ -637,12 +732,9 @@ export class PetApp {
     // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
     //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
     const { baseW, baseH } = this._baseWindowSize();
-    let scale = s.scale;
     const limits = this._scaleLimitsFrom(mon, baseW, baseH);
-    if (limits) {
-      scale = Math.min(Math.max(scale, limits.minS), limits.maxS);
-    }
-    if (revision !== this._windowSettingsRevision) return;
+    const scale = limits ? limits.maxS : s.scale;
+    if (stale()) return;
     const chatOpen = this._chatView?.isOpen ?? false;
     const roomW = mon ? mon.workArea.size.width / mon.scaleFactor : 1000;
     const roomH = mon ? mon.workArea.size.height / mon.scaleFactor : 900;
@@ -652,9 +744,15 @@ export class PetApp {
     // 用实际客户区的物理尺寸计算脚底，不能把窗口底边当作角色脚底。
     const beforePos = await win.outerPosition();
     const beforeSize = await win.innerSize();
-    if (revision !== this._windowSettingsRevision) return;
+    if (stale()) return;
     // 前后补偿使用同一变换状态，不能混入等待期间新请求的镜像或布局。
     const mirror = s.mirror;
+    // 保存的是舞台左上角：换算到给定外窗尺寸下的外窗左上角。
+    const restoredWindow = (size: { width: number; height: number }, sf: number) => {
+      if (!restoredPosition) return null;
+      const r = this._stageRect(s.scale, size.width, size.height, sf, mirror);
+      return { x: restoredPosition.x - Math.round(r.left), y: restoredPosition.y - Math.round(r.top) };
+    };
     const beforeFoot = this._windowFootOffset(beforeSize, mirror, chatOpen);
     const anchor = {
       x: beforePos.x + beforeFoot.x + this._windowResizeRemainder.x,
@@ -665,7 +763,7 @@ export class PetApp {
       const afterSize = await win.innerSize();
       const sf = await win.scaleFactor();
       const afterFoot = this._windowFootOffset(afterSize, mirror, chatOpen);
-      const target = restoredPosition ?? {
+      const target = restoredWindow(afterSize, sf) ?? {
         x: Math.round(anchor.x - afterFoot.x), y: Math.round(anchor.y - afterFoot.y),
       };
       const current = await win.outerPosition();
@@ -680,7 +778,7 @@ export class PetApp {
       this._windowResizeRecovery = null;
       this._windowGeometryError = null;
       if (publish && positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging &&
-          revision === this._windowSettingsRevision) this._persistDesktopPos();
+          !stale()) this._persistDesktopPos(afterSize);
       if (publish) this._syncChatAnchor({ cssW: afterSize.width / sf, cssH: afterSize.height / sf });
     };
     // 预测缩放后的物理尺寸，位置与尺寸同一次原生调用落定（脚底不先跳再拉回）；
@@ -688,7 +786,7 @@ export class PetApp {
     const sf = await win.scaleFactor();
     const predicted = { width: Math.max(1, Math.round(width * sf)), height: Math.max(1, Math.round(height * sf)) };
     const predictedFoot = this._windowFootOffset(predicted, mirror, chatOpen);
-    const target = restoredPosition ?? {
+    const target = restoredWindow(predicted, sf) ?? {
       x: Math.round(anchor.x - predictedFoot.x), y: Math.round(anchor.y - predictedFoot.y),
     };
     try {
@@ -707,78 +805,141 @@ export class PetApp {
     return !restoredPosition && !this._chatView && this._metricsSynced && !!this._model?.isReady() && this._animationsAllowed();
   }
 
-  private _startScaleAnimation(anim: { target: number; running: boolean }): void {
-    anim.running = true;
-    void this._queueWindowGeometry(() => this._runScaleAnimation(anim), 'Failed to animate pet scale')
-      .finally(() => {
-        // 循环收尾与新目标到达之间的竞态：目标在收尾后又变了就接着补间。
-        if (!anim.running && Math.abs(anim.target - this._scaleAnimDone) > 1e-9 && this._canAnimateScale(null)) this._startScaleAnimation(anim);
-      });
+  /** 比例 ↔ 画内显示比例（CSS px / 模型单位），与 _baseWindowSize、_naturalScaleCss 同式。 */
+  private _cssScaleFor(scale: number): number {
+    return this._baseWindowSize().baseH * scale / PetApp._renderMarginRatio / this._model.boundsH;
+  }
+
+  private _scaleForCss(css: number): number {
+    return css * PetApp._renderMarginRatio * this._model.boundsH / this._baseWindowSize().baseH;
   }
 
   /**
-   * Windows 缩放补间：外窗逐帧按同一比例缩放（宽高比不变、脚底固定），角色始终按窗口自然适配。
-   * WebView2 在原生 resize 后会把上一帧整体拉伸到新窗口显示一两帧；外窗与角色严格同比时，
-   * 这一帧拉伸恰好就是下一帧该有的样子，因此连续拖动滑杆也不闪、不抽。
-   * 画内补间 + 外窗分步落定会让拉伸帧与真实比例不一致（角色先跳大/跳位再归位），不能用。
+   * 比例 scale 的舞台在外窗内的矩形：尺寸 = 该比例的自然窗口，脚底与外窗脚底重合。
+   * unit = 每 CSS px 的输出单位（CSS 传 1，物理像素传 scaleFactor）；超出容量时铺满外窗。
    */
-  private async _runScaleAnimation(anim: { target: number; running: boolean }): Promise<void> {
-    const win = this._tauriWindow;
-    try {
+  private _stageRect(scale: number, winW: number, winH: number, unit: number, mirror = this._settings.mirror):
+    { left: number; top: number; width: number; height: number } {
+    const { baseW, baseH } = this._baseWindowSize();
+    const h = baseH * scale * unit;
+    if (!(h > 0) || h >= winH) return { left: 0, top: 0, width: winW, height: winH };
+    const w = baseW * scale * unit;
+    const win = this._windowFootOffset({ width: winW, height: winH }, mirror, false);
+    const stage = this._windowFootOffset({ width: w, height: h }, mirror, false);
+    return { left: win.x - stage.x, top: win.y - stage.y, width: w, height: h };
+  }
+
+  /** 当前显示比例（补间中取补间值）下的舞台矩形，CSS px；chat 入口与卡片宽以它为准。 */
+  private _shownStageRectCss(): { left: number; top: number; width: number; height: number } {
+    const scale = this._deskScale ? this._scaleForCss(this._deskScale.shown) : this._settings.scale;
+    return this._stageRect(scale, window.innerWidth, window.innerHeight, 1);
+  }
+
+  /** 外窗能容纳的最大显示比例（CSS px / 模型单位）。 */
+  private _deskCapacityCss(): number {
+    return this._naturalScaleCss(window.innerWidth, window.innerHeight, false);
+  }
+
+  /**
+   * Windows 缩放：外窗不动，舞台临时铺满外窗，渲染循环把显示比例逼近 target（_stepDesktopScale），
+   * 以静态脚底为锚改模型矩阵，浮点精度、不取整，反向输入从当前显示比例继续。
+   */
+  private _setDesktopScaleTarget(scale: number): void {
+    const now = performance.now();
+    const target = Math.min(this._cssScaleFor(scale), this._deskCapacityCss());
+    let d = this._deskScale;
+    if (!d) {
+      const shown = Math.min(this._cssScaleFor(this._deskRestScale || scale), this._deskCapacityCss());
+      if (Math.abs(shown / target - 1) < 0.001) { this._persistDesktopPos(); return; }
+      d = this._deskScale = { shown, target, last: now, input: now };
+    }
+    d.target = target; d.input = now;
+  }
+
+  /** 渲染循环内推进显示比例；到位且输入静置后舞台收回目标比例的自然矩形（同一帧重绘）。 */
+  private _stepDesktopScale(now: number): void {
+    const d = this._deskScale;
+    if (!d) return;
+    const dt = Math.min(64, Math.max(0, now - d.last));
+    d.last = now;
+    const before = d.shown;
+    d.shown += (d.target - d.shown) * (1 - Math.exp(-dt / PetApp._scaleEaseMs));
+    if (Math.abs(d.shown / d.target - 1) < 0.001) d.shown = d.target;
+    // chat 外窗尺寸固定，逐帧只平移，跟随角色当前显示大小。
+    if (d.shown !== before) this._syncChatAnchor();
+    if (d.shown !== d.target || now - d.input < PetApp._deskScaleSettleMs) return;
+    this._deskScale = null;
+    this._persistDesktopPos();
+    this._syncChatAnchor();
+  }
+
+  /** 舞台 CSS 矩形逐帧同步（变化才写）；补间期间铺满外窗，静止时只占当前比例的自然矩形。 */
+  private _layoutStage(): void {
+    if (platform !== 'tauri' || this._wrapWindow || !this._deskCapacityReady || !this._model?.isReady()) return;
+    const stage = this._canvas.parentElement;
+    if (!stage) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    let r = { left: 0, top: 0, width: W, height: H };
+    if (!this._deskScale) {
+      this._deskRestScale = Math.min(this._settings.scale, H / this._baseWindowSize().baseH);
+      r = this._stageRect(this._deskRestScale, W, H, 1);
+    }
+    // 对齐物理像素：画布缓冲与屏幕像素一一对应，不做亚像素重采样。
+    const dpr = window.devicePixelRatio || 1;
+    const px = (v: number) => `${Math.round(v * dpr) / dpr}px`;
+    const key = [px(r.left), px(r.top), px(r.width), px(r.height)];
+    const joined = key.join(' ');
+    if (joined === this._stageKey) return;
+    this._stageKey = joined;
+    Object.assign(stage.style, { inset: 'auto', left: key[0], top: key[1], width: key[2], height: key[3] });
+  }
+
+  /** 换显示器后外窗容量不符：隐藏页面再改原生几何，新尺寸画好后再显示（只在拖动结束时发生）。 */
+  private _refreshDesktopCapacity(): void {
+    if (!this._deskCapacityReady || this._deskScale || !this._model?.isReady()) return;
+    void this._queueWindowGeometry(async () => {
+      const win = this._tauriWindow;
       if (!win) return;
       const m = await import('@tauri-apps/api/window');
       let mon: import('@tauri-apps/api/window').Monitor | null = null;
       try { mon = (await m.currentMonitor()) ?? (await m.primaryMonitor()); } catch { mon = null; }
       const { baseW, baseH } = this._baseWindowSize();
       const limits = this._scaleLimitsFrom(mon, baseW, baseH);
-      const clamp = (v: number) => limits ? Math.min(Math.max(v, limits.minS), limits.maxS) : v;
-      const [pos, size, sf] = await Promise.all([win.outerPosition(), win.innerSize(), win.scaleFactor()]);
-      const mirror = this._settings.mirror;
-      const foot0 = this._windowFootOffset(size, mirror, false);
-      const anchor = { x: pos.x + foot0.x + this._windowResizeRemainder.x, y: pos.y + foot0.y + this._windowResizeRemainder.y };
-      const positionRevision = this._windowPositionRevision ?? 0;
-      this._scaleTween = null;
-      let current = size.height / sf / baseH;
-      let geo = { x: pos.x, y: pos.y, w: size.width, h: size.height };
-      let last = performance.now();
-      const { invoke } = await import('@tauri-apps/api/core');
-      for (;;) {
-        const target = clamp(anim.target);
-        if (Math.abs(current / target - 1) < 0.002) current = target;
-        else {
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-          const now = performance.now();
-          const dt = Math.min(64, Math.max(1, now - last));
-          last = now;
-          current += (target - current) * (1 - Math.exp(-dt / PetApp._scaleEaseMs));
-          if (Math.abs(current / target - 1) < 0.002) current = target;
-        }
-        const w = Math.max(1, Math.round(baseW * current * sf));
-        const h = Math.max(1, Math.round(baseH * current * sf));
-        const foot = this._windowFootOffset({ width: w, height: h }, mirror, false);
-        const next = { x: Math.round(anchor.x - foot.x), y: Math.round(anchor.y - foot.y), w, h };
-        if (next.x !== geo.x || next.y !== geo.y || next.w !== geo.w || next.h !== geo.h) {
-          await invoke('set_pet_bounds', next);
-          geo = next;
-          this._winPhysX = next.x; this._winPhysY = next.y;
-        }
-        if (current === target && target === clamp(anim.target)) break;
-      }
-      const foot = this._windowFootOffset({ width: geo.w, height: geo.h }, mirror, false);
-      this._windowResizeRemainder = { x: anchor.x - geo.x - foot.x, y: anchor.y - geo.y - foot.y };
-      this._scaleFactor = sf; this._metricsSynced = true;
-      this._scaleAnimDone = anim.target;
-      if (positionRevision === (this._windowPositionRevision ?? 0) && !this._dragging) this._persistDesktopPos();
-      this._syncChatAnchor({ cssW: geo.w / sf, cssH: geo.h / sf });
+      if (!limits) return;
+      const [size, sf] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+      if (Math.abs(size.height - baseH * limits.maxS * sf) <= 2) return;
+      await this._withHiddenPage(() => this._applyDesktopGeometry(this._settings, this._windowSettingsRevision,
+        this._windowPositionRevision ?? 0, null, { force: true }));
+    }, 'Failed to refresh pet window capacity');
+  }
+
+  /**
+   * 原生尺寸交接：先隐藏页面内容再改几何，等视口换成新尺寸后再多等一帧显示，
+   * 让 WebView2 那一两帧旧位图是空白而不是错位的角色。只用于启动与换显示器。
+   */
+  private async _withHiddenPage(operation: () => Promise<void>): Promise<void> {
+    const win = this._tauriWindow;
+    const frame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const style = document.body.style;
+    style.visibility = 'hidden';
+    try {
+      await frame();
+      await operation();
+      if (!win) return;
+      const [size, sf] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+      for (let i = 0; i < 20 && Math.abs(window.innerHeight - size.height / sf) > 1; i++) await frame();
+      await frame();
     } finally {
-      anim.running = false;
+      style.visibility = '';
     }
   }
 
   /** chat 卡片宽 = pet 窗口宽 × 1.18（逐帧上报，壳侧钳制并换算整卡缩放）。 */
   private _reportChatLayout(): void {
     if (platform !== 'tauri' || !this._metricsSynced || !this._model?.isReady()) return;
-    const stageW = this._canvas.parentElement?.getBoundingClientRect().width ?? 0;
+    // 按当前显示比例的舞台宽折算，缩放补间期间 chat 卡片跟角色同步变宽。
+    const stageW = this._deskCapacityReady ? this._shownStageRectCss().width
+      : this._canvas.parentElement?.getBoundingClientRect().width ?? 0;
     if (!(stageW > 0)) return;
     const width = Math.round(stageW * 1.18);
     if (width === this._chatLayoutWidth) return;
@@ -867,7 +1028,8 @@ export class PetApp {
     let scale = s.scale;
     if (this._screenW > 0 && this._screenH > 0) {
       const minS = Math.max(56 / baseW, 72 / baseH);
-      const maxS = Math.max(minS, Math.min(this._screenW / baseW, (this._screenH - PetApp._WRAP_BUBBLE_BAND) / baseH));
+      const bubbleBand = this._hasNativeBubble() ? 0 : PetApp._WRAP_BUBBLE_BAND;
+      const maxS = Math.max(minS, Math.min(this._screenW / baseW, (this._screenH - bubbleBand) / baseH));
       scale = Math.min(Math.max(scale, minS), maxS);
     }
     if (this._wrapWindow) {
@@ -1098,9 +1260,10 @@ export class PetApp {
       const size = await win.outerSize();
       const before = await win.outerPosition();
       if (revision !== this._windowPositionRevision) return;
+      const r = this._physStageRect(size);
       const target = {
-        x: mon.workArea.position.x + Math.round((mon.workArea.size.width - size.width) / 2),
-        y: mon.workArea.position.y + Math.round((mon.workArea.size.height - size.height) / 2),
+        x: mon.workArea.position.x + Math.round((mon.workArea.size.width - r.width) / 2 - r.left),
+        y: mon.workArea.position.y + Math.round((mon.workArea.size.height - r.height) / 2 - r.top),
       };
       await this._setWindowPositionVerified(new m.PhysicalPosition(target.x, target.y));
       this._windowResizeRemainder = { x: 0, y: 0 };
@@ -1166,11 +1329,13 @@ export class PetApp {
           const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
           if (!current()) return;
           if (mon) {
+            // 贴边按可见舞台算，透明外窗可以越出工作区。
+            const r = this._physStageRect(size);
             const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
-            const left = mon.workArea.position.x;
-            const top = mon.workArea.position.y;
-            const right = left + mon.workArea.size.width - size.width;
-            const bottom = top + mon.workArea.size.height - size.height;
+            const left = mon.workArea.position.x - Math.round(r.left);
+            const top = mon.workArea.position.y - Math.round(r.top);
+            const right = mon.workArea.position.x + mon.workArea.size.width - Math.round(r.left + r.width);
+            const bottom = mon.workArea.position.y + mon.workArea.size.height - Math.round(r.top + r.height);
             const sx = PetApp._snapAxis(pos.x, left, right, zone);
             const sy = PetApp._snapAxis(pos.y, top, bottom, zone);
             const edges: string[] = [];
@@ -1185,16 +1350,27 @@ export class PetApp {
         }
         if (token !== this._snapAnimToken || this._windowGeometryPending) return;
         this._persistDesktopPos();
+        // 拖到另一块显示器后按新显示器重新开足容量（唯一一次需要隐藏交接的场景）。
+        this._refreshDesktopCapacity();
       })
       .catch(error => { console.warn('Failed to finish pet drag', error); });
   }
 
-  /** 持久化桌面窗口位置（物理 px）。 */
-  private _persistDesktopPos(): void {
+  /** 持久化桌面舞台左上角（物理 px）；固定容量外窗下与旧版"窗口左上角"同口径。 */
+  private _persistDesktopPos(size?: { width: number; height: number }): void {
     if (this._dragging || this._windowResizeRecovery || this._windowGeometryError) return;
-    this._settings.posX = this._winPhysX;
-    this._settings.posY = this._winPhysY;
+    const r = this._physStageRect(size);
+    this._settings.posX = this._winPhysX + Math.round(r.left);
+    this._settings.posY = this._winPhysY + Math.round(r.top);
     saveSettings(this._settings);
+  }
+
+  /** 当前比例的舞台在外窗内的物理矩形；容量未定时为整个外窗。 */
+  private _physStageRect(size?: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
+    const W = size?.width ?? Math.round(window.innerWidth * this._scaleFactor);
+    const H = size?.height ?? Math.round(window.innerHeight * this._scaleFactor);
+    if (!this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
+    return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
   }
 
   private _cancelSnapAnimation(): void {
@@ -1287,8 +1463,10 @@ export class PetApp {
         if (charT <= zone) ty -= charT;
         else if (charB >= m.screenH - zone) ty += m.screenH - charB;
         if (tx !== this._originCssX || ty !== this._originCssY) {
+          // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
+          this._persistWrapOrigin(tx, ty);
           this._animateOriginTo(tx, ty);
-          return; // 动画末帧持久化
+          return;
         }
       }
     }
@@ -1296,13 +1474,13 @@ export class PetApp {
   }
 
   /** 持久化悬浮窗原点（localStorage + 壳侧 SharedPreferences 双写）。 */
-  private _persistWrapOrigin(): void {
+  private _persistWrapOrigin(x = this._originCssX, y = this._originCssY): void {
     const shell = androidShell();
-    this._settings.posX = this._originCssX;
-    this._settings.posY = this._originCssY;
+    this._settings.posX = x;
+    this._settings.posY = y;
     saveSettings(this._settings);
-    shell?.setPref('petX', String(Math.round(this._originCssX)));
-    shell?.setPref('petY', String(Math.round(this._originCssY)));
+    shell?.setPref('petX', String(Math.round(x)));
+    shell?.setPref('petY', String(Math.round(y)));
   }
 
   private _animateOriginTo(tx: number, ty: number, durMs = 220): void {
@@ -1653,13 +1831,14 @@ export class PetApp {
    */
   private _syncChatAnchor(known?: { cssW: number; cssH: number }): void {
     if (platform !== 'tauri' || !this._metricsSynced) return;
-    const rect = known
-      ? { left: 0, top: 0, width: known.cssW, height: known.cssH }
-      : this._canvas.getBoundingClientRect();
     // IPC 不携带屏幕原点；局部比例由 Rust 同一原生矩形快照还原，移动/DPI 不混时刻。
     const viewportW = known?.cssW ?? window.innerWidth;
     const viewportH = known?.cssH ?? window.innerHeight;
     if (!(viewportW > 0 && viewportH > 0)) return;
+    // 固定容量外窗：锚点取当前比例的舞台，不取整个透明外窗。
+    const rect = this._deskCapacityReady && this._model?.isReady()
+      ? (known ? this._stageRect(this._settings.scale, viewportW, viewportH, 1) : this._shownStageRectCss())
+      : known ? { left: 0, top: 0, width: known.cssW, height: known.cssH } : this._canvas.getBoundingClientRect();
     let left = rect.left;
     let top = rect.top;
     let w = rect.width || window.innerWidth;
@@ -1783,6 +1962,7 @@ export class PetApp {
       this._cancelInteraction();
       this._resetDragState();
       this._bubble?.cancel();
+      this._androidBubble?.hide();
       androidShell()?.setInteracting(false);
       this._chatPerformance?.cancel();
     }
@@ -1885,7 +2065,8 @@ export class PetApp {
   private _frame(t: number): void {
     if (!this._running || this._paused) return;
 
-    const minInterval = 1000 / this._fpsCap;
+    // 画内缩放期间临时不限帧，缩放过程按显示器刷新率推进。
+    const minInterval = 1000 / (this._deskScale ? 60 : this._fpsCap);
     if (t - this._lastFrameTime < minInterval - 1) {
       requestAnimationFrame((t2) => this._frame(t2));
       return;
@@ -1897,7 +2078,8 @@ export class PetApp {
     }
 
     const dt = minInterval / 1000;
-    // 画布尺寸在渲染帧内同步：重置缓冲后立即重绘，合成器永远拿不到空帧
+    // 舞台矩形与画布尺寸在渲染帧内同步：重置缓冲后立即重绘，合成器永远拿不到空帧
+    if (platform === 'tauri') { this._stepDesktopScale(t); this._layoutStage(); }
     this._resizeCanvas();
     // 每帧从同一个物理坐标源换算；鼠标静止时窗口移动/镜像/拖动结束也能恢复。
     if (this._globalMouse && this._metricsSynced && !this._wrapWindow) {
@@ -1923,15 +2105,27 @@ export class PetApp {
 
   /**
    * 气泡锚定角色头部（可见才算，~30fps 几个 DOM 读写的成本可忽略）：
-   * 气泡底边 = 动态剪影顶 − 6px。窗口顶部气泡带永远容得下
-   * （带 88 ≥ 气泡限高 76 + 间隙），不再出现气泡钉在窗口顶「飞天」。
+   * 原生独立窗口不受人物画布裁切，并使用实际渲染头顶（含缩放补间）。
+   * 旧壳 DOM 路径在静态头顶上方共留 116px（20px 字号的三行），动作抬头时钳在人物窗口顶边内。
    */
   private _positionBubble(): void {
     const bubble = this._bubble;
-    if (!bubble?.isActive) return;
+    if (!bubble?.isActive) {
+      if (bubble?.el.classList?.contains('closing')) this._androidBubble?.close();
+      else this._androidBubble?.hide();
+      return;
+    }
     const b = this._model?.getDynamicBounds();
-    if (!b) return;
+    if (!b) { this._androidBubble?.hide(); return; }
     const rect = this._canvas.getBoundingClientRect();
+    if (this._androidBubble) {
+      // 共享实际渲染变换，缩放补间中也跟随当前头顶；移动由壳用窗口坐标同步。
+      const t = this._modelViewportTransform();
+      const headY = (t.originY - b.maxY * t.scale) / this._dpr;
+      this._androidBubble.sync(bubble.el.textContent ?? '', rect.width / 2, headY,
+        rect.width, rect.height);
+      return;
+    }
     const vpW = rect.width || 1;
     const vpH = rect.height || 1;
     let headTopCss: number;
@@ -1948,41 +2142,20 @@ export class PetApp {
       headTopCss = vpH / 2 - minY * natural - (b.maxY - minY) * s;
     }
     const el = bubble.el;
-    // 小窗口适配：气泡按视口等比缩小（transform scale 保形缩放，
-    // 不重排成窄长列），避免小缩放下气泡占满窗口盖住角色/被窗口裁切
+    // 小窗口适配：只收字号、必要时按可用宽度换行（不整体 transform 缩放，
+    // 否则 14px 的字在小窗口会被缩到看不清）。见 dialogue/bubble-fit.ts。
     const fitKey = `${el.textContent}|${Math.round(vpW)}x${Math.round(vpH)}`;
     if (fitKey !== this._bubbleFitKey) {
       this._bubbleFitKey = fitKey;
-      // 先量自然尺寸：width:max-content 摆脱 fit-content 被包含块宽度截断
-      // （否则小窗口量出的是视口宽、多行高，缩放系数失真）
-      el.style.transform = 'none';
-      el.style.width = 'max-content';
-      el.style.maxWidth = this._wrapWindow ? '260px' : '300px';
-      const w0 = el.offsetWidth || 1;
-      const h0 = el.offsetHeight || 1;
-      let k = Math.min(1, (vpW * 0.94) / w0, (vpH * 0.62) / h0);
-      k = Math.min(Math.max(k, 0.3), 1);
-      if (k < 0.999) {
-        // 布局盒比窗口宽时 margin auto 居中失效（Blink 把 auto 边距钳为 0，
-        // 盒子左对齐、缩放中心偏到窗口右侧 → 气泡右半边被窗口裁掉）。
-        // 改用 left:50% + translateX(-50%) 强制居中（不依赖 auto 边距），
-        // 再在变换里叠加缩放；origin 取顶部，top 按缩放后高度定位才精确。
-        el.style.margin = '0';
-        el.style.left = '50%';
-        el.style.right = 'auto';
-        el.style.width = `${w0}px`;
-        el.style.maxWidth = 'none';
-        el.style.transformOrigin = '50% 0%';
-        el.style.transform = `translateX(-50%) scale(${k})`;
-      } else {
-        el.style.margin = '';
-        el.style.left = '';
-        el.style.right = '';
-        el.style.maxWidth = '';
-      }
-      this._bubbleScaledH = h0 * k;
+      const fit = fitBubble(el, {
+        viewportWidth: vpW,
+        viewportHeight: vpH,
+        maxWidth: this._wrapWindow ? 260 : 300,
+      });
+      this._bubbleFitH = fit.height;
     }
-    const top = Math.max(4, headTopCss - this._bubbleScaledH - 6);
+    // 舞台上方的透明外窗也可以容纳气泡（固定容量外窗），只钳在窗口顶边内。
+    const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headTopCss - this._bubbleFitH - 6);
     el.style.top = `${Math.round(top)}px`;
   }
 
@@ -1998,18 +2171,20 @@ export class PetApp {
     if (!launcher || launcher.hidden || this._wrapWindow) return;
     const b = this._model?.getStaticBounds();
     if (!b) return;
-    const rect = this._canvas.getBoundingClientRect();
+    // 入口钉在当前显示比例的舞台脚底与中线（缩放补间期间随角色连续变化）。
+    const rect = this._deskCapacityReady ? this._shownStageRectCss() : this._canvas.getBoundingClientRect();
     if (!rect.height) return;
     const s = rect.height / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
-    const feetCss = rect.height / 2 - b.minY * s;
-    const bottom = Math.max(4, Math.round(rect.height - feetCss + PetApp._launcherGapCss));
-    if (bottom !== this._launcherBottomCss) {
+    const feetCss = rect.top + rect.height / 2 - b.minY * s;
+    const bottom = Math.max(4, Math.round(window.innerHeight - feetCss + PetApp._launcherGapCss));
+    const left = Math.round(rect.left + rect.width / 2);
+    if (bottom !== this._launcherBottomCss || left !== this._launcherLeftCss) {
       this._launcherBottomCss = bottom;
+      this._launcherLeftCss = left;
       launcher.style.bottom = `${bottom}px`;
+      launcher.style.left = `${left}px`;
     }
-    // 入口大小跟角色当前显示比例走（缩放补间期间同步长大/缩小）。
-    const shown = (this._scaleTweenValue() ?? s) / s;
-    const k = Math.round(Math.min(1.6, Math.max(0.7, rect.height * shown / (675 * PetApp._windowMarginRatio))) * 1000) / 1000;
+    const k = Math.round(Math.min(1.6, Math.max(0.7, rect.height / (675 * PetApp._windowMarginRatio))) * 1000) / 1000;
     if (k !== this._launcherScaleK) {
       this._launcherScaleK = k;
       launcher.style.setProperty('--launcher-k', String(k));
@@ -2058,6 +2233,7 @@ export class PetApp {
 
   /** 当前补间值（CSS 口径）；无补间或已播完落定返回 null。 */
   private _scaleTweenValue(now = performance.now()): number | null {
+    if (this._deskScale) return this._deskScale.shown;
     const tween = this._scaleTween;
     if (!tween) return null;
     if (tween.start == null) return tween.from;
@@ -2117,11 +2293,10 @@ export class PetApp {
    * 逐帧不需要任何 grow/shrink/包络跟踪，从根上杜绝重排抽搐。
    * 透明区域的交互由像素掩码穿透接管（见 _maybeSendHitMask）。
    *
-   * 布局：顶部预留气泡带，下方内容区 = 675×1.18×scale（与非贴合模式同基准），
-   * 静态剪影中心锚在内容区中心（四向等距余量，动作向任何方向甩都有空间）。
+   * 布局：内容区 = 675×1.18×scale（与非贴合模式同基准），静态剪影居中。
+   * 新壳气泡使用独立原生窗口，人物只保留动作余量；旧壳继续复用顶部余量并补足气泡空间。
    */
   private _fixedWindowRect(): { x: number; y: number; w: number; h: number } {
-    const band = PetApp._WRAP_BUBBLE_BAND;
     const b = this._model?.getStaticBounds() ?? null;
     // 缩放补间期间按起止两端较大的比例给窗口（脚底同锚，大窗包住小角色），不逐帧改窗。
     const tween = this._scaleTween;
@@ -2131,6 +2306,8 @@ export class PetApp {
     const baseH = 675 * PetApp._windowMarginRatio * this._settings.scale * k;
     const baseW =
       baseH * (this._model?.isReady() ? this._model.boundsAspect : 512 / 768);
+    const topPadding = b && s > 0 ? Math.max(0, (baseH - (b.maxY - b.minY) * s) / 2) : 0;
+    const band = this._hasNativeBubble() ? 0 : Math.max(0, PetApp._WRAP_BUBBLE_BAND - topPadding);
     // 比例 s 下保持脚底不动的原点（模型 Y 轴朝上 → 屏幕坐标减）
     const originY = this._originCssY + (b ? b.minY * (s - s0) : 0);
     const ccx = this._originCssX + (b ? ((b.minX + b.maxX) / 2) * s0 : 0);
@@ -2198,10 +2375,21 @@ export class PetApp {
     }
     this._hitMaskLastMs = now;
 
+    // Windows 携带区域矩形，只采样舞台 ∪ 聊天入口 ∪ 提示，避免大外窗降低精度。
+    // Android 桥只传网格、不传区域矩形，因此必须按整窗采样，不能把局部剪影拉满外窗。
+    const canvasRect = this._canvas.getBoundingClientRect();
+    const extra = [
+      ...(this._chatView?.hitRects() ?? (this._chatLauncher && !this._chatLauncher.hidden ? [this._chatLauncher.getBoundingClientRect()] : [])),
+      ...(this._shellSyncNotice ? [this._shellSyncNotice.getBoundingClientRect()] : []),
+    ];
+    const region = androidWrap
+      ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+      : PetApp._clipRect(PetApp._unionRect([canvasRect, ...extra]), window.innerWidth, window.innerHeight);
+    this._hitMaskRect = region;
     const cols = PetApp._hitMaskCols;
     const rows = Math.max(
       1,
-      Math.round((cols * window.innerHeight) / Math.max(1, window.innerWidth))
+      Math.round((cols * region.height) / Math.max(1, region.width))
     );
     if (!this._hitMaskCanvas) {
       this._hitMaskCanvas = document.createElement('canvas');
@@ -2219,12 +2407,10 @@ export class PetApp {
     const ctx = this._hitMaskCtx;
     if (!ctx) return;
     ctx.clearRect(0, 0, cols, rows);
-    // 掩码覆盖整个原生窗口：角色画布现在可以只占窗口的一部分。
-    const canvasRect = this._canvas.getBoundingClientRect();
-    const sx = cols / Math.max(1, window.innerWidth);
-    const sy = rows / Math.max(1, window.innerHeight);
+    const sx = cols / Math.max(1, region.width);
+    const sy = rows / Math.max(1, region.height);
     ctx.save();
-    ctx.translate(canvasRect.left * sx, canvasRect.top * sy);
+    ctx.translate((canvasRect.left - region.left) * sx, (canvasRect.top - region.top) * sy);
     if (this._settings.mirror) {
       ctx.translate(canvasRect.width * sx, 0);
       ctx.scale(-1, 1);
@@ -2233,12 +2419,9 @@ export class PetApp {
     ctx.restore();
     // 对话面板、输入框、聊天按钮可点击；其余透明区域继续穿透。
     ctx.fillStyle = '#fff';
-    for (const r of this._chatView?.hitRects() ?? (this._chatLauncher && !this._chatLauncher.hidden ? [this._chatLauncher.getBoundingClientRect()] : [])) {
-      ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
-    }
-    if (this._shellSyncNotice) {
-      const r = this._shellSyncNotice.getBoundingClientRect();
-      ctx.fillRect(Math.floor(r.left * sx), Math.floor(r.top * sy), Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
+    for (const r of extra) {
+      ctx.fillRect(Math.floor((r.left - region.left) * sx), Math.floor((r.top - region.top) * sy),
+        Math.ceil(r.width * sx) + 1, Math.ceil(r.height * sy) + 1);
     }
     const img = ctx.getImageData(0, 0, cols, rows).data;
     const data = new Uint8Array(cols * rows);
@@ -2260,7 +2443,7 @@ export class PetApp {
     this._hitMaskInteracting = interacting;
     this._hitMaskGeometry = geometry;
     if (androidWrap) {
-      // Android 悬浮窗：壳在 ACTION_DOWN 命中透明格时临时切 NOT_TOUCHABLE 穿透
+      // Android 悬浮窗：API 33+ 在输入分发前按整窗掩码裁剪可触摸区域。
       let csv = '';
       for (let i = 0; i < data.length; i++) csv += data[i];
       androidShell()?.setHitMask(cols, rows, csv);
@@ -2276,7 +2459,27 @@ export class PetApp {
   }
 
   private _hitMaskGeometryKey(): string {
-    return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor].join(':');
+    const r = this._hitMaskRect ?? { left: 0, top: 0, width: 0, height: 0 };
+    return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor,
+      r.left, r.top, r.width, r.height].join(':');
+  }
+
+  private static _unionRect(rects: { left: number; top: number; width: number; height: number }[]):
+    { left: number; top: number; width: number; height: number } {
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const x of rects) {
+      if (!(x.width > 0 && x.height > 0)) continue;
+      l = Math.min(l, x.left); t = Math.min(t, x.top); r = Math.max(r, x.left + x.width); b = Math.max(b, x.top + x.height);
+    }
+    return l < r && t < b ? { left: l, top: t, width: r - l, height: b - t } : { left: 0, top: 0, width: 0, height: 0 };
+  }
+
+  private static _clipRect(x: { left: number; top: number; width: number; height: number }, w: number, h: number):
+    { left: number; top: number; width: number; height: number } {
+    const l = Math.max(0, x.left), t = Math.max(0, x.top);
+    const r = Math.min(w, x.left + x.width), b = Math.min(h, x.top + x.height);
+    // 区域退化（尚未布局）时退回整窗，保持旧行为。
+    return r - l >= 1 && b - t >= 1 ? { left: l, top: t, width: r - l, height: b - t } : { left: 0, top: 0, width: w, height: h };
   }
 
   /** 只重发缓存掩码，不在输入回调读取/改写渲染缓冲。 */
@@ -2294,6 +2497,13 @@ export class PetApp {
       winY: this._winPhysY,
       winW: Math.round(window.innerWidth * this._scaleFactor),
       winH: Math.round(window.innerHeight * this._scaleFactor),
+      // 掩码区域（相对客户区左上角的物理 px）；区域外壳侧一律穿透。
+      ...(this._hitMaskRect ? {
+        regionX: Math.round(this._hitMaskRect.left * this._scaleFactor),
+        regionY: Math.round(this._hitMaskRect.top * this._scaleFactor),
+        regionW: Math.round(this._hitMaskRect.width * this._scaleFactor),
+        regionH: Math.round(this._hitMaskRect.height * this._scaleFactor),
+      } : {}),
     });
   }
 
@@ -2335,8 +2545,10 @@ export class PetApp {
   private _maskOpaqueAt(e: PointerEvent): boolean {
     if (!this._hitMaskData?.length || !this._hitMaskRows) return true;
     const cols = PetApp._hitMaskCols;
-    const gx = Math.min(cols - 1, Math.max(0, Math.floor((e.clientX / Math.max(1, window.innerWidth)) * cols)));
-    const gy = Math.min(this._hitMaskRows - 1, Math.max(0, Math.floor((e.clientY / Math.max(1, window.innerHeight)) * this._hitMaskRows)));
+    const r = this._hitMaskRect?.width > 0 ? this._hitMaskRect
+      : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const gx = Math.min(cols - 1, Math.max(0, Math.floor(((e.clientX - r.left) / Math.max(1, r.width)) * cols)));
+    const gy = Math.min(this._hitMaskRows - 1, Math.max(0, Math.floor(((e.clientY - r.top) / Math.max(1, r.height)) * this._hitMaskRows)));
     return this._hitMaskData[gy * cols + gx] !== 0;
   }
 }

@@ -32,6 +32,9 @@ struct HitMask {
     win_y: i32,
     win_w: i32,
     win_h: i32,
+    /// 掩码覆盖的客户区内矩形（物理 px，(x, y, w, h)）；None = 整个窗口。
+    /// 区域外一律穿透，掩码陈旧时也只把区域内回退为可交互，透明大窗不吞点击。
+    region: Option<(i32, i32, i32, i32)>,
     updated: std::time::Instant,
 }
 
@@ -47,6 +50,7 @@ impl Default for HitMask {
             win_y: 0,
             win_w: 0,
             win_h: 0,
+            region: None,
             // 启动即视为陈旧：掩码到达前窗口正常接收事件
             updated: std::time::Instant::now() - std::time::Duration::from_secs(3600),
         }
@@ -70,6 +74,10 @@ fn update_hit_mask(
     win_h: i32,
     label: Option<String>,
     sticky: Option<bool>,
+    region_x: Option<i32>,
+    region_y: Option<i32>,
+    region_w: Option<i32>,
+    region_h: Option<i32>,
 ) {
     if let Ok(mut map) = state.lock() {
         let m = map
@@ -84,6 +92,10 @@ fn update_hit_mask(
         m.win_y = win_y;
         m.win_w = win_w;
         m.win_h = win_h;
+        m.region = match (region_x, region_y, region_w, region_h) {
+            (Some(x), Some(y), Some(w), Some(h)) if w > 0 && h > 0 => Some((x, y, w, h)),
+            _ => None,
+        };
         m.updated = std::time::Instant::now();
     }
 }
@@ -94,16 +106,25 @@ fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32
     let m = mask?;
     let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
-    if m.interacting || stale || m.cols == 0 || m.rows == 0 || w <= 0 || h <= 0 {
-        return Some(false);
-    }
+    // 指针按下期间整窗接收，拖动/抚摸的事件流不被穿透打断。
+    if m.interacting { return Some(false); }
+    if w <= 0 || h <= 0 { return Some(false); }
     let lx = pt.0 - x;
     let ly = pt.1 - y;
     if lx < 0 || ly < 0 || lx >= w || ly >= h {
         return None; // 光标在窗口外：保持当前状态
     }
-    let gx = (lx as u32 * m.cols / w as u32).min(m.cols - 1);
-    let gy = (ly as u32 * m.rows / h as u32).min(m.rows - 1);
+    // 掩码区域外（固定容量外窗的透明部分）一律穿透，陈旧时也不回退。
+    let (rx, ry, rw, rh) = m.region.unwrap_or((0, 0, w, h));
+    let (lx, ly) = (lx - rx, ly - ry);
+    if lx < 0 || ly < 0 || lx >= rw || ly >= rh {
+        return Some(true);
+    }
+    if stale || m.cols == 0 || m.rows == 0 {
+        return Some(false);
+    }
+    let gx = (lx as u32 * m.cols / rw as u32).min(m.cols - 1);
+    let gy = (ly as u32 * m.rows / rh as u32).min(m.rows - 1);
     let idx = (gy * m.cols + gx) as usize;
     Some(m.data.get(idx).copied().unwrap_or(1) == 0)
 }
@@ -141,6 +162,21 @@ mod hit_mask_tests {
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false));
         m.updated = std::time::Instant::now();
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true));
+    }
+
+    #[test]
+    fn region_limits_mask_and_stale_fallback() {
+        let mut m = mask();
+        // 区域 = 客户区 (50,50) 起 50x50；掩码 2x2 铺在区域内。
+        m.region = Some((50, 50, 50, 50));
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true), "区域外穿透");
+        assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(true), "区域内透明格");
+        assert_eq!(want_ignore_at(Some(&m), (90, 70), None), Some(false), "区域内不透明格");
+        m.updated -= std::time::Duration::from_secs(2);
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true), "陈旧时区域外仍穿透");
+        assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(false), "陈旧时区域内回退可交互");
+        m.interacting = true;
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false), "按下期间整窗接收");
     }
 
     #[test]

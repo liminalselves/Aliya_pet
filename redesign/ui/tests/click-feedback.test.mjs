@@ -23,7 +23,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const { InteractionService } = load('interaction/interaction', {
     './petting-controller': petting, './procedural': procedural,
   }, globals);
-  const writes = {}, trace = [], lines = [], captures = [], masks = [], shellCalls = [], actions = [];
+  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], actions = [];
   const target = {
     getInteractionParamInfo: () => ({ angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
       angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
@@ -40,7 +40,8 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
   const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
-    androidShell: () => ({ setInteracting: value => shellCalls.push(value) }) } }, { ...globals, window });
+    androidShell: () => ({ setInteracting: value => shellCalls.push(value),
+      setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) } }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
   const app = Object.create(PetApp.prototype);
   Object.assign(app, {
@@ -67,7 +68,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const ctx = (x = 400, secondary = true) => ({ normX: .5, normY: .2, pxX: x, pxY: 200,
     dtSeconds: 1 / 60, leftPressed: !secondary, isSecondary: secondary });
   const advance = ms => { now += ms; service.tick(ms); };
-  return { app, service, writes, trace, lines, captures, masks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
+  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
     area: value => { area = value; }, speaking: value => { speaking = value; }, setTime: value => { now = value; },
     click(overrides = {}) { canvasEvents.pointerdown(event(overrides)); canvasEvents.pointerup(event({ ...overrides, buttons: 0 })); },
     stroke() { for (let i = 1; i <= 90; i++) { now += 1000 / 60;
@@ -246,6 +247,41 @@ test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相�
   const before = h.masks.length; h.setTime(800); h.app._maybeSendHitMask();
   assert.equal(h.masks.length, before, '仍保留短期去重');
   h.setTime(1800); h.app._maybeSendHitMask(); assert.equal(h.masks.length, before + 1, '在1.5s TTL前刷新');
+});
+
+test('Android局部舞台按整窗映射掩码，气泡上方留白穿透且人物和聊天入口仍命中', () => {
+  const h = harness({ platform: 'android' });
+  const maskCanvas = { width: 0, height: 0 };
+  let pixels, tx = 0, ty = 0;
+  const ctx = {
+    clearRect() { pixels = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height * 4); },
+    save() {}, restore() { tx = 0; ty = 0; },
+    translate(x, y) { tx += x; ty += y; },
+    paint(x, y, w, height) {
+      for (let row = 0; row < maskCanvas.height; row++) for (let col = 0; col < maskCanvas.width; col++) {
+        if (col + .5 >= x && col + .5 < x + w && row + .5 >= y && row + .5 < y + height)
+          pixels[(row * maskCanvas.width + col) * 4 + 3] = 255;
+      }
+    },
+    drawImage(_canvas, x, y, w, height) { this.paint(x + tx, y + ty, w, height); },
+    fillRect(x, y, w, height) { this.paint(x, y, w, height); },
+    getImageData: () => ({ data: pixels }),
+  };
+  Object.assign(h.app, { _wrapWindow: true, _model: { isReady: () => true },
+    _hitMaskCanvas: maskCanvas, _hitMaskCtx: ctx,
+    _chatView: { hitRects: () => [{ left: 650, top: 130, width: 80, height: 60 }] },
+  });
+  h.app._canvas.getBoundingClientRect = () => ({ left: 160, top: 240, width: 480, height: 480 });
+  h.setTime(200); h.app._maybeSendHitMask();
+  const mask = h.androidMasks.at(-1);
+  assert.equal(mask.cols, 96); assert.equal(mask.rows, 96);
+  const hit = (x, y) => mask.data[Math.floor(y / 800 * mask.rows) * mask.cols + Math.floor(x / 800 * mask.cols)];
+  assert.equal(hit(400, 80), '0', '气泡上方的透明区域不能被局部剪影拉伸占用');
+  assert.equal(hit(400, 200), '0', '人物上方留白保持透明');
+  assert.equal(hit(400, 400), '1', '人物仍可交互');
+  assert.equal(hit(680, 150), '1', '聊天入口仍可点击');
+  assert.equal(hit(100, 400), '0', '人物左右留白保持透明');
+  assert.equal(hit(400, 770), '0', '人物下方留白保持透明');
 });
 
 test('监听降级提示区域加入Windows命中掩码，成功移除提示后恢复穿透', () => {

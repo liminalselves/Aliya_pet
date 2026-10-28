@@ -54,7 +54,7 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   fade-in 上浮淡入，列表类子项错落（stagger-in，30-50ms 阶梯，第 8 项起
   共用最大延迟）；回复流（打字点/分页）不参与错落，打点落定后正文以
   gal-text-in 淡入衔接。
-- 卡片宽 = pet 窗宽 × 1.18（钳 150–560 CSS px）；窄于 380 时按 380 排版、整卡
+- 卡片宽 = pet 窗宽 × 1.18（钳 250–560 CSS px，250 约等于人物缩到 40% 时的宽度）；窄于 380 时按 380 排版、整卡
   `transform: scale(宽/380)`（`chat_layout_for_width`）。pet 前端逐帧 `set_chat_layout(width)`，
   壳换算后以 `chat-layout {zoom,width}` 发给页面（启动用 `chat_layout` 命令补拉），页面写
   `--chat-zoom/--chat-width`，卡片与角色同帧变化；外窗既不 resize 也不 `set_zoom`（二者都会让

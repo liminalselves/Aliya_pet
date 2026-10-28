@@ -8,11 +8,10 @@
 
 import {
   PetSettings,
-  BASE_WINDOW_W,
-  BASE_WINDOW_H,
   clampScale,
   scaleToPercent,
   percentToScale,
+  scaleRangeFor,
   loadSettings,
   saveSettings,
 } from './settings';
@@ -472,11 +471,10 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
         screenH: number;
       };
       if (m.screenW > 0 && m.screenH > 0) {
-        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
-        scaleRangeMax = Math.max(
-          scaleRangeMin,
-          Math.min(m.screenW / BASE_WINDOW_W, (m.screenH - 88) / BASE_WINDOW_H)
-        );
+        // 安卓底部系统栏占 88 逻辑像素，从可用高度里扣掉
+        const range = scaleRangeFor(m.screenW, m.screenH - 88);
+        scaleRangeMin = range.minS;
+        scaleRangeMax = range.maxS;
         refreshControls();
       }
     } catch {
@@ -494,8 +492,9 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
         if (!mon) return;
         const logW = mon.workArea.size.width / mon.scaleFactor;
         const logH = mon.workArea.size.height / mon.scaleFactor;
-        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
-        scaleRangeMax = Math.min(logW / BASE_WINDOW_W, logH / BASE_WINDOW_H);
+        const range = scaleRangeFor(logW, logH);
+        scaleRangeMin = range.minS;
+        scaleRangeMax = range.maxS;
         refreshControls();
       })
       .catch(() => {});
