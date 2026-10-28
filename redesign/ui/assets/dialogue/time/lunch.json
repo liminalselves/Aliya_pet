@@ -17,6 +17,15 @@
     {"id":"aliya_time_lunch_012","text":"今天想吃点什么呢","weight":1.0,"minRepeatDays":7,"tags":["meal","daily"],"enabled":true},
     {"id":"aliya_time_lunch_013","text":"给自己留点吃饭时间","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
     {"id":"aliya_time_lunch_014","text":"饿着可谈不上高效率","weight":1.0,"minRepeatDays":7,"tags":["meal","work"],"enabled":true},
-    {"id":"aliya_time_lunch_015","text":"问题不会趁午饭逃走","weight":1.0,"minRepeatDays":7,"tags":["meal","humor"],"enabled":true}
+    {"id":"aliya_time_lunch_015","text":"问题不会趁午饭逃走","weight":1.0,"minRepeatDays":7,"tags":["meal","humor"],"enabled":true},
+    {"id":"aliya_time_lunch_016","text":"今天的饭看起来不错","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true},
+    {"id":"aliya_time_lunch_017","text":"慢点吃，别噎到","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_lunch_018","text":"午饭也是重要补给","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
+    {"id":"aliya_time_lunch_019","text":"吃好了下午才有劲","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_lunch_020","text":"我偷看你碗里有什么","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true},
+    {"id":"aliya_time_lunch_021","text":"先放下工作，吃饭","weight":1.0,"minRepeatDays":7,"tags":["meal","work"],"enabled":true},
+    {"id":"aliya_time_lunch_022","text":"食堂里今天热闹吗","weight":1.0,"minRepeatDays":7,"tags":["meal","daily"],"enabled":true},
+    {"id":"aliya_time_lunch_023","text":"饭后走两步会更好","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_lunch_024","text":"我也在补充能量哦","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true}
   ]
 }

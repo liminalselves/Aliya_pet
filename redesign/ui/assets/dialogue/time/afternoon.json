@@ -17,6 +17,15 @@
     {"id":"aliya_time_afternoon_012","text":"有些问题需要发酵","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
     {"id":"aliya_time_afternoon_013","text":"航行暂时没有异常","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
     {"id":"aliya_time_afternoon_014","text":"让思绪去宇宙转转","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","playful"],"enabled":true},
-    {"id":"aliya_time_afternoon_015","text":"剩下的时间还够用","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true}
+    {"id":"aliya_time_afternoon_015","text":"剩下的时间还够用","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_afternoon_016","text":"下午的风开始变软啦","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_afternoon_017","text":"我陪你把这页做完","weight":1.0,"minRepeatDays":7,"tags":["work","warm"],"enabled":true},
+    {"id":"aliya_time_afternoon_018","text":"两个小时后记得歇一歇","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
+    {"id":"aliya_time_afternoon_019","text":"第二杯咖啡要小心","weight":1.0,"minRepeatDays":7,"tags":["care","humor"],"enabled":true},
+    {"id":"aliya_time_afternoon_020","text":"窗外的云走得很快","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
+    {"id":"aliya_time_afternoon_021","text":"下午也在慢慢变好","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
+    {"id":"aliya_time_afternoon_022","text":"别硬撑，随时停一下","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
+    {"id":"aliya_time_afternoon_023","text":"今天的进度我记着","weight":1.0,"minRepeatDays":7,"tags":["work","bright"],"enabled":true},
+    {"id":"aliya_time_afternoon_024","text":"太阳偏了，时间还够","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true}
   ]
 }

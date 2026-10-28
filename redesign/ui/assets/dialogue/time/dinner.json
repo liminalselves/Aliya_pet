@@ -17,6 +17,15 @@
     {"id":"aliya_time_dinner_012","text":"飞船和人都需要燃料","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
     {"id":"aliya_time_dinner_013","text":"吃完再决定也可以","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
     {"id":"aliya_time_dinner_014","text":"试剂可不能放错位置","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","humor"],"enabled":true},
-    {"id":"aliya_time_dinner_015","text":"吃饭时让大脑歇会儿","weight":1.0,"minRepeatDays":7,"tags":["meal","rest"],"enabled":true}
+    {"id":"aliya_time_dinner_015","text":"吃饭时让大脑歇会儿","weight":1.0,"minRepeatDays":7,"tags":["meal","rest"],"enabled":true},
+    {"id":"aliya_time_dinner_016","text":"晚饭是不是又拖了","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true},
+    {"id":"aliya_time_dinner_017","text":"今天想加点什么菜","weight":1.0,"minRepeatDays":7,"tags":["meal","daily"],"enabled":true},
+    {"id":"aliya_time_dinner_018","text":"我在想象地球的味道","weight":1.0,"minRepeatDays":7,"tags":["meal","science_fiction"],"enabled":true},
+    {"id":"aliya_time_dinner_019","text":"先吃饭，问题等等","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_dinner_020","text":"累了一天要好好补","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_dinner_021","text":"晚饭别只吃一口哦","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_dinner_022","text":"碗里的热气真好看","weight":1.0,"minRepeatDays":7,"tags":["meal","warm"],"enabled":true},
+    {"id":"aliya_time_dinner_023","text":"最后一顿要吃饱呀","weight":1.0,"minRepeatDays":7,"tags":["meal","care"],"enabled":true},
+    {"id":"aliya_time_dinner_024","text":"甜点位置我给你留着","weight":1.0,"minRepeatDays":7,"tags":["meal","playful"],"enabled":true}
   ]
 }
