@@ -9,6 +9,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Region
@@ -238,6 +240,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
     }
 
+    /** 应用图标位图：用于通知展开态，避免和桌面图标长得不一样。 */
+    private fun appIconBitmap(): Bitmap? {
+        // 自适应图标在 API 26+ 是 XML，只能先把 drawable 画到位图上。
+        val drawable = ContextCompat.getDrawable(this, R.mipmap.ic_launcher) ?: return null
+        val size = 192
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, size, size)
+        drawable.draw(Canvas(bitmap))
+        return bitmap
+    }
+
     private fun buildNotification(): Notification {
         val openPi = PendingIntent.getActivity(
             this, 0,
@@ -256,6 +269,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
+            // 展开态（以及部分 OEM 的折叠态）显示应用图标，和桌面图标保持一致；
+            // 小图标仍用单色字形，交给系统着色是 Android 的既定画法。
+            .setLargeIcon(appIconBitmap())
             .setContentTitle(getString(R.string.overlay_notif_title))
             .setContentText(getString(R.string.overlay_notif_text))
             .setContentIntent(contentPi)
