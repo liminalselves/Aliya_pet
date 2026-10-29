@@ -257,6 +257,8 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     override fun onStop() {
         super.onStop()
         isForeground = false
+        // 退后台时菜单直接收起（不播动画），回来不残留半透明遮罩。
+        if (menuOpen) { menuSheet?.animate()?.cancel(); menuSheet?.translationY = (menuSheet?.height ?: 0).toFloat(); finishMenuHidden() }
         web.evaluateJavascript("window.__pet?.onShellEvent('pause')", null)
         web.onPause()
         pages.forEach { it.onPause() }
