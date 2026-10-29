@@ -445,7 +445,6 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const wrap = document.createElement('div');
   wrap.className = 'slider-row';
   wrap.style.flex = '1';
-  wrap.style.marginLeft = '12px';
   const minus = document.createElement('button');
   minus.textContent = '−';
   const plus = document.createElement('button');
@@ -658,7 +657,6 @@ if (platform === 'android') {
   const dimWrap = document.createElement('div');
   dimWrap.className = 'slider-row';
   dimWrap.style.flex = '1';
-  dimWrap.style.marginLeft = '12px';
   const dim = document.createElement('input');
   dim.type = 'range';
   dim.min = '0';

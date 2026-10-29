@@ -214,7 +214,8 @@ body.platform-android .card > * + button.act.wide { background-size: calc(100% -
 .sw input:focus-visible + i { box-shadow: var(--al-focus-ring); }
 
 /* ---- 滑块行 ---- */
-.slider-row { display: flex; align-items: center; gap: 8px; }
+/* min-width:0：行内按钮+数值的固有宽度不能把滑块行撑出卡片（窄屏横向溢出的根因）。 */
+.slider-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .slider-row button {
   display: grid;
   place-items: center;
@@ -362,8 +363,8 @@ body.platform-android button.act.wide { min-height: 54px; width: calc(100% + 32p
 body.platform-android .card > button.act.wide:first-child { border-top-left-radius: var(--al-r-l); border-top-right-radius: var(--al-r-l); }
 body.platform-android .card > button.act.wide:last-child { border-bottom-left-radius: var(--al-r-l); border-bottom-right-radius: var(--al-r-l); }
 body.platform-android .row button.act { height: 36px; font-size: 13.5px; }
-body.platform-android .slider-row { gap: 10px; }
-body.platform-android .slider-row button { width: 36px; height: 36px; font-size: 18px; }
+body.platform-android .slider-row { gap: 8px; }
+body.platform-android .slider-row button { width: 34px; height: 34px; font-size: 18px; }
 body.platform-android .slider-row input[type='range']::-webkit-slider-thumb { width: 22px; height: 22px; }
 body.platform-android .stepper { height: 40px; }
 body.platform-android .stepper button { width: 40px; height: 40px; font-size: 18px; }
