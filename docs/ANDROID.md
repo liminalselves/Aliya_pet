@@ -44,8 +44,9 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 - 渲染开销：安卓 WebGL 关闭 MSAA 与 preserveDrawingBuffer（Live2D 边缘靠贴图
   alpha，保留缓冲在分块 GPU 上每帧多一次整屏拷贝）；Windows 保留两者防缩放闪帧。
   设置/记录页盖住桌宠时，壳发 `covered`/`uncovered` 停启渲染循环，聊天状态不中断。
-- 启动：原生遮罩（主题底色 + 转圈）盖到前端首帧后发 `pet-ready` 才淡出，启动失败也会发，
-  15s 兜底。贴图用 `createImageBitmap` 离主线程解码，上传后释放位图。衬线字体先加载
+- 启动：原生遮罩（主题底色 + 转圈）盖住页面与菜单键；前端用 WebGL fence 确认角色首帧
+  GPU 绘制完成、再等一帧上屏后发 `pet-ready`，遮罩与菜单键一起淡出（弱机上角色与 UI 同时出现）。
+  启动失败也会发，15s 兜底。贴图用 `createImageBitmap` 离主线程解码，上传后释放位图。衬线字体先加载
   常用字子集 `NotoSerifSC-common.woff2`（约 2.7MB），生僻字才回落完整 25MB 字体；
   台词或字体有变动时运行 `python redesign/scripts/subset-serif-font.py` 重新生成。
 - 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
