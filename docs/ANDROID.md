@@ -84,8 +84,9 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 ### 悬浮窗口与桥
 
 窗口始终保持 `FLAG_NOT_FOCUSABLE`，WebGL 必须显式硬件加速。
-窗口尺寸仅包含角色、动作余量和顶部气泡带；缩放按屏幕限制并保持脚底锚点，
-旋转后刷新尺寸。位置以模型原点 CSS px 双写 localStorage 与 ShellPrefs 的 Float。
+窗口尺寸仅包含角色与动作余量；缩放按屏幕限制并保持脚底锚点，旋转后刷新尺寸。
+台词气泡是独立的不可触摸悬浮窗（`DialogueBubbleWindow` + `bubble.html`），排版宽取人物宽 ×1.7、
+至少 240px、不超过屏幕，整页文字完整显示（单页最多 18 字，两行内放下），窗口钳在屏幕内。位置以模型原点 CSS px 双写 localStorage 与 ShellPrefs 的 Float。
 透明格通过命中掩码暂时切换触摸能力；此机制不等于保证系统重投最初 DOWN，
 穿透手感需要真机确认。
 
