@@ -109,6 +109,9 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
             topMargin = (10 * density).roundToInt()
             marginEnd = (12 * density).roundToInt()
         })
+        // 菜单键在遮罩之上：启动期间先藏起，与角色一起随遮罩淡出出现。
+        menuBtn.alpha = 0f
+        menuBtn.isEnabled = false
         setContentView(root)
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -187,6 +190,8 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         view.animate().alpha(0f).setDuration(PAGE_IN_MS)
             .withEndAction { root.removeView(view) }
             .start()
+        menuBtn.isEnabled = true
+        if (pages.isEmpty()) menuBtn.animate().alpha(1f).setDuration(PAGE_IN_MS).start()
     }
 
     private fun createWebView(): WebView = PetWebViewFactory.create(this, ShellBridge(this), chooseFiles = { callback, params ->

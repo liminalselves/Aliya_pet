@@ -57,6 +57,7 @@ export class PetApp {
   private _model: PetModel = null;
   private _running = false;
   private _readyReported = false;
+  private _firstFrameFence: WebGLSync | null = null;
   /** 安卓主界面被辅助页整屏覆盖：渲染循环停摆（见 onShellEvent 'covered'）。 */
   private _covered = false;
   private _frameQueued = false;
@@ -2085,6 +2086,28 @@ export class PetApp {
     this._fpsCap = Math.min(Math.max(n, 5), 60);
   }
 
+  /**
+   * 角色首帧真正上屏后才通知安卓主界面撤掉启动遮罩（悬浮窗壳不处理该动作）。
+   * _render 只是把 GL 命令排进队列：弱 GPU 上 2048 贴图上传、着色器编译与首帧绘制
+   * 可能再拖几百毫秒，此时撤遮罩会先露出 UI、角色后到。用 WebGL2 fence 等 GPU 做完
+   * 首帧，再多等一帧让合成器把它呈现出来；遮罩淡出时角色与 UI 同时可见。
+   */
+  private _checkFirstFrameShown(): void {
+    const gl = this._gl;
+    if (!this._firstFrameFence) {
+      this._firstFrameFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      if (this._firstFrameFence) return;
+    } else if (gl.getSyncParameter(this._firstFrameFence, gl.SYNC_STATUS) !== gl.SIGNALED && !gl.isContextLost()) {
+      return;
+    }
+    if (this._firstFrameFence) gl.deleteSync(this._firstFrameFence);
+    this._firstFrameFence = null;
+    this._readyReported = true;
+    if (platform !== 'android' || this._wrapWindow) return;
+    requestAnimationFrame(() => androidShell()?.shellAction('pet-ready'));
+  }
+
   /** 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。 */
   private _scheduleFrame(): void {
     if (this._frameQueued) return;
@@ -2125,11 +2148,7 @@ export class PetApp {
     // 贴合模式先下发窗口矩形（渲染矩阵使用同一套矩形，变化有一帧过渡）
     if (this._wrapWindow) this._syncWrapWindow();
     this._render();
-    if (!this._readyReported) {
-      // 首帧已画出：通知安卓主界面撤掉启动遮罩（悬浮窗壳不处理该动作）。
-      this._readyReported = true;
-      if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
-    }
+    if (!this._readyReported) this._checkFirstFrameShown();
     this._positionBubble();
     this._positionChatLauncher();
     // 壳命中层：低频上报像素占用掩码（透明区域触摸穿透）
