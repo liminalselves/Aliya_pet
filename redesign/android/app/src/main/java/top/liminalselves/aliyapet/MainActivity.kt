@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var menuBtn: android.widget.ImageButton
+    private var loader: View? = null
     private val pages = mutableListOf<WebView>()
     private var pendingOverlay = false
     private var menuDialog: Dialog? = null
@@ -89,6 +90,10 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         root = FrameLayout(this)
         web = createWebView()
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
+        loader = createLoader()
+        root.addView(loader, FrameLayout.LayoutParams(-1, -1))
+        // 兜底：前端异常未上报 pet-ready 时也不能永远盖住页面（启动故障提示在网页里）。
+        root.postDelayed({ hideLoader() }, LOADER_TIMEOUT_MS)
         menuBtn = android.widget.ImageButton(this).apply {
             setImageResource(R.drawable.ic_menu_dots)
             scaleType = android.widget.ImageView.ScaleType.CENTER
@@ -150,6 +155,38 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
         }
+    }
+
+    /** 启动遮罩：主题底色 + 强调色细圈 + 一行提示，模型首帧画出后淡出。 */
+    private fun createLoader(): View {
+        val density = resources.displayMetrics.density
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.pet_background))
+            isClickable = true
+        }
+        val spinner = android.widget.ProgressBar(this).apply {
+            isIndeterminate = true
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(
+                ContextCompat.getColor(this@MainActivity, R.color.pet_accent))
+        }
+        val size = (32 * density).roundToInt()
+        box.addView(spinner, android.widget.LinearLayout.LayoutParams(size, size))
+        box.addView(android.widget.TextView(this).apply {
+            setText(R.string.loading_pet)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.pet_muted))
+            textSize = 13f
+        }, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = (14 * density).roundToInt() })
+        return box
+    }
+
+    private fun hideLoader() {
+        val view = loader ?: return
+        loader = null
+        view.animate().alpha(0f).setDuration(PAGE_IN_MS)
+            .withEndAction { root.removeView(view) }
+            .start()
     }
 
     private fun createWebView(): WebView = PetWebViewFactory.create(this, ShellBridge(this), chooseFiles = { callback, params ->
@@ -392,6 +429,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
 
     override fun shellAction(action: String) {
         when (action) {
+            "pet-ready" -> hideLoader()
             "back" -> closePage()
             "open-main" -> closeAllPages()
             "open-chat" -> {
@@ -415,6 +453,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
 
 private const val PAGE_IN_MS = 240L
 private const val PAGE_OUT_MS = 180L
+private const val LOADER_TIMEOUT_MS = 15_000L
 
 object ShellBridgeHostDefaults {
     fun openUrl(ctx: android.content.Context, url: String) {

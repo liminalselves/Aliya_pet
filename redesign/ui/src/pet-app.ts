@@ -56,6 +56,7 @@ export class PetApp {
   private _frameBuffer: WebGLFramebuffer = null;
   private _model: PetModel = null;
   private _running = false;
+  private _readyReported = false;
   private _lastFrameTime = 0;
 
   // 逻辑层
@@ -2095,6 +2096,11 @@ export class PetApp {
     // 贴合模式先下发窗口矩形（渲染矩阵使用同一套矩形，变化有一帧过渡）
     if (this._wrapWindow) this._syncWrapWindow();
     this._render();
+    if (!this._readyReported) {
+      // 首帧已画出：通知安卓主界面撤掉启动遮罩（悬浮窗壳不处理该动作）。
+      this._readyReported = true;
+      if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
+    }
     this._positionBubble();
     this._positionChatLauncher();
     // 壳命中层：低频上报像素占用掩码（透明区域触摸穿透）

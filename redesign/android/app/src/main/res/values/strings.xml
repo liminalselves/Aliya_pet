@@ -20,6 +20,7 @@
     <string name="toast_no_browser">没有可用浏览器，请先安装或启用浏览器</string>
     <string name="toast_overlay_start_failed">系统限制了悬浮窗启动，请回到应用重新开启悬浮窗模式</string>
     <string name="toast_open_main">请点击桌宠通知打开主界面</string>
+    <string name="loading_pet">Aliya 正在醒来…</string>
     <string name="toast_file_saved">文件已保存</string>
     <string name="toast_file_failed">文件保存失败，请重试</string>
     <string name="chooser_image">选择图片或拍照</string>

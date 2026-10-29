@@ -22,17 +22,19 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const renderer = Object.create(CubismRenderer.prototype);
   renderer._isPremultipliedAlpha = false;
   renderer._modelColor = { r: 1, g: 1, b: 1, a: 1 };
-  let uploadPremultiplied = false, bound = false;
+  let decodePremultiplied = false, closed = false, bound = false;
   const stopAfterBinding = new Error('texture binding reached');
   const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
-    pixelStorei: (key, value) => { assert.equal(key, 37440); uploadPremultiplied = value === 1; },
+    // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
+    pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
     texImage2D() {}, generateMipmap() {},
   };
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
     bound = true;
-    assert.equal(uploadPremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(decodePremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(closed, true, '上传后释放解码位图');
     for (const opacity of [0, 0.2, 0.6, 1]) {
       const c = renderer.getModelColorWithOpacity(opacity);
       assert.deepEqual([c.r, c.g, c.b, c.a], [opacity, opacity, opacity, opacity]);
@@ -44,10 +46,13 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const { PetModel } = load('pet-model', {
     '@framework/model/cubismusermodel': { CubismUserModel: class {} },
     '@framework/cubismmodelsettingjson': { CubismModelSettingJson: class { constructor() { return setting; } } },
-  }, { Image: class {
-    addEventListener(name, fn) { if (name === 'load') this.loaded = fn; }
-    set src(_) { queueMicrotask(() => this.loaded()); }
-  } });
+  }, {
+    fetch: async () => ({ ok: true, blob: async () => ({}) }),
+    createImageBitmap: async (_, options) => {
+      decodePremultiplied = options?.premultiplyAlpha === 'premultiply';
+      return { close: () => { closed = true; } };
+    },
+  });
   const pet = Object.create(PetModel.prototype);
   Object.assign(pet, { _fetchArrayBuffer: async () => new ArrayBuffer(0), loadModel() {},
     _model: { saveParameters() {}, update() {}, getDrawableCount: () => 1,
