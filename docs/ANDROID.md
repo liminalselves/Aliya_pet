@@ -46,6 +46,8 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
   设置/记录页盖住桌宠时，壳发 `covered`/`uncovered` 停启渲染循环，聊天状态不中断。
 - 启动：原生遮罩（主题底色 + 转圈）盖住页面与菜单键；前端用 WebGL fence 确认角色首帧
   GPU 绘制完成、再等一帧上屏后发 `pet-ready`，遮罩与菜单键一起淡出（弱机上角色与 UI 同时出现）。
+  桌宠显示不依赖会话：聊天 UI 在此之前隐藏，同一时刻才淡入并开始恢复连接（`ChatView.start`），
+  网络请求不与模型加载抢资源。
   启动失败也会发，15s 兜底。贴图用 `createImageBitmap` 离主线程解码，上传后释放位图。衬线字体先加载
   常用字子集 `NotoSerifSC-common.woff2`（约 2.7MB），生僻字才回落完整 25MB 字体；
   台词或字体有变动时运行 `python redesign/scripts/subset-serif-font.py` 重新生成。
