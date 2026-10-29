@@ -116,21 +116,3 @@ test('只读接口网络瞬断重试一次，写接口与超时不重发', async
   await assert.rejects(client.post('/agents/sessions/read', { sessionId: 's' }), /网络异常/);
   assert.equal(calls.length, 1, '写接口不重发');
 });
-
-test('只读缓存：新鲜期直接命中，过期先回旧值后台刷新，并发合并', async () => {
-  const store = new Map();
-  const localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
-  const { cachedFetch } = load('cache', Object.assign({}, loadMskConfig(), { fetchCustomEmojis: async () => [] }), { localStorage });
-  let n = 0;
-  const fetcher = async () => ++n;
-  const [a, b] = await Promise.all([cachedFetch('x', 1000, fetcher), cachedFetch('x', 1000, fetcher)]);
-  assert.equal(a, 1); assert.equal(b, 1); assert.equal(n, 1, '并发请求只发一次');
-  assert.equal(await cachedFetch('x', 1000, fetcher), 1, '新鲜期不请求');
-  assert.equal(n, 1);
-  const [key] = store.keys();
-  store.set(key, JSON.stringify({ at: 0, value: 1 }));
-  assert.equal(await cachedFetch('x', 1000, fetcher), 1, '过期先返回旧值');
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(n, 2, '后台刷新');
-  assert.equal(JSON.parse(store.get(key)).value, 2);
-});

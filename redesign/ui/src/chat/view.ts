@@ -8,8 +8,7 @@ import { ALIYA_CHARACTER_ID, MAX_UPLOAD_BYTES, MskClient, type MskSession } from
 import { MskChatProvider } from './msk/provider';
 import { MskMessageRenderer, type MskRendered } from './rendering/renderer';
 import { normalizeRegexRules } from './rendering/rules';
-import { buildStickerResolver, normalizeCharacterStickers } from './rendering/emoji';
-import { cachedCharacterRules, cachedCustomEmojis } from './msk/cache';
+import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } from './rendering/emoji';
 import type { MskApiCaller } from './rendering/types';
 import { openUrl, platform, shellAction } from '../platform';
 import { loadSettings } from '../settings';
@@ -512,17 +511,17 @@ export class ChatView {
     const client = new MskClient(this.auth.token);
     const api: MskApiCaller = (endpoint, body, s) => client.post('/' + endpoint, body, s);
     try {
-      const [detail, regexRules, timeline] = await Promise.all([
+      const [detail, character, timeline] = await Promise.all([
         api<Record<string, unknown>>('agents/sessions/show', { sessionId: session.id }, signal),
-        cachedCharacterRules(api, session.characterId || ALIYA_CHARACTER_ID),
+        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: session.characterId || ALIYA_CHARACTER_ID }, signal).catch(() => ({ regexRules: [] as unknown[] })),
         client.timeline(session.id, HISTORY_FETCH_LIMIT, signal),
       ]);
       if (signal.aborted) return;
       this.activeSession = session;
       this.historyMayHaveMore = timeline.length >= HISTORY_FETCH_LIMIT;
       this.renderer = new MskMessageRenderer({ api, openUrl: url => { void openUrl(url); }, onImageClick: url => { void openUrl(url); },
-        regexRules: normalizeRegexRules(regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
-        loadEmojis: () => cachedCustomEmojis(api), autoDraw: false,
+        regexRules: normalizeRegexRules(character.regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
+        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false,
         get showGeneratedImages() { return loadSettings().showGeneratedImages; } });
       this.controller.useProvider(new MskChatProvider(client, session.id));
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
