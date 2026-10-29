@@ -3,7 +3,8 @@ import { loadSettings } from '../settings';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from '../chat/msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from '../chat/msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MskClient, type MskSession, type MskTimelineMessage } from '../chat/msk/client';
-import { buildStickerResolver, fetchCustomEmojis, normalizeCharacterStickers } from '../chat/rendering/emoji';
+import { buildStickerResolver, normalizeCharacterStickers } from '../chat/rendering/emoji';
+import { cachedCharacterRules, cachedCustomEmojis } from '../chat/msk/cache';
 import { MskMessageRenderer, type MskRendered } from '../chat/rendering/renderer';
 import { normalizeRegexRules } from '../chat/rendering/rules';
 import type { MskApiCaller } from '../chat/rendering/types';
@@ -98,6 +99,7 @@ class RecordsView {
   private readonly toBottom: HTMLButtonElement;
   private operation: AbortController | null = null;
   private renderer: MskMessageRenderer | null = null;
+  private rendererKey = '';
   private rendered: MskRendered[] = [];
   private contextKey = '';
   /** 已渲染时间线的签名（会话+条数+末条 id）：没变就不动 DOM，杜绝刷新闪烁与滚动跳动。 */
@@ -184,7 +186,7 @@ class RecordsView {
 
       if (navigate) {
         this.meta.textContent = '上下文定位';
-        const ready = await this.ensureRenderer(api, saved.session, operation);
+        const ready = await this.ensureRenderer(api, saved.session, operation, saved.userId);
         if (!ready) return;
         const messages = await client.messagesAround(saved.session.id, navigate.messageId!, operation.signal);
         if (operation.signal.aborted) return;
@@ -215,7 +217,7 @@ class RecordsView {
         if (stickToBottom) this.pinBottom();
         return;
       }
-      const ready = await this.ensureRenderer(api, saved.session, operation);
+      const ready = await this.ensureRenderer(api, saved.session, operation, saved.userId);
       if (!ready) return;
       const count = this.renderLatest(saved.session.id, messages, animate);
       this.signature = signature;
@@ -236,20 +238,27 @@ class RecordsView {
   }
 
   /** 拉取角色渲染配置并重建渲染器；返回 false 表示已中止。仅在确定要渲染时调用。 */
-  private async ensureRenderer(api: MskApiCaller, session: NonNullable<SavedContext['session']>, operation: AbortController): Promise<boolean> {
-    const detail = await api<{ characterStickers?: unknown; characterId?: string }>('agents/sessions/show', { sessionId: session.id }, operation.signal);
-    const character = await api<{ regexRules?: unknown }>('agents/characters/show', {
-      characterId: detail.characterId || session.characterId || ALIYA_CHARACTER_ID,
-    }, operation.signal).catch(() => ({ regexRules: [] as unknown[] }));
+  /**
+   * 渲染器按「账号+会话」复用：贴纸/正则在会话内不变，刷新、focus 回来不再重拉 sessions/show 与 characters/show。
+   * 角色 id 优先用已存会话里的，正则走跨页缓存，与 sessions/show 并行。
+   */
+  private async ensureRenderer(api: MskApiCaller, session: NonNullable<SavedContext['session']>, operation: AbortController, userId: string): Promise<boolean> {
+    const key = `${userId}:${session.id}`;
+    if (this.renderer && this.rendererKey === key) { this.clearRendering(); return true; }
+    const [detail, regexRules] = await Promise.all([
+      api<{ characterStickers?: unknown }>('agents/sessions/show', { sessionId: session.id }, operation.signal),
+      cachedCharacterRules(api, session.characterId || ALIYA_CHARACTER_ID),
+    ]);
     if (operation.signal.aborted) return false;
     this.clearRendering();
+    this.rendererKey = key;
     this.renderer = new MskMessageRenderer({
       api,
       openUrl: url => { void openUrl(url); },
       onImageClick: url => { void openUrl(url); },
-      regexRules: normalizeRegexRules(character.regexRules),
+      regexRules: normalizeRegexRules(regexRules),
       resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
-      loadEmojis: signal => fetchCustomEmojis(api, signal),
+      loadEmojis: () => cachedCustomEmojis(api),
       autoDraw: false,
       get showGeneratedImages() { return loadSettings().showGeneratedImages; },
     });

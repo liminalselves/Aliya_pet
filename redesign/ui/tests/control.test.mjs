@@ -99,3 +99,38 @@ test('message navigation loads visible surrounding records including an old divi
   assert.equal(messages.map(m => m.id).join(','), '100,101,102,103');
   assert.ok(messages.some(m => m.id === '101' && m.role === 'system'));
 });
+
+test('只读接口网络瞬断重试一次，写接口与超时不重发', async () => {
+  const config = loadMskConfig();
+  const { MskClient } = load('client', config, { AbortSignal, crypto });
+  const calls = [];
+  let failures = 1;
+  const client = new MskClient('t', async url => {
+    calls.push(url);
+    if (failures-- > 0) throw new TypeError('Failed to fetch');
+    return { status: 200, json: async () => [] };
+  });
+  assert.deepEqual(await client.timeline('s'), []);
+  assert.equal(calls.length, 2, 'timeline 网络失败后重试成功');
+  calls.length = 0; failures = 1;
+  await assert.rejects(client.post('/agents/sessions/read', { sessionId: 's' }), /网络异常/);
+  assert.equal(calls.length, 1, '写接口不重发');
+});
+
+test('只读缓存：新鲜期直接命中，过期先回旧值后台刷新，并发合并', async () => {
+  const store = new Map();
+  const localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  const { cachedFetch } = load('cache', Object.assign({}, loadMskConfig(), { fetchCustomEmojis: async () => [] }), { localStorage });
+  let n = 0;
+  const fetcher = async () => ++n;
+  const [a, b] = await Promise.all([cachedFetch('x', 1000, fetcher), cachedFetch('x', 1000, fetcher)]);
+  assert.equal(a, 1); assert.equal(b, 1); assert.equal(n, 1, '并发请求只发一次');
+  assert.equal(await cachedFetch('x', 1000, fetcher), 1, '新鲜期不请求');
+  assert.equal(n, 1);
+  const [key] = store.keys();
+  store.set(key, JSON.stringify({ at: 0, value: 1 }));
+  assert.equal(await cachedFetch('x', 1000, fetcher), 1, '过期先返回旧值');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(n, 2, '后台刷新');
+  assert.equal(JSON.parse(store.get(key)).value, 2);
+});

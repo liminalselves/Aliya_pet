@@ -8,7 +8,8 @@ import { ALIYA_CHARACTER_ID, MAX_UPLOAD_BYTES, MskClient, type MskSession } from
 import { MskChatProvider } from './msk/provider';
 import { MskMessageRenderer, type MskRendered } from './rendering/renderer';
 import { normalizeRegexRules } from './rendering/rules';
-import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } from './rendering/emoji';
+import { buildStickerResolver, normalizeCharacterStickers } from './rendering/emoji';
+import { cachedCharacterRules, cachedCustomEmojis } from './msk/cache';
 import type { MskApiCaller } from './rendering/types';
 import { openUrl, platform, shellAction } from '../platform';
 import { loadSettings } from '../settings';
@@ -425,8 +426,16 @@ export class ChatView {
     try {
       const resumed = await this.auth.resumeCallback(signal);
       if (!resumed && !this.auth.token) { this.showConnect(); return; }
-      if (!resumed) await this.auth.validateSaved(signal);
-      if (!signal.aborted) await this.loadSessions(true);
+      if (resumed) { if (!signal.aborted) await this.loadSessions(true); return; }
+      // 已存 token：验权（刷新用户资料）与读会话列表并行，省掉一个串行往返；
+      // token 失效时会话列表同样返回 401，提示一致。
+      // 预取用独立控制器：loadSessions 内 reset() 会中止当前 operation，预取不能随之作废。
+      const prefetch = new AbortController();
+      const sessions = new MskClient(this.auth.token).listAliyaSessions(prefetch.signal);
+      sessions.catch(() => {});
+      try { await this.auth.validateSaved(signal); } catch (e) { prefetch.abort(); throw e; }
+      if (signal.aborted) { prefetch.abort(); return; }
+      await this.loadSessions(true, sessions);
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private async login(token?: string): Promise<void> {
@@ -437,14 +446,14 @@ export class ChatView {
       if (!signal.aborted) await this.loadSessions();
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
-  private async loadSessions(restore = false): Promise<void> {
+  private async loadSessions(restore = false, prefetched?: Promise<MskSession[]>): Promise<void> {
     const signal = this.reset(); this.screen = 'sessions';
     this.syncComposerState();
     // 加载占位也走 stagger 槽位：占位行就是列表的第 0 项，列表落地同位替换，布局不跳。
     this.content.innerHTML = '<p class="muted-note loading-note">正在读取会话</p>'; this.showPanel('选择会话');
     this.animateContent('stagger');
     try {
-      const list = await new MskClient(this.auth.token).listAliyaSessions(signal);
+      const list = await (prefetched ?? new MskClient(this.auth.token).listAliyaSessions(signal));
       if (signal.aborted) return;
       const key = this.sessionKey();
       let savedId: string | null = null;
@@ -503,17 +512,17 @@ export class ChatView {
     const client = new MskClient(this.auth.token);
     const api: MskApiCaller = (endpoint, body, s) => client.post('/' + endpoint, body, s);
     try {
-      const [detail, character, timeline] = await Promise.all([
+      const [detail, regexRules, timeline] = await Promise.all([
         api<Record<string, unknown>>('agents/sessions/show', { sessionId: session.id }, signal),
-        api<{ regexRules?: unknown }>('agents/characters/show', { characterId: session.characterId || ALIYA_CHARACTER_ID }, signal).catch(() => ({ regexRules: [] as unknown[] })),
+        cachedCharacterRules(api, session.characterId || ALIYA_CHARACTER_ID),
         client.timeline(session.id, HISTORY_FETCH_LIMIT, signal),
       ]);
       if (signal.aborted) return;
       this.activeSession = session;
       this.historyMayHaveMore = timeline.length >= HISTORY_FETCH_LIMIT;
       this.renderer = new MskMessageRenderer({ api, openUrl: url => { void openUrl(url); }, onImageClick: url => { void openUrl(url); },
-        regexRules: normalizeRegexRules(character.regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
-        loadEmojis: s => fetchCustomEmojis(api, s), autoDraw: false,
+        regexRules: normalizeRegexRules(regexRules), resolveSticker: buildStickerResolver(normalizeCharacterStickers(detail.characterStickers)),
+        loadEmojis: () => cachedCustomEmojis(api), autoDraw: false,
         get showGeneratedImages() { return loadSettings().showGeneratedImages; } });
       this.controller.useProvider(new MskChatProvider(client, session.id));
       this.controller.replaceHistory(timeline.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
