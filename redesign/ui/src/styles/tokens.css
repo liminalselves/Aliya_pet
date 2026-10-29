@@ -100,6 +100,11 @@
   --al-focus-ring: 0 0 0 2px rgba(226, 155, 163, 0.55);
 }
 
+/* 触摸反馈统一走各控件自己的 :active 底色：去掉 WebView 默认的蓝色点按高亮，
+   以及指针点击后浏览器补画的焦点框；键盘导航仍由各控件的 :focus-visible 焦点环提示。 */
+* { -webkit-tap-highlight-color: transparent; }
+:focus:not(:focus-visible) { outline: none; }
+
 /* ---- 共享动效库：各表面只挂既有 class，不再各自定义关键帧 ----
    入场=上浮淡入（--al-rise 调距离）；出场=下沉淡出（--al-sink）；同容器替换=纯淡入。
    全部只动 transform/opacity。 */
