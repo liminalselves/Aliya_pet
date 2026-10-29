@@ -2144,15 +2144,28 @@ export class PetApp {
     const el = bubble.el;
     // 小窗口适配：只收字号、必要时按可用宽度换行（不整体 transform 缩放，
     // 否则 14px 的字在小窗口会被缩到看不清）。见 dialogue/bubble-fit.ts。
-    const fitKey = `${el.textContent}|${Math.round(vpW)}x${Math.round(vpH)}`;
+    // 非贴合模式下舞台会缩到人物大小，可用宽高取外窗而不是舞台，否则小人物时台词被折成一两个字一行。
+    const availW = this._wrapWindow ? vpW : Math.max(vpW, window.innerWidth);
+    const availH = this._wrapWindow ? vpH : Math.max(vpH, window.innerHeight);
+    const fitKey = `${el.textContent}|${Math.round(availW)}x${Math.round(availH)}|${Math.round(rect.left)}x${Math.round(vpW)}`;
     if (fitKey !== this._bubbleFitKey) {
       this._bubbleFitKey = fitKey;
       const fit = fitBubble(el, {
-        viewportWidth: vpW,
-        viewportHeight: vpH,
-        maxWidth: this._wrapWindow ? 260 : 300,
+        viewportWidth: availW,
+        viewportHeight: availH,
+        // 小人物时上限随人物宽收窄（不低于 180px 保证每行至少七八个字），避免气泡远大于角色。
+        maxWidth: this._wrapWindow ? 260 : Math.min(300, Math.max(180, vpW * 1.4)),
       });
       this._bubbleFitH = fit.height;
+      if (!this._wrapWindow && fit.width > vpW) {
+        // 比舞台宽时 margin auto 居中失效：按人物中线显式定位，并钳在外窗内。
+        const minLeft = 4 - rect.left;
+        const maxLeft = window.innerWidth - rect.left - fit.width - 4;
+        const left = Math.min(Math.max(vpW / 2 - fit.width / 2, minLeft), Math.max(minLeft, maxLeft));
+        el.style.margin = '0';
+        el.style.left = `${Math.round(left)}px`;
+        el.style.right = 'auto';
+      }
     }
     // 舞台上方的透明外窗也可以容纳气泡（固定容量外窗），只钳在窗口顶边内。
     const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headTopCss - this._bubbleFitH - 6);
@@ -2189,6 +2202,9 @@ export class PetApp {
       this._launcherScaleK = k;
       launcher.style.setProperty('--launcher-k', String(k));
     }
+    // 带文字的按钮约 70px（未缩放）：人物剪影宽装不下时收成圆形图标按钮，避免按钮比人还宽。
+    const compact = rect.width / PetApp._renderMarginRatio < 76 * k;
+    if (compact !== launcher.classList.contains('compact')) launcher.classList.toggle('compact', compact);
   }
 
   private _update(dt: number): void {
