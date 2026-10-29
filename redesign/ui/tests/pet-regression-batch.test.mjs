@@ -581,7 +581,7 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
     const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
     const sent = [];
     const app = Object.assign(Object.create(PetApp.prototype), {
-      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400,
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400, _screenH: 800,
       _originCssX: -120, _originCssY: 650, _contentScaleCss: s,
       _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
         getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
@@ -600,7 +600,8 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
     app._positionBubble();
     const shown = app._modelViewportTransform();
     near(sent.at(-1)[2], (shown.originY - bounds.maxY * shown.scale) / dpr);
-    near(sent.at(-1)[3], r.w); near(sent.at(-1)[4], r.h); // 复用原窗口的气泡缩放口径。
+    // 独立气泡窗可比人物宽：排版宽按人物宽放大、至少 240，以屏幕宽为上限；高度取半屏。
+    near(sent.at(-1)[3], Math.min(400 - 16, Math.max(240, r.w * 1.7))); near(sent.at(-1)[4], 400);
     app._bubble.isActive = false; app._positionBubble();
     assert.equal(sent.at(-1), 'hide');
     assert.deepEqual(app._fixedWindowRect(), r, '气泡显隐不重配人物窗口');

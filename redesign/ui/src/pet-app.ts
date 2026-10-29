@@ -230,6 +230,8 @@ export class PetApp {
 
   /** 悬浮窗静态头顶所需的气泡空间（CSS px，含画布已有顶部余量，≈3 行气泡 + 间隙）。 */
   private static readonly _WRAP_BUBBLE_BAND = 116;
+  /** 独立气泡窗的最小排版宽度（CSS px）：20px 字号下每行约 10 个字，单页上限 18 字两行放下。 */
+  private static readonly _nativeBubbleMinWidth = 240;
 
   /** 旧 Android 壳保留 DOM 气泡路径；新壳不再为气泡扩大人物外窗。 */
   private _hasNativeBubble(): boolean {
@@ -2180,8 +2182,14 @@ export class PetApp {
       // 共享实际渲染变换，缩放补间中也跟随当前头顶；移动由壳用窗口坐标同步。
       const t = this._modelViewportTransform();
       const headY = (t.originY - b.maxY * t.scale) / this._dpr;
+      // 气泡是独立窗口，可比人物窗宽（壳侧钳在屏幕内）：可用宽按人物宽放大并以屏幕为上限，
+      // 不能用人物窗宽，否则小尺寸人物时台词被折成一两个字一行。高度同理以屏幕为准。
+      if (!(this._screenW > 0 && this._screenH > 0)) this._refreshShellMetrics();
+      const screenW = this._screenW > 0 ? this._screenW : rect.width;
+      const screenH = this._screenH > 0 ? this._screenH : rect.height * 2;
+      const availW = Math.min(screenW - 16, Math.max(PetApp._nativeBubbleMinWidth, rect.width * 1.7));
       this._androidBubble.sync(bubble.el.textContent ?? '', rect.width / 2, headY,
-        rect.width, rect.height);
+        availW, screenH * 0.5);
       return;
     }
     const vpW = rect.width || 1;

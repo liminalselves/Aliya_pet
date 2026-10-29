@@ -110,8 +110,7 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
-/* 安卓悬浮窗内容贴合模式：头顶气泡空间复用画布顶部余量（见 pet-app _WRAP_BUBBLE_BAND），
-   不足的部分才向上扩窗；窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
+/* 安卓悬浮窗：旧壳在人物窗内画气泡，头顶空间只有 _WRAP_BUBBLE_BAND，限三行。
    translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
 body.overlay-wrap #dialogue-bubble {
   top: 6px;
@@ -124,6 +123,8 @@ body.overlay-wrap #dialogue-bubble {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
+/* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。 */
+body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; display: block; -webkit-line-clamp: unset; }
 
 @media (prefers-reduced-motion: reduce) {
   #dialogue-bubble { animation: none; }
