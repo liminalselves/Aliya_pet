@@ -335,7 +335,7 @@ body.platform-android .mobile-topbar {
   color: var(--al-text-1);
   font-size: 0;
   cursor: pointer;
-  transition: background var(--al-t-fast) var(--al-ease);
+  transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
 }
 .mobile-topbar .back::before {
   content: '';
@@ -346,7 +346,7 @@ body.platform-android .mobile-topbar {
   border-bottom: 2px solid currentColor;
   transform: rotate(45deg);
 }
-.mobile-topbar .back:active { background: var(--al-press-fill); }
+.mobile-topbar .back:active { background: var(--al-press-fill); transform: scale(.92); }
 .mobile-topbar .title { font-size: 17px; font-weight: 600; color: var(--al-text-1); }
 body.platform-android h2 { margin: 26px 4px 10px; font-size: 13px; }
 body.platform-android .card { border-radius: var(--al-r-l); padding: 0 16px; }
@@ -380,7 +380,7 @@ body.platform-android .about { font-size: 13px; }
 
 /* ---- 聊天背景（Android）：缩略图单选网格 ---- */
 .bg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(76px, 1fr)); gap:10px; padding:14px 0 12px; }
-.bg-tile { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:0 !important; background:none !important; border:0; color:var(--al-text-2); font:inherit; font-size:12px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.bg-tile { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:0 !important; background:none !important; border:0; color:var(--al-text-2); font:inherit; font-size:12px; cursor:pointer; transition:color var(--al-t-fast) var(--al-ease); }
 .bg-thumb { position:relative; display:block; aspect-ratio:9 / 16; overflow:hidden; border-radius:var(--al-r-m); background:var(--al-bg-3) center / cover no-repeat; transition:transform var(--al-t-fast) var(--al-ease); }
 /* 描边/选中环画在 ::before 顶层：场景与图片铺满缩略图，inset 阴影会被它们盖住。 */
 .bg-thumb::before { content:''; position:absolute; inset:0; z-index:2; border-radius:inherit; pointer-events:none; box-shadow:inset 0 0 0 1px var(--al-line); transition:box-shadow var(--al-t-fast) var(--al-ease); }
