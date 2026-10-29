@@ -792,10 +792,11 @@ for(const failure of ['construct','initialize-throw','initialize-false','load'])
   initialize(){if(failure==='initialize-throw')throw new Error('initialize failed');return failure!=='initialize-false'}
   async loadModel(){assert.equal(window.__pet,this);assert.equal(typeof window.__applySettingsFromAndroid,'function');throw new Error('load failed')}
  }
- load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)}},
+ const actions=[];
+ load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)},'./platform':{shellAction:a=>actions.push(a)}},
   {window,console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(notices.length,1);assert.equal(errors.length,1);
- assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
+ assert.deepEqual(actions,['pet-ready'],'启动失败也撤掉安卓加载遮罩');assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
  await notices[0][3]();assert.equal(window.location.reloaded,true);
 });
 
