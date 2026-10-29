@@ -2104,8 +2104,12 @@ export class PetApp {
     if (this._firstFrameFence) gl.deleteSync(this._firstFrameFence);
     this._firstFrameFence = null;
     this._readyReported = true;
-    if (platform !== 'android' || this._wrapWindow) return;
-    requestAnimationFrame(() => androidShell()?.shellAction('pet-ready'));
+    requestAnimationFrame(() => {
+      // 角色已上屏：聊天 UI 与角色一起淡入，再开始恢复连接（桌宠显示不依赖会话数据）。
+      document.body.classList.add('pet-ready');
+      this._chatView?.start();
+      if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
+    });
   }
 
   /** 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。 */

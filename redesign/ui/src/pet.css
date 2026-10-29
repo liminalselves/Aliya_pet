@@ -137,6 +137,11 @@ body.android-main { background:var(--al-bg-0); }
 body.android-main #stage { inset:56px 0 20px; transition:bottom var(--al-t-slow) var(--al-ease); }
 body.android-main.chat-open #stage { bottom:116px; }
 
+/* 冷启动：聊天 UI 等角色首帧上屏（pet-app 挂 body.pet-ready）后与角色一起出现，
+   不在角色之前露出连接卡片与输入框。 */
+body:not(.pet-ready) #chat-ui { visibility:hidden; }
+body.pet-ready #chat-ui { animation:al-fade-in var(--al-t-med) var(--al-ease); }
+
 /* Android 主界面聊天背景（chat-background.ts）：铺在角色画布之下，高度钉住首个视口，
    软键盘弹出不挤压；两层图交替淡入，遮罩 --bg-dim 保证角色与文字可读。 */
 .chat-bg { position:fixed; left:0; top:0; width:100%; height:100%; z-index:0; pointer-events:none; overflow:hidden; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }

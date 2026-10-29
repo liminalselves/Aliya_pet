@@ -208,8 +208,14 @@ export class ChatView {
       }).observe(this.panel);
     }
     this.syncComposerState();
+  }
+  /** 开始恢复连接与会话（网络）。桌宠显示不依赖会话数据：安卓主界面在角色首帧上屏后才调用。 */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
     void this.bootstrap();
   }
+  private started = false;
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
