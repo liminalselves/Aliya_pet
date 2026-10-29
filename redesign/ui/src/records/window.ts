@@ -483,7 +483,7 @@ function playEnter(): void {
 if (platform === 'android') {
   document.body.classList.add('android-records');
   const back = document.createElement('button');
-  back.className = 'records-back'; back.textContent = '‹'; back.setAttribute('aria-label', '返回');
+  back.className = 'records-back'; back.setAttribute('aria-label', '返回');
   back.onclick = () => shellAction('back');
   document.querySelector('.records-header')?.prepend(back);
 }

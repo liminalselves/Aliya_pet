@@ -167,7 +167,6 @@ if (platform === 'android') {
   bar.className = 'mobile-topbar';
   const back = document.createElement('button');
   back.className = 'back';
-  back.textContent = '‹';
   back.setAttribute('aria-label', '返回');
   back.addEventListener('click', () => shellAction('back'));
   const title = document.createElement('span');
