@@ -380,17 +380,20 @@ body.platform-android .about { font-size: 13px; }
 /* ---- 聊天背景（Android）：缩略图单选网格 ---- */
 .bg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(76px, 1fr)); gap:10px; padding:14px 0 12px; }
 .bg-tile { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:0 !important; background:none !important; border:0; color:var(--al-text-2); font:inherit; font-size:12px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-.bg-thumb { position:relative; display:block; aspect-ratio:9 / 16; border-radius:var(--al-r-m); background:var(--al-bg-3) center / cover no-repeat; box-shadow:inset 0 0 0 1px var(--al-line); transition:box-shadow var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.bg-thumb { position:relative; display:block; aspect-ratio:9 / 16; overflow:hidden; border-radius:var(--al-r-m); background:var(--al-bg-3) center / cover no-repeat; transition:transform var(--al-t-fast) var(--al-ease); }
+/* 描边/选中环画在 ::before 顶层：场景与图片铺满缩略图，inset 阴影会被它们盖住。 */
+.bg-thumb::before { content:''; position:absolute; inset:0; z-index:2; border-radius:inherit; pointer-events:none; box-shadow:inset 0 0 0 1px var(--al-line); transition:box-shadow var(--al-t-fast) var(--al-ease); }
 .bg-tile.plain .bg-thumb { background-color:var(--al-bg-0); }
 .bg-tile.custom.empty .bg-thumb::after { content:''; position:absolute; inset:0; margin:auto; width:22px; height:22px; background:
   linear-gradient(var(--al-text-3), var(--al-text-3)) center / 2px 22px no-repeat,
   linear-gradient(var(--al-text-3), var(--al-text-3)) center / 22px 2px no-repeat; }
-.bg-tile.custom.empty .bg-thumb { box-shadow:inset 0 0 0 1px var(--al-line-strong); background-color:var(--al-bg-2); }
+.bg-tile.custom.empty .bg-thumb { background-color:var(--al-bg-2); }
+.bg-tile.custom.empty .bg-thumb::before { box-shadow:inset 0 0 0 1px var(--al-line-strong); }
 .bg-tile:active .bg-thumb { transform:scale(.97); }
-.bg-tile.on .bg-thumb { box-shadow:inset 0 0 0 2px var(--al-accent); }
+.bg-tile.on .bg-thumb::before { box-shadow:inset 0 0 0 2px var(--al-accent); }
 .bg-tile.on { color:var(--al-text-1); }
 .bg-tile:focus-visible { outline:none; }
-.bg-tile:focus-visible .bg-thumb { box-shadow:var(--al-focus-ring); }
+.bg-tile:focus-visible .bg-thumb::before { box-shadow:inset 0 0 0 2px var(--al-accent-strong); }
 .bg-name { text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bg-actions { display:flex; gap:8px; padding:0 0 12px; }
 .bg-actions[hidden] { display:none; }
