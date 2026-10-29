@@ -298,6 +298,8 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
             .setInterpolator(DecelerateInterpolator(2f))
             .withEndAction {
                 if (pages.lastOrNull() !== page) return@withEndAction
+                // 首个辅助页盖住的是桌宠：停掉它的渲染循环，否则 WebGL 在不可见的页面下继续 30fps 空转。
+                if (current == null) web.evaluateJavascript("window.__pet?.onShellEvent('covered')", null)
                 current?.visibility = View.INVISIBLE
                 current?.onPause()
             }
@@ -307,6 +309,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     private fun closePage(animate: Boolean = true) {
         val page = pages.removeLastOrNull() ?: return
         val current = pages.lastOrNull() ?: web
+        if (pages.isEmpty()) web.evaluateJavascript("window.__pet?.onShellEvent('uncovered')", null)
         current.visibility = View.VISIBLE
         current.onResume()
         current.requestFocus()

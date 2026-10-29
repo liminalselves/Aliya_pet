@@ -57,6 +57,9 @@ export class PetApp {
   private _model: PetModel = null;
   private _running = false;
   private _readyReported = false;
+  /** 安卓主界面被辅助页整屏覆盖：渲染循环停摆（见 onShellEvent 'covered'）。 */
+  private _covered = false;
+  private _frameQueued = false;
   private _lastFrameTime = 0;
 
   // 逻辑层
@@ -1925,7 +1928,7 @@ export class PetApp {
     if (this._running) return;
     this._running = true;
     this._lastFrameTime = performance.now();
-    requestAnimationFrame((t) => this._frame(t));
+    this._scheduleFrame();
     // 后台/熄屏时停止渲染循环（Android 壳与浏览器通用）
     document.addEventListener('visibilitychange', () => {
       this.setPaused(document.hidden);
@@ -1969,12 +1972,23 @@ export class PetApp {
     }
     if (!paused && this._running) {
       this._lastFrameTime = performance.now();
-      requestAnimationFrame((t) => this._frame(t));
+      this._scheduleFrame();
     }
   }
 
   /** 壳事件入口（Android 壳经 evaluateJavascript 调用）。 */
   public onShellEvent(event: string): void {
+    if (event === 'covered' || event === 'uncovered') {
+      // 设置/记录页整屏盖住桌宠：只停渲染循环，不像 pause 那样中断聊天与互动状态。
+      const covered = event === 'covered';
+      if (this._covered === covered) return;
+      this._covered = covered;
+      if (!covered && this._running && !this._paused) {
+        this._lastFrameTime = performance.now();
+        this._scheduleFrame();
+      }
+      return;
+    }
     if (event === 'screen-off' || event === 'pause') this.setPaused(true);
     else if (event === 'screen-on' || event === 'resume') {
       if (platform === 'android') this.applySettings(loadSettings(), this._wrapWindow);
@@ -2063,13 +2077,20 @@ export class PetApp {
     this._fpsCap = Math.min(Math.max(n, 5), 60);
   }
 
+  /** 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。 */
+  private _scheduleFrame(): void {
+    if (this._frameQueued) return;
+    this._frameQueued = true;
+    requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t); });
+  }
+
   private _frame(t: number): void {
-    if (!this._running || this._paused) return;
+    if (!this._running || this._paused || this._covered) return;
 
     // 画内缩放期间临时不限帧，缩放过程按显示器刷新率推进。
     const minInterval = 1000 / (this._deskScale ? 60 : this._fpsCap);
     if (t - this._lastFrameTime < minInterval - 1) {
-      requestAnimationFrame((t2) => this._frame(t2));
+      this._scheduleFrame();
       return;
     }
     // 帧间隔累积推进；长时间欠采样（切后台回来）时重置锚点
@@ -2106,7 +2127,7 @@ export class PetApp {
     // 壳命中层：低频上报像素占用掩码（透明区域触摸穿透）
     this._maybeSendHitMask();
 
-    requestAnimationFrame((t2) => this._frame(t2));
+    this._scheduleFrame();
   }
 
   /**
