@@ -1,7 +1,6 @@
 package top.liminalselves.aliyapet
 
 import android.Manifest
-import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -14,7 +13,6 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -41,7 +39,10 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     private var loader: View? = null
     private val pages = mutableListOf<WebView>()
     private var pendingOverlay = false
-    private var menuDialog: Dialog? = null
+    private var menuHost: FrameLayout? = null
+    private var menuScrim: View? = null
+    private var menuSheet: MenuSheetLayout? = null
+    private var menuOpen = false
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     /** 本次选择器里相机的输出文件；用户选了拍照且成功时作为结果交回网页。 */
     private var cameraOutput: java.io.File? = null
@@ -113,6 +114,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         menuBtn.alpha = 0f
         menuBtn.isEnabled = false
         setContentView(root)
+        buildMenuSheet()
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -135,6 +137,7 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (menuOpen) { hideMenuSheet(); return }
                 if (ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true) {
                     androidx.core.view.WindowInsetsControllerCompat(window, root).hide(WindowInsetsCompat.Type.ime())
                     return
@@ -269,7 +272,6 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     }
 
     override fun onDestroy() {
-        menuDialog?.dismiss()
         fileCallback?.onReceiveValue(null)
         fileCallback = null
         pages.forEach { root.removeView(it); it.destroy() }
@@ -348,40 +350,82 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
         menuBtn.animate().alpha(1f).setDuration(PAGE_IN_MS).start()
     }
 
-    private fun showMenuSheet() {
-        if (menuDialog?.isShowing == true) return
-        val dialog = Dialog(this, R.style.MenuSheetDialog)
-        menuDialog = dialog
-        val view = layoutInflater.inflate(R.layout.menu_sheet, null) as MenuSheetLayout
-        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+    /**
+     * 底部菜单：启动时一次建好、常驻在本窗口顶层（INVISIBLE 也参与布局，首开即知高度）。
+     * 不再每次新建 Dialog 窗口：新窗口要 inflate、建 surface、走合成器窗口动画与 dim，
+     * 在 WebGL 页面同时出帧时首帧掉帧明显。现在只动 translationY/alpha，动画期间开硬件层。
+     */
+    private fun buildMenuSheet() {
+        val density = resources.displayMetrics.density
+        val host = FrameLayout(this).apply { visibility = View.INVISIBLE }
+        val scrim = View(this).apply {
+            setBackgroundColor(Color.argb((255 * MENU_SCRIM_ALPHA).roundToInt(), 0, 0, 0))
+            alpha = 0f
+            isClickable = true
+            setOnClickListener { hideMenuSheet() }
+        }
+        val sheet = layoutInflater.inflate(R.layout.menu_sheet, host, false) as MenuSheetLayout
+        host.addView(scrim, FrameLayout.LayoutParams(-1, -1))
+        host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        // 盖在 decor 上而非 root 内：root 的系统栏 padding 不影响它，面板一直铺到导航栏下面。
+        (window.decorView as ViewGroup).addView(host, ViewGroup.LayoutParams(-1, -1))
+        ViewCompat.setOnApplyWindowInsetsListener(sheet) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, (12 * resources.displayMetrics.density).roundToInt() + bars.bottom)
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, (12 * density).roundToInt() + bars.bottom)
             insets
         }
-        dialog.setContentView(view)
-        view.onDismissed = { dialog.dismiss() }
-        dialog.show()
-        dialog.window?.apply {
-            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(this, false)
-            setGravity(Gravity.BOTTOM)
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply { dimAmount = 0.35f }
-            @Suppress("DEPRECATION")
-            run { navigationBarColor = ContextCompat.getColor(this@MainActivity, R.color.pet_surface) }
-            androidx.core.view.WindowInsetsControllerCompat(this, view).isAppearanceLightNavigationBars = false
-        }
-        val actions = mapOf(
+        sheet.onDragProgress = { p -> scrim.alpha = (1f - p).coerceIn(0f, 1f) }
+        sheet.onDismissed = { finishMenuHidden() }
+        mapOf(
             R.id.menu_settings to "open-settings",
             R.id.menu_chat to "open-chat",
             R.id.menu_records to "open-records",
             R.id.menu_overlay to "enter-overlay",
             R.id.menu_about to "open-about",
             R.id.menu_quit to "exit"
-        )
-        actions.forEach { (id, action) ->
-            view.findViewById<View>(id).setOnClickListener { dialog.dismiss(); shellAction(action) }
+        ).forEach { (id, action) ->
+            sheet.findViewById<View>(id).setOnClickListener { hideMenuSheet(); shellAction(action) }
         }
+        menuHost = host
+        menuScrim = scrim
+        menuSheet = sheet
+    }
+
+    private fun showMenuSheet() {
+        val host = menuHost ?: return
+        val sheet = menuSheet ?: return
+        val scrim = menuScrim ?: return
+        if (menuOpen) return
+        menuOpen = true
+        sheet.resetState()
+        scrim.animate().cancel()
+        val from = sheet.height.takeIf { it > 0 }?.toFloat() ?: resources.displayMetrics.heightPixels.toFloat()
+        if (host.visibility != View.VISIBLE) sheet.translationY = from
+        host.visibility = View.VISIBLE
+        scrim.animate().alpha(1f).setDuration(MENU_IN_MS).setInterpolator(DecelerateInterpolator(1.5f)).start()
+        sheet.animate().translationY(0f).setDuration(MENU_IN_MS)
+            .setInterpolator(DecelerateInterpolator(2.2f)).setUpdateListener(null).withLayer().start()
+    }
+
+    private fun hideMenuSheet() {
+        val sheet = menuSheet ?: return
+        val scrim = menuScrim ?: return
+        if (!menuOpen) return
+        menuOpen = false
+        scrim.animate().cancel()
+        scrim.animate().alpha(0f).setDuration(MENU_OUT_MS).setInterpolator(AccelerateInterpolator(1.2f)).start()
+        sheet.animate().translationY(sheet.height.toFloat()).setDuration(MENU_OUT_MS)
+            .setInterpolator(AccelerateInterpolator(1.5f)).setUpdateListener(null).withLayer()
+            .withEndAction { if (!menuOpen) menuHost?.visibility = View.INVISIBLE }
+            .start()
+    }
+
+    /** 下拉关闭：面板自己已滑出，这里只收尾遮罩与可见性。 */
+    private fun finishMenuHidden() {
+        menuOpen = false
+        menuScrim?.animate()?.cancel()
+        menuScrim?.alpha = 0f
+        menuHost?.visibility = View.INVISIBLE
     }
 
     private fun enterOverlay() {
@@ -461,6 +505,9 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
 
 private const val PAGE_IN_MS = 240L
 private const val PAGE_OUT_MS = 180L
+private const val MENU_IN_MS = 280L
+private const val MENU_OUT_MS = 200L
+private const val MENU_SCRIM_ALPHA = 0.35f
 private const val LOADER_TIMEOUT_MS = 15_000L
 
 object ShellBridgeHostDefaults {

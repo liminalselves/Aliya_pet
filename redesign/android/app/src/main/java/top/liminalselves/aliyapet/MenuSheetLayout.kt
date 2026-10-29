@@ -30,6 +30,16 @@ class MenuSheetLayout @JvmOverloads constructor(
     private var tracker: VelocityTracker? = null
     private var dismissing = false
 
+    /** 拖动下移时回调当前位移比例（0=完全展开，1=完全收起），遮罩随之变淡。 */
+    var onDragProgress: ((Float) -> Unit)? = null
+
+    /** 复用同一个视图：每次打开前清掉上次下拉关闭留下的状态。 */
+    fun resetState() {
+        animate().cancel()
+        dragging = false
+        dismissing = false
+    }
+
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -71,6 +81,7 @@ class MenuSheetLayout @JvmOverloads constructor(
                 if (dragging) {
                     // 只跟向下位移，向上拖不回抽（内容不可滚动）
                     translationY = max(0f, ev.rawY - downRawY)
+                    if (height > 0) onDragProgress?.invoke(translationY / height)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -87,6 +98,7 @@ class MenuSheetLayout @JvmOverloads constructor(
                             .translationY(height.toFloat())
                             .setDuration(180)
                             .setInterpolator(AccelerateInterpolator(1.2f))
+                            .setUpdateListener { if (height > 0) onDragProgress?.invoke(translationY / height) }
                             .withEndAction { onDismissed?.invoke() }
                             .start()
                     } else {
@@ -94,6 +106,7 @@ class MenuSheetLayout @JvmOverloads constructor(
                             .translationY(0f)
                             .setDuration(220)
                             .setInterpolator(DecelerateInterpolator(1.6f))
+                            .setUpdateListener { if (height > 0) onDragProgress?.invoke(translationY / height) }
                             .start()
                     }
                 }
