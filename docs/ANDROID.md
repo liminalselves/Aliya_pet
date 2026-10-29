@@ -43,6 +43,11 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
   （实机踩过 `AbortSignal.any`，信号合并用 `msk/client.ts` `combineSignals`）。
 - 渲染开销：安卓 WebGL 关闭 MSAA 与 preserveDrawingBuffer（Live2D 边缘靠贴图
   alpha，保留缓冲在分块 GPU 上每帧多一次整屏拷贝）；Windows 保留两者防缩放闪帧。
+  设置/记录页盖住桌宠时，壳发 `covered`/`uncovered` 停启渲染循环，聊天状态不中断。
+- 启动：原生遮罩（主题底色 + 转圈）盖到前端首帧后发 `pet-ready` 才淡出，启动失败也会发，
+  15s 兜底。贴图用 `createImageBitmap` 离主线程解码，上传后释放位图。衬线字体先加载
+  常用字子集 `NotoSerifSC-common.woff2`（约 2.7MB），生僻字才回落完整 25MB 字体；
+  台词或字体有变动时运行 `python redesign/scripts/subset-serif-font.py` 重新生成。
 - 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
   不用固定高度估算键盘。原生背景与菜单颜色映射共享 `styles/tokens.css`。
 - `WebChromeClient` 接系统文件选择器，托管配置可导入文件；聊天发图（accept 全为 image/*）时
