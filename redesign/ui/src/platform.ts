@@ -79,6 +79,19 @@ function detectPlatform(): PlatformKind {
 
 export const platform: PlatformKind = detectPlatform();
 
+/**
+ * 桌面壳去掉 WebView2 的浏览器右键菜单（返回/刷新/另存为/检查），所有窗口共用；
+ * 输入框与已选中的文字保留系统菜单，复制粘贴照常可用。右键抚摸等交互走 pointer 事件，不受影响。
+ */
+if (platform === 'tauri' && typeof document !== 'undefined') {
+  document.addEventListener('contextmenu', event => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+    if (String(window.getSelection?.() ?? '').trim()) return;
+    event.preventDefault();
+  });
+}
+
 export function androidShell(): AndroidShell | null {
   return platform === 'android'
     ? (window as unknown as { AndroidShell?: AndroidShell }).AndroidShell ?? null
