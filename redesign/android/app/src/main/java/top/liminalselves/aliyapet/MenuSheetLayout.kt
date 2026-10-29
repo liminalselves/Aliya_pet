@@ -54,15 +54,27 @@ class MenuSheetLayout @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
-        tracker?.addMovement(ev)
         when (ev.actionMasked) {
+            // 按在把手/留白等无子 View 接管的区域时，事件直接落到这里：必须消费 DOWN，
+            // 否则后续 MOVE 不再派发，顶部区域无法下拉关闭。
+            MotionEvent.ACTION_DOWN -> {
+                downRawY = ev.rawY
+                dragging = false
+                tracker?.recycle()
+                tracker = VelocityTracker.obtain()
+                tracker?.addMovement(ev)
+                return true
+            }
             MotionEvent.ACTION_MOVE -> {
+                tracker?.addMovement(ev)
+                if (!dragging && ev.rawY - downRawY > slop) dragging = true
                 if (dragging) {
                     // 只跟向下位移，向上拖不回抽（内容不可滚动）
                     translationY = max(0f, ev.rawY - downRawY)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                tracker?.addMovement(ev)
                 if (dragging) {
                     dragging = false
                     tracker?.computeCurrentVelocity(1000)
