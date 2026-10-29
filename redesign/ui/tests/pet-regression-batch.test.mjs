@@ -709,7 +709,7 @@ for (const entry of ['resume', 'startup']) {
       _wrapWindow: wrap, _settings: { ...stale }, _baseFpsCap: 30, _hitAreas: {}, _canvas: { style: {} },
       _originCssX: stale.posX, _originCssY: stale.posY, _appliedRectX: 280, _appliedRectY: 160,
       _contentScaleCss: 100, _rectInited: false, _model: null, _scaleTween: null,
-      _coordination: { activity() {} }, _chatBackground: { apply() {} },
+      _coordination: { activity() {} }, _chatBackground: { apply() {}, setStill() {} },
       _cancelSnapAnimation() {}, setPaused() {}, _reloadAfterContextLoss() {},
     });
     // 主界面 WebView 留在后台，悬浮窗是另一个持有同一份存储的实例。

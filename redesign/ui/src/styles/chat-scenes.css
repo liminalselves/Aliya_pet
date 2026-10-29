@@ -1,0 +1,119 @@
+/**
+ * 内置聊天背景场景（chat-scenes.ts 构建 DOM）。
+ * 场景根是 size 容器：子元素尺寸用 cqw/cqh/cqmin，全屏与缩略图同构，任意宽高比都重新排布。
+ * 构图避让：角色站在中线、脚底约在 78% 高度，回复卡与输入框在下方，装饰集中在上方与两侧。
+ * 守 tokens.css 红线：平涂色块与细线，不用光晕、模糊与发光；动效只走 transform/opacity。
+ */
+.bg-scene { position:absolute; inset:0; overflow:hidden; container-type:size; border-radius:inherit; }
+.bg-scene > *, .bg-scene svg { position:absolute; }
+.bg-scene.still *, .bg-scene.still *::before, .bg-scene.still *::after { animation-play-state:paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .bg-scene *, .bg-scene *::before, .bg-scene *::after { animation-play-state:paused !important; }
+}
+
+/* ---------- 星夜：低饱和夜空、新月、三层远山、偶发流星 ---------- */
+/* 天色自上而下：夜紫 → 黛灰 → 地平线处一抹暮粉（取腮红主色压暗），远山剪影压在暮色上。 */
+.scene-starry { background:linear-gradient(180deg, #120f1b 0%, #1a1524 38%, #2a1e2c 64%, #3d2833 80%, #2a1d25 100%); }
+.scene-starry .stars { inset:0; animation:scene-twinkle 6s ease-in-out infinite alternate; }
+.scene-starry .stars.b { animation-duration:8.5s; animation-delay:-3s; }
+.scene-starry .stars.c { animation-duration:11s; animation-delay:-6s; }
+.scene-starry .star { position:absolute; width:max(1.2px, var(--sz)); height:max(1.2px, var(--sz)); border-radius:50%; background:#efe6dc; opacity:var(--o); }
+.scene-starry .star.gold { background:#d9b47c; }
+.scene-starry .star.blush { background:#e29ba3; }
+@keyframes scene-twinkle { from { opacity:1; } to { opacity:.32; } }
+
+/* 新月：内阴影切出月牙（无模糊半径），外圈极淡的地照圆盘交代月体。 */
+.scene-starry .moon {
+  --m:min(22cqmin, 26cqh);
+  top:11cqh; right:13cqw; width:var(--m); height:var(--m); border-radius:50%;
+  box-shadow:inset calc(var(--m) * -.24) calc(var(--m) * .1) 0 0 #efe2d3;
+  background:rgba(239, 226, 211, .06);
+  animation:scene-float 14s ease-in-out infinite alternate;
+}
+@keyframes scene-float { from { transform:translateY(-.5cqh); } to { transform:translateY(.7cqh); } }
+
+.scene-starry .meteor {
+  top:16cqh; left:12cqw; width:26cqmin; height:max(1px, .22cqmin); border-radius:1px;
+  background:linear-gradient(90deg, rgba(239, 226, 211, 0), rgba(239, 226, 211, .85));
+  transform-origin:100% 50%; opacity:0;
+  animation:scene-meteor 17s cubic-bezier(.3, 0, .2, 1) infinite; animation-delay:4s;
+}
+@keyframes scene-meteor {
+  0%, 88% { opacity:0; transform:rotate(24deg) translateX(0) scaleX(.4); }
+  90% { opacity:1; }
+  96%, 100% { opacity:0; transform:rotate(24deg) translateX(44cqmin) scaleX(1); }
+}
+
+.scene-starry .hills { left:0; bottom:0; width:100%; height:34cqh; }
+.scene-starry .hills .far { fill:#3a2836; }
+.scene-starry .hills .mid { fill:#271c27; }
+.scene-starry .hills .near { fill:#161218; }
+
+/* ---------- 圆窗：暖墨墙面中的月洞窗，窗外月色与花枝，花瓣慢落 ---------- */
+.scene-window { background:linear-gradient(180deg, #1d1918 0%, #221c1b 70%, #1a1514 100%); }
+.scene-window .floor { left:0; right:0; bottom:0; height:22cqh; background:#171211; box-shadow:inset 0 1px 0 rgba(255, 246, 236, .07); }
+/* 窗框是两道无模糊的扩散阴影，窗心对准角色头肩，人物像站在月洞窗前。 */
+.scene-window .win {
+  --d:min(78cqw, 47cqh);
+  left:50%; top:39cqh; width:var(--d); height:var(--d); border-radius:50%; overflow:hidden;
+  transform:translate(-50%, -50%);
+  background:linear-gradient(180deg, #23223a 0%, #3a2f47 62%, #533a4a 100%);
+  box-shadow:0 0 0 max(3px, 1.3cqmin) #3a302c, 0 0 0 max(4px, 1.9cqmin) #2a2220;
+}
+.scene-window .win-moon { position:absolute; left:26%; top:20%; width:20%; height:20%; border-radius:50%; background:#e8d9c8; opacity:.92; animation:scene-float 16s ease-in-out infinite alternate; }
+.scene-window .win-view { inset:0; width:100%; height:100%; }
+.scene-window .ridge { fill:#241c2a; }
+.scene-window .branch { stroke:#1a1316; }
+.scene-window .blossom { fill:#d98f99; }
+.scene-window .blossom.light { fill:#f0c4c9; }
+.scene-window .branch, .scene-window .blossom {
+  transform-box:view-box; transform-origin:100% 30%;
+  animation:scene-sway 9s ease-in-out infinite alternate;
+}
+@keyframes scene-sway { from { transform:rotate(-1.4deg); } to { transform:rotate(1.2deg); } }
+
+.scene-window .petal {
+  top:-4cqh; width:max(4px, 1.7cqmin); height:max(3px, 1.15cqmin);
+  border-radius:70% 0 70% 0; background:#e29ba3; opacity:0;
+  animation:scene-petal linear infinite;
+}
+@keyframes scene-petal {
+  0% { opacity:0; transform:translate(0, 0) rotate(0) scale(var(--s)); }
+  8% { opacity:var(--o); }
+  85% { opacity:var(--o); }
+  100% { opacity:0; transform:translate(var(--dx), 110cqh) rotate(var(--r)) scale(var(--s)); }
+}
+
+/* ---------- 涟漪：极简几何，脚下水纹扩散，两道轨道缓转 ---------- */
+/* 冷暖分层：上方瞳紫的深夜，下方腮红地面；背后一轮实心淡月盘托住角色轮廓。 */
+.scene-ripple { background:linear-gradient(180deg, #14121d 0%, #1b1726 55%, #261c26 78%, #1d161c 100%); }
+.scene-ripple .disc { left:50%; top:40cqh; width:min(70cqw, 44cqh); height:min(70cqw, 44cqh); border-radius:50%; transform:translate(-50%, -50%); background:linear-gradient(180deg, rgba(171, 164, 224, .1), rgba(226, 155, 163, .07)); }
+.scene-ripple .horizon { left:0; right:0; top:78cqh; height:1px; background:linear-gradient(90deg, transparent, rgba(226, 155, 163, .28) 30%, rgba(226, 155, 163, .28) 70%, transparent); }
+.scene-ripple .orbit, .scene-ripple .orbiter {
+  left:50%; top:44cqh; border-radius:50%; transform:translate(-50%, -50%);
+}
+.scene-ripple .outer { width:min(120cqw, 76cqh); height:min(120cqw, 76cqh); }
+.scene-ripple .inner { width:min(84cqw, 53cqh); height:min(84cqw, 53cqh); }
+.scene-ripple .orbit.outer { box-shadow:inset 0 0 0 1px rgba(255, 246, 236, .1); }
+.scene-ripple .orbit.inner { box-shadow:inset 0 0 0 1px rgba(171, 164, 224, .18); }
+.scene-ripple .orbiter { animation:scene-orbit 90s linear infinite; }
+.scene-ripple .orbiter.inner { animation-duration:64s; animation-direction:reverse; }
+.scene-ripple .orbiter::after {
+  content:''; position:absolute; left:50%; top:0; width:max(3px, .9cqmin); height:max(3px, .9cqmin);
+  border-radius:50%; background:#d9b47c; transform:translate(-50%, -50%);
+}
+.scene-ripple .orbiter.inner::after { background:#aba4e0; width:max(2.5px, .7cqmin); height:max(2.5px, .7cqmin); }
+@keyframes scene-orbit { from { transform:translate(-50%, -50%) rotate(0); } to { transform:translate(-50%, -50%) rotate(360deg); } }
+
+.scene-ripple .ground, .scene-ripple .ring {
+  --w:min(92cqw, 58cqh);
+  left:50%; top:78cqh; width:var(--w); height:calc(var(--w) * .2); border-radius:50%;
+  transform:translate(-50%, -50%);
+}
+.scene-ripple .ground { background:rgba(226, 155, 163, .07); box-shadow:inset 0 0 0 1px rgba(226, 155, 163, .2); }
+.scene-ripple .ring { box-shadow:inset 0 0 0 1px rgba(226, 155, 163, .5); opacity:0; animation:scene-ripple 10s cubic-bezier(.2, .6, .3, 1) infinite; }
+@keyframes scene-ripple {
+  0% { opacity:0; transform:translate(-50%, -50%) scale(.25); }
+  12% { opacity:.55; }
+  100% { opacity:0; transform:translate(-50%, -50%) scale(1.45); }
+}

@@ -691,6 +691,7 @@ export class PetApp {
           this._chatBackgroundKey = key;
           void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
         }
+        this._syncBackgroundMotion();
       }
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
@@ -1957,10 +1958,16 @@ export class PetApp {
     location.reload();
   }
 
+  /** 背景场景动画：省电模式、后台、被辅助页盖住时冻结（与角色渲染循环同步停启）。 */
+  private _syncBackgroundMotion(): void {
+    this._chatBackground?.setStill(this._paused || this._covered || !!this._settings?.batterySaver);
+  }
+
   /** 暂停/恢复渲染循环（屏幕熄灭、切后台）。 */
   public setPaused(paused: boolean): void {
     if (this._paused === paused) return;
     this._paused = paused;
+    this._syncBackgroundMotion();
     if (paused) {
       this._chat?.stop();
       this._cancelInteraction();
@@ -1983,6 +1990,7 @@ export class PetApp {
       const covered = event === 'covered';
       if (this._covered === covered) return;
       this._covered = covered;
+      this._syncBackgroundMotion();
       if (!covered && this._running && !this._paused) {
         this._lastFrameTime = performance.now();
         this._scheduleFrame();
