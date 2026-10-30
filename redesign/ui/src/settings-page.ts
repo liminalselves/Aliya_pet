@@ -28,7 +28,7 @@ import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
-import { CUSTOM_BACKGROUND, NO_BACKGROUND, PRESET_BACKGROUNDS, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
+import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
 import './settings.css';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
@@ -167,7 +167,6 @@ if (platform === 'android') {
   bar.className = 'mobile-topbar';
   const back = document.createElement('button');
   back.className = 'back';
-  back.textContent = '‹';
   back.setAttribute('aria-label', '返回');
   back.addEventListener('click', () => shellAction('back'));
   const title = document.createElement('span');
@@ -446,7 +445,6 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const wrap = document.createElement('div');
   wrap.className = 'slider-row';
   wrap.style.flex = '1';
-  wrap.style.marginLeft = '12px';
   const minus = document.createElement('button');
   minus.textContent = '−';
   const plus = document.createElement('button');
@@ -567,14 +565,15 @@ if (platform === 'android') {
   let customUrl: string | null = null;
   let hasCustom = false;
   const tiles = new Map<string, HTMLButtonElement>();
-  const tile = (id: string, name: string, preview: string | null, extraClass = '') => {
+  const tile = (id: string, name: string, preview: HTMLElement | null, extraClass = '') => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = `bg-tile ${extraClass}`.trim();
     b.setAttribute('role', 'radio');
     const thumb = document.createElement('span');
     thumb.className = 'bg-thumb';
-    if (preview) thumb.style.backgroundImage = `url("${preview}")`;
+    // 缩略图就是缩小的真实场景（容器查询单位随缩略图尺寸排布），只在选中时播放动画。
+    if (preview) thumb.append(preview);
     const label = document.createElement('span');
     label.className = 'bg-name';
     label.textContent = name;
@@ -588,6 +587,7 @@ if (platform === 'android') {
       const on = settings.chatBackground === id;
       b.classList.toggle('on', on);
       b.setAttribute('aria-checked', String(on));
+      b.querySelector('.bg-scene')?.classList.toggle('still', !on);
     }
     const custom = tiles.get(CUSTOM_BACKGROUND)!;
     const thumb = custom.querySelector<HTMLElement>('.bg-thumb')!;
@@ -598,8 +598,8 @@ if (platform === 'android') {
     dimRow.classList.toggle('inactive', settings.chatBackground === NO_BACKGROUND);
   };
   tile(NO_BACKGROUND, '无背景', null, 'plain').addEventListener('click', () => { update({ chatBackground: NO_BACKGROUND }); sync(); });
-  for (const p of PRESET_BACKGROUNDS) {
-    tile(p.id, p.name, p.url).addEventListener('click', () => { update({ chatBackground: p.id }); sync(); });
+  for (const p of CHAT_SCENES) {
+    tile(p.id, p.name, p.build()).addEventListener('click', () => { update({ chatBackground: p.id }); sync(); });
   }
   tile(CUSTOM_BACKGROUND, '上传图片', null, 'custom').addEventListener('click', () => {
     if (hasCustom) { update({ chatBackground: CUSTOM_BACKGROUND }); sync(); }
@@ -657,7 +657,6 @@ if (platform === 'android') {
   const dimWrap = document.createElement('div');
   dimWrap.className = 'slider-row';
   dimWrap.style.flex = '1';
-  dimWrap.style.marginLeft = '12px';
   const dim = document.createElement('input');
   dim.type = 'range';
   dim.min = '0';

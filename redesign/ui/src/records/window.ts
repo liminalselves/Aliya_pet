@@ -235,12 +235,17 @@ class RecordsView {
     }
   }
 
-  /** 拉取角色渲染配置并重建渲染器；返回 false 表示已中止。仅在确定要渲染时调用。 */
+  /**
+   * 拉取角色渲染配置并重建渲染器；返回 false 表示已中止。仅在确定要渲染时调用。
+   * 已存会话带角色 id 时，会话详情与角色正则并行请求；缺失时仍先取详情里的角色 id。
+   */
   private async ensureRenderer(api: MskApiCaller, session: NonNullable<SavedContext['session']>, operation: AbortController): Promise<boolean> {
-    const detail = await api<{ characterStickers?: unknown; characterId?: string }>('agents/sessions/show', { sessionId: session.id }, operation.signal);
-    const character = await api<{ regexRules?: unknown }>('agents/characters/show', {
-      characterId: detail.characterId || session.characterId || ALIYA_CHARACTER_ID,
-    }, operation.signal).catch(() => ({ regexRules: [] as unknown[] }));
+    const showDetail = () => api<{ characterStickers?: unknown; characterId?: string }>('agents/sessions/show', { sessionId: session.id }, operation.signal);
+    const showCharacter = (characterId: string) => api<{ regexRules?: unknown }>('agents/characters/show', { characterId }, operation.signal)
+      .catch(() => ({ regexRules: [] as unknown[] }));
+    const [detail, character] = session.characterId
+      ? await Promise.all([showDetail(), showCharacter(session.characterId)])
+      : await showDetail().then(async d => [d, await showCharacter(d.characterId || ALIYA_CHARACTER_ID)] as const);
     if (operation.signal.aborted) return false;
     this.clearRendering();
     this.renderer = new MskMessageRenderer({
@@ -483,7 +488,7 @@ function playEnter(): void {
 if (platform === 'android') {
   document.body.classList.add('android-records');
   const back = document.createElement('button');
-  back.className = 'records-back'; back.textContent = '‹'; back.setAttribute('aria-label', '返回');
+  back.className = 'records-back'; back.setAttribute('aria-label', '返回');
   back.onclick = () => shellAction('back');
   document.querySelector('.records-header')?.prepend(back);
 }

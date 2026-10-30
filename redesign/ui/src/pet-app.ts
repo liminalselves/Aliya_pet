@@ -9,7 +9,7 @@ import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
-import { fitBubble } from './dialogue/bubble-fit';
+import { bubbleFontFor, fitBubble } from './dialogue/bubble-fit';
 import { AndroidDialogueBubble } from './dialogue/android-bubble';
 import { HitAreas } from './interaction/hit-areas';
 import { showStartupNotice } from './startup-notice';
@@ -56,6 +56,11 @@ export class PetApp {
   private _frameBuffer: WebGLFramebuffer = null;
   private _model: PetModel = null;
   private _running = false;
+  private _readyReported = false;
+  private _firstFrameFence: WebGLSync | null = null;
+  /** 安卓主界面被辅助页整屏覆盖：渲染循环停摆（见 onShellEvent 'covered'）。 */
+  private _covered = false;
+  private _frameQueued = false;
   private _lastFrameTime = 0;
 
   // 逻辑层
@@ -234,6 +239,7 @@ export class PetApp {
   /** 气泡适配缓存：文本/视口变化时重算字号与换行（见 _positionBubble）。 */
   private _bubbleFitKey = '';
   private _bubbleFitH = 0;
+  private _bubbleFitW = 0;
 
   /** 鼠标穿透掩码列数（行数按窗口纵横比推导）。 */
   /** 原生穿透掩码列数：48 列时一格 ≈ 8 CSS px，头顶发梢旁的整格透明区也会被吞点击。 */
@@ -265,6 +271,7 @@ export class PetApp {
     // 页面重载时也清掉上一次 JS 会话留下的原生气泡。
     if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
+    if (platform === 'android' && !this._wrapWindow) this._pinMainStageHeight();
 
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
@@ -687,6 +694,7 @@ export class PetApp {
           this._chatBackgroundKey = key;
           void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
         }
+        this._syncBackgroundMotion();
       }
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
@@ -1511,20 +1519,28 @@ export class PetApp {
 
   // ---------- 台词 ----------
 
+  /**
+   * 聊天占用台词位：Windows 独立聊天窗打开，或内嵌聊天正显示回复/连接/记录面板。
+   * 安卓主界面聊天常开但平时只有输入框，此时桌宠照常说台词（与悬浮窗一致）。
+   */
+  private _chatHoldsSpeech(): boolean {
+    return this._remoteChat.open || (this._chatView?.panelVisible ?? false);
+  }
+
   private _speak(resolved: ResolvedDialogue, source: SpeechSource): void {
-    if ((this._remoteChat.open || this._chatView?.isOpen) && source !== 'conversation') return;
+    if (this._chatHoldsSpeech() && source !== 'conversation') return;
     if (this._coordination.canSpeak(source)) void this._bubble?.play(resolved);
   }
 
   private _playInteraction(tag: string): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak('interaction')) return;
+    if (this._chatHoldsSpeech() || !this._coordination.canSpeak('interaction')) return;
     const resolved = this._dialogue.resolveSceneTag('interaction', tag)
       ?? this._dialogue.resolveSceneTag('interaction', 'body');
     if (resolved) this._speak(resolved, 'interaction');
   }
 
   private _playRandom(source: 'ambient' | 'manual' = 'ambient'): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak(source)) return;
+    if (this._chatHoldsSpeech() || !this._coordination.canSpeak(source)) return;
     const resolved = this._dialogue.resolveRandom();
     if (resolved) this._speak(resolved, source);
   }
@@ -1924,7 +1940,7 @@ export class PetApp {
     if (this._running) return;
     this._running = true;
     this._lastFrameTime = performance.now();
-    requestAnimationFrame((t) => this._frame(t));
+    this._scheduleFrame();
     // 后台/熄屏时停止渲染循环（Android 壳与浏览器通用）
     document.addEventListener('visibilitychange', () => {
       this.setPaused(document.hidden);
@@ -1953,10 +1969,16 @@ export class PetApp {
     location.reload();
   }
 
+  /** 背景场景动画：省电模式、后台、被辅助页盖住时冻结（与角色渲染循环同步停启）。 */
+  private _syncBackgroundMotion(): void {
+    this._chatBackground?.setStill(this._paused || this._covered || !!this._settings?.batterySaver);
+  }
+
   /** 暂停/恢复渲染循环（屏幕熄灭、切后台）。 */
   public setPaused(paused: boolean): void {
     if (this._paused === paused) return;
     this._paused = paused;
+    this._syncBackgroundMotion();
     if (paused) {
       this._chat?.stop();
       this._cancelInteraction();
@@ -1968,12 +1990,24 @@ export class PetApp {
     }
     if (!paused && this._running) {
       this._lastFrameTime = performance.now();
-      requestAnimationFrame((t) => this._frame(t));
+      this._scheduleFrame();
     }
   }
 
   /** 壳事件入口（Android 壳经 evaluateJavascript 调用）。 */
   public onShellEvent(event: string): void {
+    if (event === 'covered' || event === 'uncovered') {
+      // 设置/记录页整屏盖住桌宠：只停渲染循环，不像 pause 那样中断聊天与互动状态。
+      const covered = event === 'covered';
+      if (this._covered === covered) return;
+      this._covered = covered;
+      this._syncBackgroundMotion();
+      if (!covered && this._running && !this._paused) {
+        this._lastFrameTime = performance.now();
+        this._scheduleFrame();
+      }
+      return;
+    }
     if (event === 'screen-off' || event === 'pause') this.setPaused(true);
     else if (event === 'screen-on' || event === 'resume') {
       if (platform === 'android') this.applySettings(loadSettings(), this._wrapWindow);
@@ -2062,13 +2096,46 @@ export class PetApp {
     this._fpsCap = Math.min(Math.max(n, 5), 60);
   }
 
+  /**
+   * 角色首帧真正上屏后才通知安卓主界面撤掉启动遮罩（悬浮窗壳不处理该动作）。
+   * _render 只是把 GL 命令排进队列：弱 GPU 上 2048 贴图上传、着色器编译与首帧绘制
+   * 可能再拖几百毫秒，此时撤遮罩会先露出 UI、角色后到。用 WebGL2 fence 等 GPU 做完
+   * 首帧，再多等一帧让合成器把它呈现出来；遮罩淡出时角色与 UI 同时可见。
+   */
+  private _checkFirstFrameShown(): void {
+    const gl = this._gl;
+    if (!this._firstFrameFence) {
+      this._firstFrameFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      if (this._firstFrameFence) return;
+    } else if (gl.getSyncParameter(this._firstFrameFence, gl.SYNC_STATUS) !== gl.SIGNALED && !gl.isContextLost()) {
+      return;
+    }
+    if (this._firstFrameFence) gl.deleteSync(this._firstFrameFence);
+    this._firstFrameFence = null;
+    this._readyReported = true;
+    requestAnimationFrame(() => {
+      // 角色已上屏：聊天 UI 与角色一起淡入，再开始恢复连接（桌宠显示不依赖会话数据）。
+      document.body.classList.add('pet-ready');
+      this._chatView?.start();
+      if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
+    });
+  }
+
+  /** 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。 */
+  private _scheduleFrame(): void {
+    if (this._frameQueued) return;
+    this._frameQueued = true;
+    requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t); });
+  }
+
   private _frame(t: number): void {
-    if (!this._running || this._paused) return;
+    if (!this._running || this._paused || this._covered) return;
 
     // 画内缩放期间临时不限帧，缩放过程按显示器刷新率推进。
     const minInterval = 1000 / (this._deskScale ? 60 : this._fpsCap);
     if (t - this._lastFrameTime < minInterval - 1) {
-      requestAnimationFrame((t2) => this._frame(t2));
+      this._scheduleFrame();
       return;
     }
     // 帧间隔累积推进；长时间欠采样（切后台回来）时重置锚点
@@ -2095,21 +2162,51 @@ export class PetApp {
     // 贴合模式先下发窗口矩形（渲染矩阵使用同一套矩形，变化有一帧过渡）
     if (this._wrapWindow) this._syncWrapWindow();
     this._render();
+    if (!this._readyReported) this._checkFirstFrameShown();
     this._positionBubble();
     this._positionChatLauncher();
     // 壳命中层：低频上报像素占用掩码（透明区域触摸穿透）
     this._maybeSendHitMask();
 
-    requestAnimationFrame((t2) => this._frame(t2));
+    this._scheduleFrame();
   }
 
   /**
-   * 气泡锚定角色头部（可见才算，~30fps 几个 DOM 读写的成本可忽略）：
-   * 原生独立窗口不受人物画布裁切，并使用实际渲染头顶（含缩放补间）。
-   * 旧壳 DOM 路径在静态头顶上方共留 116px（20px 字号的三行），动作抬头时钳在人物窗口顶边内。
+   * 人物当前显示大小相对基准（scale=1，外窗高 675×1.18）的倍数，含缩放补间。
+   * 台词气泡字号、宽度都由它推出，三种宿主（桌面外窗/悬浮窗/安卓主界面）口径一致。
+   */
+  private _shownSizeFactor(): number {
+    if (!this._model?.isReady()) return 1;
+    const scaleCss = this._modelViewportTransform().scale / this._dpr;
+    const baseScaleCss = 675 * PetApp._windowMarginRatio / PetApp._renderMarginRatio / this._model.boundsH;
+    return scaleCss / baseScaleCss;
+  }
+
+  /**
+   * 安卓主界面：舞台高度钉住首个视口，软键盘弹出（WebView 只变矮）时角色位置与大小不变；
+   * 宽度变化（旋转屏幕）或视口比钉住值更高（键盘收起后首次）才重钉。
+   */
+  private _pinMainStageHeight(): void {
+    const root = document.documentElement;
+    let pinnedW = window.innerWidth;
+    let pinnedH = window.innerHeight;
+    const pin = () => root.style.setProperty('--stage-h', `${pinnedH}px`);
+    pin();
+    window.addEventListener('resize', () => {
+      if (window.innerWidth !== pinnedW) { pinnedW = window.innerWidth; pinnedH = window.innerHeight; pin(); }
+      else if (window.innerHeight > pinnedH) { pinnedH = window.innerHeight; pin(); }
+    });
+  }
+
+  /**
+   * 气泡锚定角色头部（可见才算，~30fps 几个 DOM 读写的成本可忽略）。
+   * 字号与宽度随人物显示大小等比（bubbleFontFor），气泡整体随字号缩放（pet.css 以 em 计）；
+   * 气泡可超出人物宽度，只钳在可用区域（外窗或屏幕）内。
    */
   private _positionBubble(): void {
     const bubble = this._bubble;
+    // 回复面板弹出时台词立即让位（淡出），不与回复卡叠在一起。
+    if (bubble?.isActive && this._chatView?.panelVisible) bubble.cancel();
     if (!bubble?.isActive) {
       if (bubble?.el.classList?.contains('closing')) this._androidBubble?.close();
       else this._androidBubble?.hide();
@@ -2118,44 +2215,42 @@ export class PetApp {
     const b = this._model?.getDynamicBounds();
     if (!b) { this._androidBubble?.hide(); return; }
     const rect = this._canvas.getBoundingClientRect();
+    const t = this._modelViewportTransform();
+    // 头顶 = 实际渲染变换下的包围盒顶边（含缩放补间与动作），画布内 CSS 坐标。
+    const headY = (t.originY - b.maxY * t.scale) / this._dpr;
+    const font = bubbleFontFor(this._shownSizeFactor());
     if (this._androidBubble) {
-      // 共享实际渲染变换，缩放补间中也跟随当前头顶；移动由壳用窗口坐标同步。
-      const t = this._modelViewportTransform();
-      const headY = (t.originY - b.maxY * t.scale) / this._dpr;
+      // 独立气泡窗口不受人物窗裁切，壳侧钳在屏幕内；可用宽只受屏幕限制。
+      if (!(this._screenW > 0 && this._screenH > 0)) this._refreshShellMetrics();
+      const screenW = this._screenW > 0 ? this._screenW : rect.width;
+      const screenH = this._screenH > 0 ? this._screenH : rect.height * 2;
       this._androidBubble.sync(bubble.el.textContent ?? '', rect.width / 2, headY,
-        rect.width, rect.height);
+        screenW - 16, screenH * 0.5, font);
       return;
     }
-    const vpW = rect.width || 1;
-    const vpH = rect.height || 1;
-    let headTopCss: number;
-    if (this._wrapWindow) {
-      // 剪影顶（屏幕 CSS）→ 窗口内坐标
-      headTopCss = this._originCssY - b.maxY * this._contentScaleCss - this._appliedRectY;
-    } else {
-      // 非贴合：原点锚在视口中心，比例与非贴合渲染一致（CSS 口径）
-      const fitH = (this._chatView?.isOpen || platform === 'android') ? Math.min(vpH, vpW / this._model.boundsAspect) : vpH;
-      const natural = fitH / PetApp._renderMarginRatio / (this._model?.boundsH ?? 1);
-      // 缩放补间以静态脚底为锚：头顶 = 脚底 − (maxY − minY)·当前比例，气泡跟着角色一起长高。
-      const s = this._scaleTweenValue() ?? natural;
-      const minY = this._model.getStaticBounds().minY;
-      headTopCss = vpH / 2 - minY * natural - (b.maxY - minY) * s;
-    }
     const el = bubble.el;
-    // 小窗口适配：只收字号、必要时按可用宽度换行（不整体 transform 缩放，
-    // 否则 14px 的字在小窗口会被缩到看不清）。见 dialogue/bubble-fit.ts。
-    const fitKey = `${el.textContent}|${Math.round(vpW)}x${Math.round(vpH)}`;
+    // 可用区域：悬浮窗旧壳只有人物窗；其余取整个外窗（舞台缩到人物大小，气泡可超出舞台）。
+    const availW = this._wrapWindow ? rect.width : window.innerWidth;
+    const availH = this._wrapWindow ? rect.height : window.innerHeight;
+    const fitKey = `${el.textContent}|${font}|${Math.round(availW)}x${Math.round(availH)}|${Math.round(rect.left)}`;
     if (fitKey !== this._bubbleFitKey) {
       this._bubbleFitKey = fitKey;
-      const fit = fitBubble(el, {
-        viewportWidth: vpW,
-        viewportHeight: vpH,
-        maxWidth: this._wrapWindow ? 260 : 300,
-      });
+      const fit = fitBubble(el, { viewportWidth: availW, viewportHeight: availH, baseFont: font });
       this._bubbleFitH = fit.height;
+      this._bubbleFitW = fit.width;
     }
-    // 舞台上方的透明外窗也可以容纳气泡（固定容量外窗），只钳在窗口顶边内。
-    const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headTopCss - this._bubbleFitH - 6);
+    // 水平：对准人物中线，钳在外窗内（气泡比舞台宽时 margin auto 居中会失效，统一显式定位）。
+    const center = rect.width / 2;
+    const minLeft = 4 - (this._wrapWindow ? 0 : rect.left);
+    const maxLeft = (this._wrapWindow ? rect.width : window.innerWidth - rect.left) - this._bubbleFitW - 4;
+    const left = Math.min(Math.max(center - this._bubbleFitW / 2, minLeft), Math.max(minLeft, maxLeft));
+    el.style.margin = '0';
+    el.style.right = 'auto';
+    el.style.left = `${Math.round(left)}px`;
+    // 尾巴始终指向人物中线（气泡被钳在屏幕边时尾巴不跟着偏）。
+    el.style.setProperty('--tail-x', `${Math.round(center - left)}px`);
+    // 垂直：头顶上方留与字号成比例的间隙；舞台上方的透明外窗也可以容纳气泡，只钳在外窗顶边内。
+    const top = Math.max(4 - (this._wrapWindow ? 0 : rect.top), headY - this._bubbleFitH - font * 0.3);
     el.style.top = `${Math.round(top)}px`;
   }
 
@@ -2189,6 +2284,9 @@ export class PetApp {
       this._launcherScaleK = k;
       launcher.style.setProperty('--launcher-k', String(k));
     }
+    // 带文字的按钮约 70px（未缩放）：人物剪影宽装不下时收成圆形图标按钮，避免按钮比人还宽。
+    const compact = rect.width / PetApp._renderMarginRatio < 76 * k;
+    if (compact !== launcher.classList.contains('compact')) launcher.classList.toggle('compact', compact);
   }
 
   private _update(dt: number): void {

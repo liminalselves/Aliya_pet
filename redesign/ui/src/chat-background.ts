@@ -1,16 +1,12 @@
 /**
- * Android 主界面聊天背景：预设图 + 用户自定义图（存 IndexedDB，主界面与设置页同源共享）。
+ * Android 主界面聊天背景：内置动画场景（chat-scenes.ts）+ 用户自定义图（存 IndexedDB，主界面与设置页同源共享）。
  * 选中项与遮罩强度存在设置里（PetSettings.chatBackground / chatBackgroundDim）。
  */
 
-/** 预设背景清单：替换 assets/backgrounds/ 下的文件即可换图，增删条目即可增删选项。 */
-export const PRESET_BACKGROUNDS: ReadonlyArray<{ id: string; name: string; url: string }> = [
-  { id: 'dusk', name: '暮色', url: '/backgrounds/dusk.svg' },
-  { id: 'study', name: '书房', url: '/backgrounds/study.svg' },
-  { id: 'garden', name: '庭院', url: '/backgrounds/garden.svg' },
-];
+import { CHAT_SCENES } from './chat-scenes';
+export { CHAT_SCENES } from './chat-scenes';
 
-/** 'none' = 纯色底；'custom' = 用户上传的图；其余为预设 id。 */
+/** 'none' = 纯色底；'custom' = 用户上传的图；其余为内置场景 id。 */
 export type ChatBackgroundId = string;
 export const NO_BACKGROUND = 'none';
 export const CUSTOM_BACKGROUND = 'custom';
@@ -88,26 +84,30 @@ async function compressImage(file: Blob): Promise<Blob> {
 }
 
 /**
- * 主界面背景层：两层 img 交替淡入，切换时新图解码完成才开始过渡，不闪空底。
- * 层固定按初始视口尺寸铺满（不随软键盘弹出缩放），遮罩强度由 --bg-dim 控制。
+ * 主界面背景层：内置场景（DOM 动画）与自定义图共用同一套淡入交替。
+ * 新内容就绪（图片解码完成）后才开始过渡，不闪空底；层按首个视口尺寸铺满，不随软键盘缩放。
+ *
+ * 自定义图适配：object-fit:cover 铺满任意机型不留边；对焦点按图片与屏幕宽高比自动取——
+ * 图比屏幕瘦长（要裁上下）时取 30% 高度，保住多在上半部的人物/主体；否则居中裁左右。
+ * 旋转屏幕后重新对焦。
  */
 export class ChatBackgroundLayer {
   private readonly root = document.createElement('div');
-  private layers: HTMLImageElement[] = [];
+  private slots: HTMLElement[] = [];
   private front = 0;
   private current = '';
   private objectUrl: string | null = null;
   private token = 0;
+  private still = false;
 
   constructor() {
     this.root.className = 'chat-bg';
     this.root.setAttribute('aria-hidden', 'true');
     for (let i = 0; i < 2; i++) {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.draggable = false;
-      this.layers.push(img);
-      this.root.append(img);
+      const slot = document.createElement('div');
+      slot.className = 'chat-bg-slot';
+      this.slots.push(slot);
+      this.root.append(slot);
     }
     const dim = document.createElement('div');
     dim.className = 'chat-bg-dim';
@@ -119,42 +119,82 @@ export class ChatBackgroundLayer {
     pin();
     window.addEventListener('resize', () => {
       // 只在宽度变化（旋转屏幕）时重钉；仅高度变小视为键盘弹出。
-      if (window.innerWidth !== lastWidth) { lastWidth = window.innerWidth; pin(); }
+      if (window.innerWidth !== lastWidth) { lastWidth = window.innerWidth; pin(); this.refocus(); }
       else if (window.innerHeight > parseFloat(this.root.style.height || '0')) pin();
     });
+  }
+
+  /** 省电模式/暂停渲染时冻结场景动画（只停 CSS 动画，不改画面）。 */
+  setStill(still: boolean): void {
+    this.still = still;
+    for (const slot of this.slots) slot.querySelector('.bg-scene')?.classList.toggle('still', still);
   }
 
   async apply(id: ChatBackgroundId, dim: number): Promise<void> {
     this.root.style.setProperty('--bg-dim', String(Math.min(0.8, Math.max(0, dim))));
     const token = ++this.token;
+    const scene = CHAT_SCENES.find(p => p.id === id);
     let url = '';
     let objectUrl: string | null = null;
     if (id === CUSTOM_BACKGROUND) {
       const blob = await loadCustomBackground();
       if (token !== this.token) return;
       if (blob) { objectUrl = URL.createObjectURL(blob); url = objectUrl; }
-    } else {
-      url = PRESET_BACKGROUNDS.find(p => p.id === id)?.url ?? '';
     }
-    const key = id === CUSTOM_BACKGROUND ? `custom:${url ? 'set' : ''}` : url;
-    if (key === this.current && id !== CUSTOM_BACKGROUND) { if (objectUrl) URL.revokeObjectURL(objectUrl); return; }
-    if (!url) {
+    // 自定义图每次都重读（换图后 rev 变化才会调用到这里）；场景同 id 不重建。
+    const key = scene ? `scene:${scene.id}` : url ? 'custom' : '';
+    if (key === this.current && key !== 'custom') return;
+    if (!key) {
       this.current = '';
-      for (const l of this.layers) l.classList.remove('shown');
+      for (const slot of this.slots) slot.classList.remove('shown');
       this.root.classList.remove('active');
       this.swapObjectUrl(null);
+      this.clearHidden();
       return;
     }
-    const next = this.layers[1 - this.front];
-    next.src = url;
-    try { await next.decode(); } catch { /* 解码失败也照常切换，避免卡在旧图 */ }
-    if (token !== this.token) { if (objectUrl) URL.revokeObjectURL(objectUrl); return; }
+    const next = this.slots[1 - this.front];
+    next.replaceChildren();
+    if (scene) {
+      const el = scene.build();
+      el.classList.toggle('still', this.still);
+      next.append(el);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'chat-bg-img';
+      img.alt = ''; img.draggable = false; img.decoding = 'async'; img.src = url;
+      next.append(img);
+      try { await img.decode(); } catch { /* 解码失败也照常切换，避免卡在旧图 */ }
+      if (token !== this.token) { URL.revokeObjectURL(url); return; }
+      this.focus(img);
+    }
     this.current = key;
     this.root.classList.add('active');
     next.classList.add('shown');
-    this.layers[this.front].classList.remove('shown');
+    this.slots[this.front].classList.remove('shown');
     this.front = 1 - this.front;
     this.swapObjectUrl(objectUrl);
+    this.clearHidden();
+  }
+
+  /** 对焦点：竖图（比屏幕更瘦长）上移到 30%，其余居中。 */
+  private focus(img: HTMLImageElement): void {
+    const imgRatio = img.naturalWidth / Math.max(1, img.naturalHeight);
+    const viewRatio = window.innerWidth / Math.max(1, parseFloat(this.root.style.height) || window.innerHeight);
+    img.style.objectPosition = imgRatio < viewRatio ? '50% 30%' : '50% 50%';
+  }
+
+  private refocus(): void {
+    const img = this.slots[this.front].querySelector<HTMLImageElement>('.chat-bg-img');
+    if (img?.naturalWidth) this.focus(img);
+  }
+
+  /** 淡出结束后清空背面槽，场景动画与解码位图不在看不见的层里常驻。 */
+  private clearHidden(): void {
+    const token = this.token;
+    setTimeout(() => {
+      if (token !== this.token) return;
+      for (const slot of this.slots) if (!slot.classList.contains('shown')) slot.replaceChildren();
+    }, 600);
   }
 
   /** 旧自定义图的 objectURL 等淡出结束再释放。 */

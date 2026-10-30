@@ -8,14 +8,9 @@
  * 衬线只给 Aliya 的台词与少量标题，控件一律黑体。
  */
 
-/* 完整思源宋体（Noto Serif SC 可变字重 100-900，OFL 许可见 /fonts/OFL.txt） */
-@font-face {
-  font-family: 'Aliya Serif';
-  src: url('/fonts/NotoSerifSC-var.ttf') format('truetype-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* 思源宋体（Noto Serif SC 可变字重 100-900）：常用字子集约 2.7MB 优先，
+   生僻字才回落完整 25MB 字体（scripts/subset-serif-font.py 生成）。 */
+@import './serif-font.css';
 
 :root {
   color-scheme: dark;
@@ -104,6 +99,11 @@
   /* 焦点环（仅 :focus-visible 使用） */
   --al-focus-ring: 0 0 0 2px rgba(226, 155, 163, 0.55);
 }
+
+/* 触摸反馈统一走各控件自己的 :active 底色：去掉 WebView 默认的蓝色点按高亮，
+   以及指针点击后浏览器补画的焦点框；键盘导航仍由各控件的 :focus-visible 焦点环提示。 */
+* { -webkit-tap-highlight-color: transparent; }
+:focus:not(:focus-visible) { outline: none; }
 
 /* ---- 共享动效库：各表面只挂既有 class，不再各自定义关键帧 ----
    入场=上浮淡入（--al-rise 调距离）；出场=下沉淡出（--al-sink）；同容器替换=纯淡入。

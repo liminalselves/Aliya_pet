@@ -99,3 +99,20 @@ test('message navigation loads visible surrounding records including an old divi
   assert.equal(messages.map(m => m.id).join(','), '100,101,102,103');
   assert.ok(messages.some(m => m.id === '101' && m.role === 'system'));
 });
+
+test('只读接口网络瞬断重试一次，写接口与超时不重发', async () => {
+  const config = loadMskConfig();
+  const { MskClient } = load('client', config, { AbortSignal, crypto });
+  const calls = [];
+  let failures = 1;
+  const client = new MskClient('t', async url => {
+    calls.push(url);
+    if (failures-- > 0) throw new TypeError('Failed to fetch');
+    return { status: 200, json: async () => [] };
+  });
+  assert.deepEqual(await client.timeline('s'), []);
+  assert.equal(calls.length, 2, 'timeline 网络失败后重试成功');
+  calls.length = 0; failures = 1;
+  await assert.rejects(client.post('/agents/sessions/read', { sessionId: 's' }), /网络异常/);
+  assert.equal(calls.length, 1, '写接口不重发');
+});

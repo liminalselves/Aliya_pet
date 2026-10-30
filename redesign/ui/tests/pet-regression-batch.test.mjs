@@ -22,17 +22,19 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const renderer = Object.create(CubismRenderer.prototype);
   renderer._isPremultipliedAlpha = false;
   renderer._modelColor = { r: 1, g: 1, b: 1, a: 1 };
-  let uploadPremultiplied = false, bound = false;
+  let decodePremultiplied = false, closed = false, bound = false;
   const stopAfterBinding = new Error('texture binding reached');
   const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
-    pixelStorei: (key, value) => { assert.equal(key, 37440); uploadPremultiplied = value === 1; },
+    // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
+    pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
     texImage2D() {}, generateMipmap() {},
   };
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
     bound = true;
-    assert.equal(uploadPremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(decodePremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(closed, true, '上传后释放解码位图');
     for (const opacity of [0, 0.2, 0.6, 1]) {
       const c = renderer.getModelColorWithOpacity(opacity);
       assert.deepEqual([c.r, c.g, c.b, c.a], [opacity, opacity, opacity, opacity]);
@@ -44,10 +46,13 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const { PetModel } = load('pet-model', {
     '@framework/model/cubismusermodel': { CubismUserModel: class {} },
     '@framework/cubismmodelsettingjson': { CubismModelSettingJson: class { constructor() { return setting; } } },
-  }, { Image: class {
-    addEventListener(name, fn) { if (name === 'load') this.loaded = fn; }
-    set src(_) { queueMicrotask(() => this.loaded()); }
-  } });
+  }, {
+    fetch: async () => ({ ok: true, blob: async () => ({}) }),
+    createImageBitmap: async (_, options) => {
+      decodePremultiplied = options?.premultiplyAlpha === 'premultiply';
+      return { close: () => { closed = true; } };
+    },
+  });
   const pet = Object.create(PetModel.prototype);
   Object.assign(pet, { _fetchArrayBuffer: async () => new ArrayBuffer(0), loadModel() {},
     _model: { saveParameters() {}, update() {}, getDrawableCount: () => 1,
@@ -553,14 +558,16 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
       near(r.x + (t.originX + x * t.scale) / dpr, app._originCssX + x * contentScale);
       near(r.y + (t.originY - y * t.scale) / dpr, app._originCssY - y * contentScale);
     }
-    const el = { style: {}, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
+    const el = { style: { setProperty() {} }, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
     app._bubble = { isActive: true, el };
     app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
     app._positionBubble();
     const top = Number.parseFloat(el.style.top);
     assert.ok(top >= 4);
     assert.ok(top + app._bubbleFitH <= r.h, '多行气泡不超出窗口');
-    assert.ok(top + app._bubbleFitH + 6 <= headY - r.y + 0.51, '不挤占人物头部');
+    const font = Number.parseFloat(el.style.fontSize);
+    assert.ok(font >= 11 && font <= 30, '字号随人物缩放并钳在可读范围');
+    assert.ok(top + app._bubbleFitH + font * 0.3 <= headY - r.y + 0.51, '不挤占人物头部');
     const fixed = app._fixedWindowRect();
     app._bubble.isActive = false;
     assert.deepEqual(app._fixedWindowRect(), fixed, '气泡显隐不反复调整窗口表面');
@@ -569,14 +576,15 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
 
 test('独立原生气泡取消人物气泡带，保留动作余量、脚底与缩放补间的头顶锚点', () => {
   const shell = { setDialogueBubble() {} };
-  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell } });
+  const fit = load('dialogue/bubble-fit');
+  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell }, './dialogue/bubble-fit': fit });
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
     const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
     const sent = [];
     const app = Object.assign(Object.create(PetApp.prototype), {
-      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400,
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400, _screenH: 800,
       _originCssX: -120, _originCssY: 650, _contentScaleCss: s,
       _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
         getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
@@ -595,7 +603,9 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
     app._positionBubble();
     const shown = app._modelViewportTransform();
     near(sent.at(-1)[2], (shown.originY - bounds.maxY * shown.scale) / dpr);
-    near(sent.at(-1)[3], r.w); near(sent.at(-1)[4], r.h); // 复用原窗口的气泡缩放口径。
+    // 独立气泡窗不受人物窗裁切：可用宽只受屏幕限制；字号随人物当前显示大小（含补间）。
+    near(sent.at(-1)[3], 400 - 16); near(sent.at(-1)[4], 400);
+    near(sent.at(-1)[5], fit.bubbleFontFor(scale * 0.7));
     app._bubble.isActive = false; app._positionBubble();
     assert.equal(sent.at(-1), 'hide');
     assert.deepEqual(app._fixedWindowRect(), r, '气泡显隐不重配人物窗口');
@@ -630,7 +640,7 @@ test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消�
 
 test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
   const classes = new Set();
-  const el = { id: '', style: {}, textContent: '', offsetHeight: 60,
+  const el = { id: '', style: { removeProperty() {} }, textContent: '', offsetHeight: 60,
     // 适配会把换行宽度写回 style.width，这里让 offsetWidth 跟随它（真浏览器同样如此）。
     get offsetWidth() { return Number.parseFloat(this.style.width) || 200; },
     classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
@@ -643,9 +653,13 @@ test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡�
   const size = render({ text: '<纯文本>\n第二行', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(el.textContent, '<纯文本>\n第二行');
   assert.equal(classes.has('turn'), false, '首次显示保留原来的弹入');
-  // 窗口 100px 时可用宽度 94px：气泡按可用宽换行（不再整体缩放），窗口宽 = 气泡宽 + 8。
-  assert.equal(size.width, 102, '窗口随气泡实际宽度收紧');
-  assert.equal(size.bottom, 64, '气泡底边取未缩放高度，不再按缩放系数回算');
+  // 可用宽 100px → 94px 换行；默认 20px 字号时四周留 0.3em=6px，窗口宽 = 气泡宽 + 12。
+  assert.equal(size.width, 106, '窗口随气泡实际宽度收紧');
+  assert.equal(size.bottom, 66, '气泡底边取实际高度');
+  assert.equal(el.style.fontSize, '20px', '字号由人物页传入，缺省 20');
+  const small = render({ text: '小字', viewportWidth: 100, viewportHeight: 200, font: 12 });
+  assert.equal(el.style.fontSize, '12px', '人物缩小时字号随之变小');
+  assert.equal(small.bottom, 4 + 60, '边距随字号等比（0.3em 取整）');
   render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(classes.has('turn'), true, '翻页仍走原 turn 样式');
   render({ closing: true });
@@ -654,7 +668,7 @@ test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡�
   assert.equal(classes.has('closing'), false, '打断淡出不留下隐藏计时器');
   render({ text: '' });
   assert.equal(el.style.display, 'none');
-  for (const prop of ['font', 'fontSize', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
+  for (const prop of ['font', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
     assert.equal(el.style[prop], undefined, `${prop} 必须保留原 pet.css 定义`);
   }
 });
@@ -704,7 +718,7 @@ for (const entry of ['resume', 'startup']) {
       _wrapWindow: wrap, _settings: { ...stale }, _baseFpsCap: 30, _hitAreas: {}, _canvas: { style: {} },
       _originCssX: stale.posX, _originCssY: stale.posY, _appliedRectX: 280, _appliedRectY: 160,
       _contentScaleCss: 100, _rectInited: false, _model: null, _scaleTween: null,
-      _coordination: { activity() {} }, _chatBackground: { apply() {} },
+      _coordination: { activity() {} }, _chatBackground: { apply() {}, setStill() {} },
       _cancelSnapAnimation() {}, setPaused() {}, _reloadAfterContextLoss() {},
     });
     // 主界面 WebView 留在后台，悬浮窗是另一个持有同一份存储的实例。

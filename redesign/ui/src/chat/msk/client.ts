@@ -87,6 +87,12 @@ const KNOWN_ERRORS: Record<string, string> = {
   INAPPROPRIATE: '图片被判定为可能含不当内容，未能上传。',
 };
 
+/** 幂等只读接口：网络层失败可安全重试。 */
+const READ_ONLY_PATHS = new Set([
+  '/i', '/agents/sessions/list-mine', '/agents/sessions/show', '/agents/characters/show',
+  '/agents/messages/timeline', '/agents/styles/list-usable', '/emojis',
+]);
+
 /** 上传前的本地上限：与常见实例默认的 Drive 单文件上限同级，超出直接提示而不白传。 */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
@@ -111,7 +117,17 @@ export class MskClient {
   ) {}
 
   async post<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal, timeoutMs = 30_000): Promise<T> {
-    const { status, data } = await this.postRaw(path, body, signal, timeoutMs);
+    let res: { status: number; data: unknown };
+    try {
+      res = await this.postRaw(path, body, signal, timeoutMs);
+    } catch (e) {
+      // 只读接口在网络瞬断（移动网络切换、弱网）时自动重试一次；写接口可能已生效，不盲重发。
+      // 超时不重试：已经等满一轮，再等一轮只会更卡。
+      if (signal?.aborted || !READ_ONLY_PATHS.has(path) || (e instanceof Error && e.message.includes('超时'))) throw e;
+      await sleep(600, signal);
+      res = await this.postRaw(path, body, signal, timeoutMs);
+    }
+    const { status, data } = res;
     const err = (data as { error?: { message?: string; code?: string } } | null)?.error;
     if (status < 200 || status >= 300 || err) {
       if (status === 401 || status === 403 || err?.code === 'CREDENTIAL_REQUIRED') {

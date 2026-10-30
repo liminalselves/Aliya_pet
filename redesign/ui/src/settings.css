@@ -214,7 +214,8 @@ body.platform-android .card > * + button.act.wide { background-size: calc(100% -
 .sw input:focus-visible + i { box-shadow: var(--al-focus-ring); }
 
 /* ---- 滑块行 ---- */
-.slider-row { display: flex; align-items: center; gap: 8px; }
+/* min-width:0：行内按钮+数值的固有宽度不能把滑块行撑出卡片（窄屏横向溢出的根因）。 */
+.slider-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .slider-row button {
   display: grid;
   place-items: center;
@@ -312,7 +313,7 @@ body.platform-android #app { padding: 0 16px 40px; }
 body.platform-android .mobile-topbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   position: sticky;
   top: 0;
   z-index: 30;
@@ -334,7 +335,7 @@ body.platform-android .mobile-topbar {
   color: var(--al-text-1);
   font-size: 0;
   cursor: pointer;
-  transition: background var(--al-t-fast) var(--al-ease);
+  transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
 }
 .mobile-topbar .back::before {
   content: '';
@@ -345,7 +346,7 @@ body.platform-android .mobile-topbar {
   border-bottom: 2px solid currentColor;
   transform: rotate(45deg);
 }
-.mobile-topbar .back:active { background: var(--al-press-fill); }
+.mobile-topbar .back:active { background: var(--al-press-fill); transform: scale(.92); }
 .mobile-topbar .title { font-size: 17px; font-weight: 600; color: var(--al-text-1); }
 body.platform-android h2 { margin: 26px 4px 10px; font-size: 13px; }
 body.platform-android .card { border-radius: var(--al-r-l); padding: 0 16px; }
@@ -362,8 +363,8 @@ body.platform-android button.act.wide { min-height: 54px; width: calc(100% + 32p
 body.platform-android .card > button.act.wide:first-child { border-top-left-radius: var(--al-r-l); border-top-right-radius: var(--al-r-l); }
 body.platform-android .card > button.act.wide:last-child { border-bottom-left-radius: var(--al-r-l); border-bottom-right-radius: var(--al-r-l); }
 body.platform-android .row button.act { height: 36px; font-size: 13.5px; }
-body.platform-android .slider-row { gap: 10px; }
-body.platform-android .slider-row button { width: 36px; height: 36px; font-size: 18px; }
+body.platform-android .slider-row { gap: 8px; }
+body.platform-android .slider-row button { width: 34px; height: 34px; font-size: 18px; }
 body.platform-android .slider-row input[type='range']::-webkit-slider-thumb { width: 22px; height: 22px; }
 body.platform-android .stepper { height: 40px; }
 body.platform-android .stepper button { width: 40px; height: 40px; font-size: 18px; }
@@ -379,18 +380,21 @@ body.platform-android .about { font-size: 13px; }
 
 /* ---- 聊天背景（Android）：缩略图单选网格 ---- */
 .bg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(76px, 1fr)); gap:10px; padding:14px 0 12px; }
-.bg-tile { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:0 !important; background:none !important; border:0; color:var(--al-text-2); font:inherit; font-size:12px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-.bg-thumb { position:relative; display:block; aspect-ratio:9 / 16; border-radius:var(--al-r-m); background:var(--al-bg-3) center / cover no-repeat; box-shadow:inset 0 0 0 1px var(--al-line); transition:box-shadow var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.bg-tile { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:0 !important; background:none !important; border:0; color:var(--al-text-2); font:inherit; font-size:12px; cursor:pointer; transition:color var(--al-t-fast) var(--al-ease); }
+.bg-thumb { position:relative; display:block; aspect-ratio:9 / 16; overflow:hidden; border-radius:var(--al-r-m); background:var(--al-bg-3) center / cover no-repeat; transition:transform var(--al-t-fast) var(--al-ease); }
+/* 描边/选中环画在 ::before 顶层：场景与图片铺满缩略图，inset 阴影会被它们盖住。 */
+.bg-thumb::before { content:''; position:absolute; inset:0; z-index:2; border-radius:inherit; pointer-events:none; box-shadow:inset 0 0 0 1px var(--al-line); transition:box-shadow var(--al-t-fast) var(--al-ease); }
 .bg-tile.plain .bg-thumb { background-color:var(--al-bg-0); }
 .bg-tile.custom.empty .bg-thumb::after { content:''; position:absolute; inset:0; margin:auto; width:22px; height:22px; background:
   linear-gradient(var(--al-text-3), var(--al-text-3)) center / 2px 22px no-repeat,
   linear-gradient(var(--al-text-3), var(--al-text-3)) center / 22px 2px no-repeat; }
-.bg-tile.custom.empty .bg-thumb { box-shadow:inset 0 0 0 1px var(--al-line-strong); background-color:var(--al-bg-2); }
+.bg-tile.custom.empty .bg-thumb { background-color:var(--al-bg-2); }
+.bg-tile.custom.empty .bg-thumb::before { box-shadow:inset 0 0 0 1px var(--al-line-strong); }
 .bg-tile:active .bg-thumb { transform:scale(.97); }
-.bg-tile.on .bg-thumb { box-shadow:inset 0 0 0 2px var(--al-accent); }
+.bg-tile.on .bg-thumb::before { box-shadow:inset 0 0 0 2px var(--al-accent); }
 .bg-tile.on { color:var(--al-text-1); }
 .bg-tile:focus-visible { outline:none; }
-.bg-tile:focus-visible .bg-thumb { box-shadow:var(--al-focus-ring); }
+.bg-tile:focus-visible .bg-thumb::before { box-shadow:inset 0 0 0 2px var(--al-accent-strong); }
 .bg-name { text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bg-actions { display:flex; gap:8px; padding:0 0 12px; }
 .bg-actions[hidden] { display:none; }

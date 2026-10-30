@@ -32,6 +32,9 @@
 body.chat-window #chat-ui .chat-launcher { display:none!important; }
 /* pet 侧按钮用 hidden 属性隐藏：.chat-launcher 的 display:flex 会压过 UA 的 [hidden] 规则，必须显式补。 */
 .chat-launcher[hidden] { display:none!important; }
+/* 小人物：只留图标的圆形按钮（pet-app 按人物宽切换 .compact）。 */
+.chat-launcher.compact, #chat-ui .chat-launcher.compact { width:30px; padding:0; justify-content:center; gap:0; }
+.chat-launcher.compact span { display:none; }
 /* 启动器入场：聊天收起后从脚底浮出（transform 链必须带 --launcher-k 与 base 一致，不能用共享上浮帧）。 */
 .chat-launcher:not([hidden]) { animation:launcher-in var(--al-t-med) var(--al-ease); }
 @keyframes launcher-in { from { opacity:0; transform:translateX(-50%) translateY(6px) scale(var(--launcher-k,1)); } }

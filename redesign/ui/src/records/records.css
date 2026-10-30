@@ -190,13 +190,14 @@ button { font: inherit; }
 .android-records .records-title { max-width:42vw; }
 .android-records .records-status { top:68px; }
 .android-records .records-tobottom { right:16px; bottom:16px; width:44px; height:44px; }
-.records-back { display:grid; place-items:center; flex:none; width:44px; height:44px; margin-left:-8px; border:0; border-radius:50%; background:transparent; color:var(--al-text-1); font-size:0; cursor:pointer; }
+.records-back { display:grid; place-items:center; flex:none; width:44px; height:44px; margin-left:-8px; border:0; border-radius:50%; background:transparent; color:var(--al-text-1); font-size:0; cursor:pointer; transition:background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
 .records-back::before { content:''; width:10px; height:10px; margin-left:4px; border-left:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(45deg); }
-.records-back:active { background:var(--al-press-fill); }
+.records-back:active { background:var(--al-press-fill); transform:scale(.92); }
 .android-records .records-header { height:56px; padding:0 8px 0 12px; }
 .android-records .records-session { flex-direction:column; align-items:flex-end; gap:0; }
 .records-back:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
 .android-records .records-refresh { width:44px; height:44px; }
+.android-records .records-open-chat { height:40px; padding:0 22px; font-size:14px; }
 .android-records .record-message { max-width:94%; }
 .android-records .record-message header { flex-wrap:wrap; }
 .android-records .message-text .msk-draw-image { max-width:min(260px, 72vw); }

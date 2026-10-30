@@ -653,10 +653,18 @@ test('手动随机台词保留暂停、互动和聊天防抢话规则，不积�
   h.state[key]=true;h.app.onShellAction({action:'random-speech'});h.state[key]=false;
  }
  h.app._remoteChat.open=true;h.app.onShellAction({action:'random-speech'});h.app._remoteChat.open=false;
- h.app._chatView.isOpen=true;h.app.onShellAction({action:'random-speech'});h.app._chatView.isOpen=false;
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:true});h.app.onShellAction({action:'random-speech'});Object.assign(h.app._chatView,{isOpen:false,panelVisible:false});
  assert.equal(h.draws,0);assert.equal(h.played.length,0);
   h.app._dialogue._files.clear();h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
  });
+
+test('安卓主界面只剩输入框时照常说台词，回复面板显示时让位',()=>{
+ const h=randomSpeechHarness();
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:false});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'输入框常开不应吞掉台词');
+ Object.assign(h.app._chatView,{panelVisible:true});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'回复面板显示时不说台词');
+});
 
 test('模型与台词尚未加载时手动随机台词不丢失且只补发一次',()=>{
   const h=randomSpeechHarness(); let calls=0;
@@ -792,10 +800,11 @@ for(const failure of ['construct','initialize-throw','initialize-false','load'])
   initialize(){if(failure==='initialize-throw')throw new Error('initialize failed');return failure!=='initialize-false'}
   async loadModel(){assert.equal(window.__pet,this);assert.equal(typeof window.__applySettingsFromAndroid,'function');throw new Error('load failed')}
  }
- load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)}},
-  {window,console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
+ const actions=[],bodyClasses=[];
+ load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)},'./platform':{shellAction:a=>actions.push(a)}},
+  {window,document:{body:{classList:{add:c=>bodyClasses.push(c)}}},console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(notices.length,1);assert.equal(errors.length,1);
- assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
+ assert.deepEqual(actions,['pet-ready'],'启动失败也撤掉安卓加载遮罩');assert.deepEqual(bodyClasses,['pet-ready'],'启动失败也放出聊天界面');assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
  await notices[0][3]();assert.equal(window.location.reloaded,true);
 });
 

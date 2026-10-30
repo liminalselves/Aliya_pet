@@ -30,6 +30,16 @@ class MenuSheetLayout @JvmOverloads constructor(
     private var tracker: VelocityTracker? = null
     private var dismissing = false
 
+    /** 拖动下移时回调当前位移比例（0=完全展开，1=完全收起），遮罩随之变淡。 */
+    var onDragProgress: ((Float) -> Unit)? = null
+
+    /** 复用同一个视图：每次打开前清掉上次下拉关闭留下的状态。 */
+    fun resetState() {
+        animate().cancel()
+        dragging = false
+        dismissing = false
+    }
+
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -54,15 +64,28 @@ class MenuSheetLayout @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
-        tracker?.addMovement(ev)
         when (ev.actionMasked) {
+            // 按在把手/留白等无子 View 接管的区域时，事件直接落到这里：必须消费 DOWN，
+            // 否则后续 MOVE 不再派发，顶部区域无法下拉关闭。
+            MotionEvent.ACTION_DOWN -> {
+                downRawY = ev.rawY
+                dragging = false
+                tracker?.recycle()
+                tracker = VelocityTracker.obtain()
+                tracker?.addMovement(ev)
+                return true
+            }
             MotionEvent.ACTION_MOVE -> {
+                tracker?.addMovement(ev)
+                if (!dragging && ev.rawY - downRawY > slop) dragging = true
                 if (dragging) {
                     // 只跟向下位移，向上拖不回抽（内容不可滚动）
                     translationY = max(0f, ev.rawY - downRawY)
+                    if (height > 0) onDragProgress?.invoke(translationY / height)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                tracker?.addMovement(ev)
                 if (dragging) {
                     dragging = false
                     tracker?.computeCurrentVelocity(1000)
@@ -75,6 +98,7 @@ class MenuSheetLayout @JvmOverloads constructor(
                             .translationY(height.toFloat())
                             .setDuration(180)
                             .setInterpolator(AccelerateInterpolator(1.2f))
+                            .setUpdateListener { if (height > 0) onDragProgress?.invoke(translationY / height) }
                             .withEndAction { onDismissed?.invoke() }
                             .start()
                     } else {
@@ -82,6 +106,7 @@ class MenuSheetLayout @JvmOverloads constructor(
                             .translationY(0f)
                             .setDuration(220)
                             .setInterpolator(DecelerateInterpolator(1.6f))
+                            .setUpdateListener { if (height > 0) onDragProgress?.invoke(translationY / height) }
                             .start()
                     }
                 }

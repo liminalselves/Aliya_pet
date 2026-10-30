@@ -11,6 +11,7 @@ let storage: Storage | undefined;
 try { storage = localStorage; } catch { /* In-memory login remains available. */ }
 const view = new ChatView(controller, new MskAuth(storage), () => {}, storage);
 view.setOpen(true);
+view.start();
 if (platform === 'tauri') {
   const { invoke } = await import('@tauri-apps/api/core');
   const { emitTo, listen } = await import('@tauri-apps/api/event');

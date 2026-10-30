@@ -208,10 +208,18 @@ export class ChatView {
       }).observe(this.panel);
     }
     this.syncComposerState();
+  }
+  /** 开始恢复连接与会话（网络）。桌宠显示不依赖会话数据：安卓主界面在角色首帧上屏后才调用。 */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
     void this.bootstrap();
   }
+  private started = false;
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
+  /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
+  get panelVisible(): boolean { return this.isOpen && !this.panel.hidden; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
   setOpen(open: boolean): void {
     this.cancelLeave();
@@ -425,8 +433,16 @@ export class ChatView {
     try {
       const resumed = await this.auth.resumeCallback(signal);
       if (!resumed && !this.auth.token) { this.showConnect(); return; }
-      if (!resumed) await this.auth.validateSaved(signal);
-      if (!signal.aborted) await this.loadSessions(true);
+      if (resumed) { if (!signal.aborted) await this.loadSessions(true); return; }
+      // 已存 token：验权（刷新用户资料）与读会话列表并行，省掉一个串行往返；
+      // token 失效时会话列表同样返回 401，提示一致。
+      // 预取用独立控制器：loadSessions 内 reset() 会中止当前 operation，预取不能随之作废。
+      const prefetch = new AbortController();
+      const sessions = new MskClient(this.auth.token).listAliyaSessions(prefetch.signal);
+      sessions.catch(() => {});
+      try { await this.auth.validateSaved(signal); } catch (e) { prefetch.abort(); throw e; }
+      if (signal.aborted) { prefetch.abort(); return; }
+      await this.loadSessions(true, sessions);
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
   private async login(token?: string): Promise<void> {
@@ -437,14 +453,14 @@ export class ChatView {
       if (!signal.aborted) await this.loadSessions();
     } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
   }
-  private async loadSessions(restore = false): Promise<void> {
+  private async loadSessions(restore = false, prefetched?: Promise<MskSession[]>): Promise<void> {
     const signal = this.reset(); this.screen = 'sessions';
     this.syncComposerState();
     // 加载占位也走 stagger 槽位：占位行就是列表的第 0 项，列表落地同位替换，布局不跳。
     this.content.innerHTML = '<p class="muted-note loading-note">正在读取会话</p>'; this.showPanel('选择会话');
     this.animateContent('stagger');
     try {
-      const list = await new MskClient(this.auth.token).listAliyaSessions(signal);
+      const list = await (prefetched ?? new MskClient(this.auth.token).listAliyaSessions(signal));
       if (signal.aborted) return;
       const key = this.sessionKey();
       let savedId: string | null = null;

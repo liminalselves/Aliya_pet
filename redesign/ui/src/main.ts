@@ -1,5 +1,6 @@
 import { PetApp } from './pet-app';
 import { showStartupNotice } from './startup-notice';
+import { shellAction } from './platform';
 import './pet.css';
 
 /**
@@ -41,6 +42,9 @@ function startWhenCoreReady(): void {
     await app.loadModel('/live2d/aliya/16.model3.json');
   })().catch(error => {
     console.error('[pet] startup failed', error);
+    // 撤掉安卓启动遮罩、放出聊天界面，让网页内的故障提示可见。
+    document.body.classList.add('pet-ready');
+    shellAction('pet-ready');
     showStartupNotice('pet-startup-error', '桌宠启动失败，请重新加载重试。', error,
       async () => { window.location.reload(); });
   });

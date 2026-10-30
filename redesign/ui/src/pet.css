@@ -54,18 +54,18 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
   box-sizing: border-box;
   width: fit-content;
-  /* 与 JS 适配（dialogue/bubble-fit.ts，94% 可用宽）保持一致，避免 CSS 先于脚本
-     把本来能放下的台词折成两行。 */
-  max-width: min(94%, 300px);
+  /* 宽度上限由 JS 适配写入（dialogue/bubble-fit.ts，94% 可用宽）。 */
+  max-width: 94%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  padding: 9px 15px 10px;
-  border-radius: var(--al-r-l);
+  /* 内边距/圆角/尾巴以 em 计：字号随人物缩放时整只气泡等比。 */
+  padding: .45em .75em .5em;
+  border-radius: .8em;
   border: 1px solid var(--al-line);
   background: var(--al-bg-2);
   color: var(--al-text-1);
   font-family: var(--al-font-serif);
-  /* 台词字号下限 20px（dialogue/bubble-fit.ts 的 minFont）：小窗只换行不缩字。 */
+  /* 字号由 JS 按人物显示大小写入（bubbleFontFor）；这里只是首帧默认值。 */
   font-size: 20px;
   font-weight: 400;
   line-height: 1.6;
@@ -83,11 +83,12 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
 #dialogue-bubble::after {
   content: "";
   position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
+  /* --tail-x：气泡被钳在屏幕边时由 pet-app 写入人物中线位置，尾巴仍指向角色。 */
+  left: var(--tail-x, 50%);
+  bottom: -.25em;
+  width: .5em;
+  height: .5em;
+  margin-left: -.25em;
   background: inherit;
   border-right: 1px solid var(--al-line);
   border-bottom: 1px solid var(--al-line);
@@ -110,20 +111,21 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
-/* 安卓悬浮窗内容贴合模式：头顶气泡空间复用画布顶部余量（见 pet-app _WRAP_BUBBLE_BAND），
-   不足的部分才向上扩窗；窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
+/* 安卓悬浮窗：旧壳在人物窗内画气泡，头顶空间只有 _WRAP_BUBBLE_BAND，限三行。
    translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
 body.overlay-wrap #dialogue-bubble {
   top: 6px;
-  max-width: min(260px, 94%);
+  max-width: 94%;
   transform: translateZ(0);
-  /* 20px 字号下 3 行：3×32（line-height 1.6）+ 上下内边距 19 + 边框 2 = 117 */
-  max-height: 117px;
+  /* 3 行：3×1.6em + 上下内边距 .95em + 边框 */
+  max-height: calc(5.75em + 2px);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
+/* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。 */
+body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; display: block; -webkit-line-clamp: unset; }
 
 @media (prefers-reduced-motion: reduce) {
   #dialogue-bubble { animation: none; }
@@ -131,18 +133,25 @@ body.overlay-wrap #dialogue-bubble {
 }
 
 body.android-main { background:var(--al-bg-0); }
-/* 舞台让出输入框位置：用单行输入框的固定高度，不跟随多行输入逐行变化
-   （画布每帧按舞台尺寸重算，跟随 --chat-composer-height 会让角色随打字一跳一跳）；
-   开关聊天时平滑过渡，角色缓缓上移/回落而不是瞬间跳位。 */
-body.android-main #stage { inset:56px 0 20px; transition:bottom var(--al-t-slow) var(--al-ease); }
-body.android-main.chat-open #stage { bottom:116px; }
+/* 主界面舞台位置与大小静态：不为输入框、回复卡或软键盘让位（它们直接盖在角色上）。
+   高度钉住首个视口（--stage-h 由 pet-app 写入，只在旋转屏幕时更新），键盘弹出 WebView
+   变矮时角色不缩小、不上移，与聊天背景层同一口径。 */
+body.android-main #stage { inset:56px 0 auto; height:calc(var(--stage-h, 100vh) - 56px - 20px); }
+
+/* 冷启动：聊天 UI 等角色首帧上屏（pet-app 挂 body.pet-ready）后与角色一起出现，
+   不在角色之前露出连接卡片与输入框。 */
+body:not(.pet-ready) #chat-ui { visibility:hidden; }
+body.pet-ready #chat-ui { animation:al-fade-in var(--al-t-med) var(--al-ease); }
 
 /* Android 主界面聊天背景（chat-background.ts）：铺在角色画布之下，高度钉住首个视口，
    软键盘弹出不挤压；两层图交替淡入，遮罩 --bg-dim 保证角色与文字可读。 */
 .chat-bg { position:fixed; left:0; top:0; width:100%; height:100%; z-index:0; pointer-events:none; overflow:hidden; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
 .chat-bg.active { opacity:1; }
-.chat-bg img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
-.chat-bg img.shown { opacity:1; }
+/* 两个槽位交替淡入：槽内是内置场景（chat-scenes.ts）或自定义图。 */
+.chat-bg-slot { position:absolute; inset:0; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
+.chat-bg-slot.shown { opacity:1; }
+/* 自定义图：cover 铺满任意机型，对焦点由 chat-background.ts 按宽高比给出。 */
+.chat-bg-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
 .chat-bg-dim { position:absolute; inset:0; background:var(--al-bg-0); opacity:var(--bg-dim,.35); transition:opacity var(--al-t-med) var(--al-ease); }
 body.android-main #stage { z-index:1; }
-@media (prefers-reduced-motion: reduce) { .chat-bg, .chat-bg img { transition:none; } }
+@media (prefers-reduced-motion: reduce) { .chat-bg, .chat-bg-slot { transition:none; } }
