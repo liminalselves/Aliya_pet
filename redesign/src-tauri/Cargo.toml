@@ -11,6 +11,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 应用内更新（downloadAndInstall 走 NSIS passive 安装，见 ui/src/update/）
+tauri-plugin-updater = "2.14.1"
 
 # 透明区域鼠标穿透（GetCursorPos）+ 默认浏览器打开（ShellExecuteW，不走 cmd 元字符解析）
 [target.'cfg(windows)'.dependencies]

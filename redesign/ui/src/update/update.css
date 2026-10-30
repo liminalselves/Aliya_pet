@@ -1,0 +1,171 @@
+/**
+ * 更新提示对话框样式（window / modal 两种形态共用）。
+ * 视觉 token 全部取自 styles/tokens.css，观感与 settings.css 一致：
+ * 暖石墨卡片、发线描边、腮红主按钮。
+ */
+@import '../styles/tokens.css';
+
+/* ---- 对话框本体 ---- */
+.update-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 18px 18px 16px;
+  background: var(--al-bg-0);
+  color: var(--al-text-1);
+  font-family: var(--al-font);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* 独立更新窗口（update.html）：对话框占满整页 */
+#app > .update-dialog { height: 100%; }
+
+.update-head h1 {
+  margin: 0;
+  color: var(--al-text-1);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.update-current {
+  margin: 4px 0 0;
+  color: var(--al-text-3);
+  font-size: 12px;
+}
+/* 强制更新：金字说明行，紧贴版本号 */
+.update-mandatory {
+  margin: 8px 0 0;
+  color: var(--al-warning);
+  font-size: 12px;
+}
+
+/* ---- 更新说明：安全 markdown 渲染结果，窗口内滚动 ---- */
+.update-notes {
+  flex: 1;
+  min-height: 0;
+  margin-top: 12px;
+  padding: 12px 14px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  border-radius: var(--al-r-s);
+  background: var(--al-bg-2);
+  box-shadow: inset 0 0 0 1px var(--al-line);
+  scrollbar-width: thin;
+  scrollbar-color: var(--al-scrollbar) transparent;
+}
+.update-notes::-webkit-scrollbar { width: 6px; }
+.update-notes::-webkit-scrollbar-thumb { background: var(--al-scrollbar); border-radius: 3px; }
+.update-notes h3,
+.update-notes h4,
+.update-notes h5 { margin: 10px 0 4px; color: var(--al-text-2); font-size: 12.5px; line-height: 1.35; }
+.update-notes h3:first-child,
+.update-notes h4:first-child,
+.update-notes h5:first-child,
+.update-notes p:first-child,
+.update-notes ul:first-child { margin-top: 0; }
+.update-notes p { margin: 0 0 6px; color: var(--al-text-1); }
+.update-notes ul { margin: 0 0 6px; padding-left: 18px; }
+.update-notes li { margin: 2px 0; }
+.update-notes code {
+  padding: 1px 5px;
+  border-radius: var(--al-r-xs);
+  background: var(--al-surface-code);
+  color: var(--al-accent-strong);
+  font-family: var(--al-font-mono);
+  font-size: 12px;
+}
+.update-notes strong { color: var(--al-accent-strong); font-weight: 600; }
+
+/* ---- 下载进度 ---- */
+.update-progress { margin-top: 12px; }
+.update-progress[hidden] { display: none; }
+.update-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--al-bg-4);
+  overflow: hidden;
+}
+.update-progress-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--al-accent);
+  transition: width var(--al-t-med) var(--al-ease);
+}
+/* 长度未知：条内来回扫动 */
+.update-progress.indeterminate .update-progress-bar i {
+  width: 34% !important;
+  animation: update-indeterminate 1.2s var(--al-ease-inout) infinite alternate;
+}
+@keyframes update-indeterminate { from { transform: translateX(-40%); } to { transform: translateX(200%); } }
+.update-progress span {
+  display: block;
+  margin-top: 6px;
+  color: var(--al-text-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---- 失败信息 ---- */
+.update-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--al-r-s);
+  background: var(--al-bg-2);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--al-danger) 40%, transparent);
+}
+.update-error[hidden] { display: none; }
+.update-error p { margin: 0 0 8px; color: var(--al-danger); font-size: 12.5px; overflow-wrap: anywhere; }
+.update-error button { margin-right: 8px; }
+
+/* ---- 按钮区 ---- */
+.update-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.update-buttons button,
+.update-error button {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--al-r-pill);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
+}
+.update-buttons button:active,
+.update-error button:active { transform: scale(0.97); }
+.update-buttons button:focus-visible,
+.update-error button:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.update-buttons button:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+.update-primary { background: var(--al-accent); color: var(--al-on-accent); font-weight: 600; }
+.update-primary:hover:not(:disabled) { background: var(--al-accent-strong); }
+
+.update-secondary { background: var(--al-bg-3); color: var(--al-text-1); }
+.update-secondary:hover:not(:disabled) { background: var(--al-bg-4); }
+
+/* ---- Android 页内模态：居中卡片 + 半透明遮罩 ---- */
+dialog.update-modal {
+  width: min(340px, calc(100vw - 48px));
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--al-line-strong);
+  border-radius: var(--al-r-m);
+  background: var(--al-bg-0);
+  color: var(--al-text-1);
+  box-shadow: var(--al-shadow-2);
+}
+dialog.update-modal::backdrop { background: var(--al-backdrop); }
+/* 模态里的说明区固定高度预算，超长滚动；过短的说明也不让按钮跳来跳去 */
+dialog.update-modal .update-dialog { max-height: min(70vh, 520px); }
+dialog.update-modal .update-notes { max-height: 40vh; }
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress.indeterminate .update-progress-bar i { animation: none; }
+}

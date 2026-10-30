@@ -79,12 +79,25 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 
 ## Windows 辅助窗口
 
-- `chat`、`settings`、`records` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
+- `chat`、`settings`、`records`、`update` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
   命令线程不动态 `build()` 第二个 WebView2，避免已确认的死锁。
 - `settings` 与 `records` 使用正常原生窗口，可移动、可调整大小；关闭请求被壳拦截
   为隐藏，下次打开保留页面实例。`chat` 仍是透明、无边框、锁定跟随 pet 的伴侣窗。
 - `records` 单独承载服务器时间线与托管配置的消息定位，避免长列表改变聊天伴侣窗
   的几何和点击穿透契约。
+- `update`（420×520）承载更新提示：pet 窗口透明穿透不能画 UI，检查结果经 Rust
+  `show_update` 转交（事件 + 暂存兜底）。非强制时关闭即隐藏；强制更新关闭 =
+  退出应用（`mandatory` 标记由壳保存，见 main.rs `UpdateWindowState`）。
+
+## 应用内更新（ui/src/update/）
+
+- 启动检查：模型就绪后延迟 3s 静默请求发布服务 `/api/check`（base 列表唯一来源
+  `ui/src/update/config.ts`，按序回退）；失败/无更新不打扰。展示分叉：Windows 唤起
+  `update` 窗口（updater 插件下载 + 验签 + NSIS passive 安装），Android 仅在主界面
+  （非悬浮窗）弹页内 `<dialog>` 模态、按钮打开 APK 下载链接。
+- 抑制策略：非强制提示支持「稍后」（本次启动）与「跳过此版本」（localStorage
+  `aliya_pet_update_skip`）；强制更新（`mandatory`，服务端由 CHANGELOG 的
+  `min-version` 注释推导）只能更新或退出。发布/签名/接口契约见 [RELEASE.md](RELEASE.md)。
 
 ## 设置同步
 

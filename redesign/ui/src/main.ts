@@ -1,5 +1,6 @@
 import { PetApp } from './pet-app';
 import { showStartupNotice } from './startup-notice';
+import { scheduleStartupUpdateCheck } from './update/startup';
 import { shellAction } from './platform';
 import './pet.css';
 
@@ -40,6 +41,8 @@ function startWhenCoreReady(): void {
       if (s && typeof s === 'object') app.applySettings(s as never, false);
     };
     await app.loadModel('/live2d/aliya/16.model3.json');
+    // 模型就绪后延迟静默检查更新（失败不打扰；展示分叉见 update/startup.ts）
+    scheduleStartupUpdateCheck();
   })().catch(error => {
     console.error('[pet] startup failed', error);
     // 撤掉安卓启动遮罩、放出聊天界面，让网页内的故障提示可见。
