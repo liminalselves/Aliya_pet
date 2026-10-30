@@ -54,18 +54,18 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
   box-sizing: border-box;
   width: fit-content;
-  /* 与 JS 适配（dialogue/bubble-fit.ts，94% 可用宽）保持一致，避免 CSS 先于脚本
-     把本来能放下的台词折成两行。 */
-  max-width: min(94%, 300px);
+  /* 宽度上限由 JS 适配写入（dialogue/bubble-fit.ts，94% 可用宽）。 */
+  max-width: 94%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  padding: 9px 15px 10px;
-  border-radius: var(--al-r-l);
+  /* 内边距/圆角/尾巴以 em 计：字号随人物缩放时整只气泡等比。 */
+  padding: .45em .75em .5em;
+  border-radius: .8em;
   border: 1px solid var(--al-line);
   background: var(--al-bg-2);
   color: var(--al-text-1);
   font-family: var(--al-font-serif);
-  /* 台词字号下限 20px（dialogue/bubble-fit.ts 的 minFont）：小窗只换行不缩字。 */
+  /* 字号由 JS 按人物显示大小写入（bubbleFontFor）；这里只是首帧默认值。 */
   font-size: 20px;
   font-weight: 400;
   line-height: 1.6;
@@ -83,11 +83,12 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
 #dialogue-bubble::after {
   content: "";
   position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
+  /* --tail-x：气泡被钳在屏幕边时由 pet-app 写入人物中线位置，尾巴仍指向角色。 */
+  left: var(--tail-x, 50%);
+  bottom: -.25em;
+  width: .5em;
+  height: .5em;
+  margin-left: -.25em;
   background: inherit;
   border-right: 1px solid var(--al-line);
   border-bottom: 1px solid var(--al-line);
@@ -114,10 +115,10 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
    translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
 body.overlay-wrap #dialogue-bubble {
   top: 6px;
-  max-width: min(260px, 94%);
+  max-width: 94%;
   transform: translateZ(0);
-  /* 20px 字号下 3 行：3×32（line-height 1.6）+ 上下内边距 19 + 边框 2 = 117 */
-  max-height: 117px;
+  /* 3 行：3×1.6em + 上下内边距 .95em + 边框 */
+  max-height: calc(5.75em + 2px);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;

@@ -98,7 +98,7 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
         render()
     }
 
-    /** 只有文字/适配尺寸变化才重排网页；动作与拖动仅移动现有 Surface。 */
+    /** 只有文字/适配尺寸/字号变化才重排网页；动作与拖动仅移动现有 Surface。 */
     private fun render() {
         val current = page ?: return
         val view = web ?: return
@@ -107,6 +107,7 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
             put("text", current.getString("text"))
             put("viewportWidth", current.optDouble("viewportWidth", 300.0))
             put("viewportHeight", current.optDouble("viewportHeight", 800.0))
+            put("font", current.optDouble("font", 20.0))
         }.toString()
         if (content == contentKey && measured) { move(petX, petY); return }
         contentKey = content
@@ -165,7 +166,8 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
         }
         val x = (petX + current.optDouble("centerX") * density - params.width / 2.0).roundToInt()
             .coerceIn(0, (width - params.width).coerceAtLeast(0))
-        val y = (petY + current.optDouble("headY") * density - bubbleBottom - 6 * density).roundToInt()
+        val gap = current.optDouble("font", 20.0) * 0.3 * density
+        val y = (petY + current.optDouble("headY") * density - bubbleBottom - gap).roundToInt()
             .coerceIn(safeTop, (height - params.height).coerceAtLeast(safeTop))
         if (params.x == x && params.y == y) return false
         params.x = x

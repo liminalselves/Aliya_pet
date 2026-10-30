@@ -558,14 +558,16 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
       near(r.x + (t.originX + x * t.scale) / dpr, app._originCssX + x * contentScale);
       near(r.y + (t.originY - y * t.scale) / dpr, app._originCssY - y * contentScale);
     }
-    const el = { style: {}, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
+    const el = { style: { setProperty() {} }, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
     app._bubble = { isActive: true, el };
     app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
     app._positionBubble();
     const top = Number.parseFloat(el.style.top);
     assert.ok(top >= 4);
     assert.ok(top + app._bubbleFitH <= r.h, '多行气泡不超出窗口');
-    assert.ok(top + app._bubbleFitH + 6 <= headY - r.y + 0.51, '不挤占人物头部');
+    const font = Number.parseFloat(el.style.fontSize);
+    assert.ok(font >= 11 && font <= 30, '字号随人物缩放并钳在可读范围');
+    assert.ok(top + app._bubbleFitH + font * 0.3 <= headY - r.y + 0.51, '不挤占人物头部');
     const fixed = app._fixedWindowRect();
     app._bubble.isActive = false;
     assert.deepEqual(app._fixedWindowRect(), fixed, '气泡显隐不反复调整窗口表面');
@@ -574,7 +576,8 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
 
 test('独立原生气泡取消人物气泡带，保留动作余量、脚底与缩放补间的头顶锚点', () => {
   const shell = { setDialogueBubble() {} };
-  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell } });
+  const fit = load('dialogue/bubble-fit');
+  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell }, './dialogue/bubble-fit': fit });
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
@@ -600,8 +603,9 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
     app._positionBubble();
     const shown = app._modelViewportTransform();
     near(sent.at(-1)[2], (shown.originY - bounds.maxY * shown.scale) / dpr);
-    // 独立气泡窗可比人物宽：排版宽按人物宽放大、至少 240，以屏幕宽为上限；高度取半屏。
-    near(sent.at(-1)[3], Math.min(400 - 16, Math.max(240, r.w * 1.7))); near(sent.at(-1)[4], 400);
+    // 独立气泡窗不受人物窗裁切：可用宽只受屏幕限制；字号随人物当前显示大小（含补间）。
+    near(sent.at(-1)[3], 400 - 16); near(sent.at(-1)[4], 400);
+    near(sent.at(-1)[5], fit.bubbleFontFor(scale * 0.7));
     app._bubble.isActive = false; app._positionBubble();
     assert.equal(sent.at(-1), 'hide');
     assert.deepEqual(app._fixedWindowRect(), r, '气泡显隐不重配人物窗口');
@@ -636,7 +640,7 @@ test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消�
 
 test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
   const classes = new Set();
-  const el = { id: '', style: {}, textContent: '', offsetHeight: 60,
+  const el = { id: '', style: { removeProperty() {} }, textContent: '', offsetHeight: 60,
     // 适配会把换行宽度写回 style.width，这里让 offsetWidth 跟随它（真浏览器同样如此）。
     get offsetWidth() { return Number.parseFloat(this.style.width) || 200; },
     classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
@@ -649,9 +653,13 @@ test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡�
   const size = render({ text: '<纯文本>\n第二行', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(el.textContent, '<纯文本>\n第二行');
   assert.equal(classes.has('turn'), false, '首次显示保留原来的弹入');
-  // 窗口 100px 时可用宽度 94px：气泡按可用宽换行（不再整体缩放），窗口宽 = 气泡宽 + 8。
-  assert.equal(size.width, 102, '窗口随气泡实际宽度收紧');
-  assert.equal(size.bottom, 64, '气泡底边取未缩放高度，不再按缩放系数回算');
+  // 可用宽 100px → 94px 换行；默认 20px 字号时四周留 0.3em=6px，窗口宽 = 气泡宽 + 12。
+  assert.equal(size.width, 106, '窗口随气泡实际宽度收紧');
+  assert.equal(size.bottom, 66, '气泡底边取实际高度');
+  assert.equal(el.style.fontSize, '20px', '字号由人物页传入，缺省 20');
+  const small = render({ text: '小字', viewportWidth: 100, viewportHeight: 200, font: 12 });
+  assert.equal(el.style.fontSize, '12px', '人物缩小时字号随之变小');
+  assert.equal(small.bottom, 4 + 60, '边距随字号等比（0.3em 取整）');
   render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
   assert.equal(classes.has('turn'), true, '翻页仍走原 turn 样式');
   render({ closing: true });
@@ -660,7 +668,7 @@ test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡�
   assert.equal(classes.has('closing'), false, '打断淡出不留下隐藏计时器');
   render({ text: '' });
   assert.equal(el.style.display, 'none');
-  for (const prop of ['font', 'fontSize', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
+  for (const prop of ['font', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
     assert.equal(el.style[prop], undefined, `${prop} 必须保留原 pet.css 定义`);
   }
 });

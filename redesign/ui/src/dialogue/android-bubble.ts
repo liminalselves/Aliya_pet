@@ -7,11 +7,12 @@ export class AndroidDialogueBubble {
 
   constructor(private readonly _send: (json: string) => void) {}
 
-  sync(text: string, centerX: number, headY: number, viewportWidth: number, viewportHeight: number): void {
+  /** font：随人物显示大小的台词字号（bubbleFontFor），气泡窗按它排版并整体等比。 */
+  sync(text: string, centerX: number, headY: number, viewportWidth: number, viewportHeight: number, font = 20): void {
     if (!text) { this.hide(); return; }
     const textChanged = text !== this._text || this._closing;
     const json = JSON.stringify({ text, centerX: Math.round(centerX), headY: Math.round(headY),
-      viewportWidth: Math.round(viewportWidth), viewportHeight: Math.round(viewportHeight) });
+      viewportWidth: Math.round(viewportWidth), viewportHeight: Math.round(viewportHeight), font });
     if (json === this._key && !this._closing) return;
     const now = performance.now();
     // 动作头顶跟随约 8Hz；文字翻页/重现立即发送。拖动与归位由原生跟随，不经 JS。
