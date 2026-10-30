@@ -113,7 +113,8 @@ for (const ending of ['cancel', 'onModelReloaded', 'onWindowClosed']) test(`冷�
 for (const chat of ['local', 'remote']) test(`${chat}聊天打开时身体、手部、平板和未命名可见区仍有视觉反馈`, () => {
   for (const area of ['body', 'hand', 'tablet', null]) {
     const h = harness(); h.area(area);
-    if (chat === 'local') h.app._chatView.isOpen = true; else h.app._remoteChat.open = true;
+    // 内嵌聊天显示面板（回复/连接）时台词让位；只有输入框时照常说话（安卓主界面常态）。
+    if (chat === 'local') Object.assign(h.app._chatView, { isOpen: true, panelVisible: true }); else h.app._remoteChat.open = true;
     h.click(); h.advance(100);
     assert.equal(h.service.procedural.isPlaying, true, `${area}必须独立于台词产生反应`);
     assert.ok(h.writes.offsets.some(v => Math.abs(v) > .1), `${area}存在可见偏移`);

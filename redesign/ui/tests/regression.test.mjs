@@ -653,10 +653,18 @@ test('手动随机台词保留暂停、互动和聊天防抢话规则，不积�
   h.state[key]=true;h.app.onShellAction({action:'random-speech'});h.state[key]=false;
  }
  h.app._remoteChat.open=true;h.app.onShellAction({action:'random-speech'});h.app._remoteChat.open=false;
- h.app._chatView.isOpen=true;h.app.onShellAction({action:'random-speech'});h.app._chatView.isOpen=false;
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:true});h.app.onShellAction({action:'random-speech'});Object.assign(h.app._chatView,{isOpen:false,panelVisible:false});
  assert.equal(h.draws,0);assert.equal(h.played.length,0);
   h.app._dialogue._files.clear();h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
  });
+
+test('安卓主界面只剩输入框时照常说台词，回复面板显示时让位',()=>{
+ const h=randomSpeechHarness();
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:false});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'输入框常开不应吞掉台词');
+ Object.assign(h.app._chatView,{panelVisible:true});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'回复面板显示时不说台词');
+});
 
 test('模型与台词尚未加载时手动随机台词不丢失且只补发一次',()=>{
   const h=randomSpeechHarness(); let calls=0;

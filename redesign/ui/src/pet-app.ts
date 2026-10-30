@@ -1519,20 +1519,28 @@ export class PetApp {
 
   // ---------- 台词 ----------
 
+  /**
+   * 聊天占用台词位：Windows 独立聊天窗打开，或内嵌聊天正显示回复/连接/记录面板。
+   * 安卓主界面聊天常开但平时只有输入框，此时桌宠照常说台词（与悬浮窗一致）。
+   */
+  private _chatHoldsSpeech(): boolean {
+    return this._remoteChat.open || (this._chatView?.panelVisible ?? false);
+  }
+
   private _speak(resolved: ResolvedDialogue, source: SpeechSource): void {
-    if ((this._remoteChat.open || this._chatView?.isOpen) && source !== 'conversation') return;
+    if (this._chatHoldsSpeech() && source !== 'conversation') return;
     if (this._coordination.canSpeak(source)) void this._bubble?.play(resolved);
   }
 
   private _playInteraction(tag: string): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak('interaction')) return;
+    if (this._chatHoldsSpeech() || !this._coordination.canSpeak('interaction')) return;
     const resolved = this._dialogue.resolveSceneTag('interaction', tag)
       ?? this._dialogue.resolveSceneTag('interaction', 'body');
     if (resolved) this._speak(resolved, 'interaction');
   }
 
   private _playRandom(source: 'ambient' | 'manual' = 'ambient'): void {
-    if (this._remoteChat.open || this._chatView?.isOpen || !this._coordination.canSpeak(source)) return;
+    if (this._chatHoldsSpeech() || !this._coordination.canSpeak(source)) return;
     const resolved = this._dialogue.resolveRandom();
     if (resolved) this._speak(resolved, source);
   }
@@ -2197,6 +2205,8 @@ export class PetApp {
    */
   private _positionBubble(): void {
     const bubble = this._bubble;
+    // 回复面板弹出时台词立即让位（淡出），不与回复卡叠在一起。
+    if (bubble?.isActive && this._chatView?.panelVisible) bubble.cancel();
     if (!bubble?.isActive) {
       if (bubble?.el.classList?.contains('closing')) this._androidBubble?.close();
       else this._androidBubble?.hide();

@@ -218,6 +218,8 @@ export class ChatView {
   private started = false;
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
+  /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
+  get panelVisible(): boolean { return this.isOpen && !this.panel.hidden; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
   setOpen(open: boolean): void {
     this.cancelLeave();
