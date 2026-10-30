@@ -133,11 +133,10 @@ body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; displ
 }
 
 body.android-main { background:var(--al-bg-0); }
-/* 舞台让出输入框位置：用单行输入框的固定高度，不跟随多行输入逐行变化
-   （画布每帧按舞台尺寸重算，跟随 --chat-composer-height 会让角色随打字一跳一跳）；
-   开关聊天时平滑过渡，角色缓缓上移/回落而不是瞬间跳位。 */
-body.android-main #stage { inset:56px 0 20px; transition:bottom var(--al-t-slow) var(--al-ease); }
-body.android-main.chat-open #stage { bottom:116px; }
+/* 主界面舞台位置与大小静态：不为输入框、回复卡或软键盘让位（它们直接盖在角色上）。
+   高度钉住首个视口（--stage-h 由 pet-app 写入，只在旋转屏幕时更新），键盘弹出 WebView
+   变矮时角色不缩小、不上移，与聊天背景层同一口径。 */
+body.android-main #stage { inset:56px 0 auto; height:calc(var(--stage-h, 100vh) - 56px - 20px); }
 
 /* 冷启动：聊天 UI 等角色首帧上屏（pet-app 挂 body.pet-ready）后与角色一起出现，
    不在角色之前露出连接卡片与输入框。 */

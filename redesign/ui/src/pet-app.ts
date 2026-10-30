@@ -271,6 +271,7 @@ export class PetApp {
     // 页面重载时也清掉上一次 JS 会话留下的原生气泡。
     if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
+    if (platform === 'android' && !this._wrapWindow) this._pinMainStageHeight();
 
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
@@ -2171,6 +2172,22 @@ export class PetApp {
     const scaleCss = this._modelViewportTransform().scale / this._dpr;
     const baseScaleCss = 675 * PetApp._windowMarginRatio / PetApp._renderMarginRatio / this._model.boundsH;
     return scaleCss / baseScaleCss;
+  }
+
+  /**
+   * 安卓主界面：舞台高度钉住首个视口，软键盘弹出（WebView 只变矮）时角色位置与大小不变；
+   * 宽度变化（旋转屏幕）或视口比钉住值更高（键盘收起后首次）才重钉。
+   */
+  private _pinMainStageHeight(): void {
+    const root = document.documentElement;
+    let pinnedW = window.innerWidth;
+    let pinnedH = window.innerHeight;
+    const pin = () => root.style.setProperty('--stage-h', `${pinnedH}px`);
+    pin();
+    window.addEventListener('resize', () => {
+      if (window.innerWidth !== pinnedW) { pinnedW = window.innerWidth; pinnedH = window.innerHeight; pin(); }
+      else if (window.innerHeight > pinnedH) { pinnedH = window.innerHeight; pin(); }
+    });
   }
 
   /**
