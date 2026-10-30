@@ -84,6 +84,15 @@ export function fitBubble(
 
   let font = base;
   let wrapped = naturalW > cap;
+  // 气泡可以比人物宽：宽度上限之外还有可用空间时，先放宽到一行能放下（最多约 18 字），
+  // 避免一两个字落到第二行（"…调小声 / 点。"）。
+  const room = Math.min(vpW * WIDTH_RATIO, base * (CHARS_PER_LINE * 1.7));
+  if (wrapped && naturalW <= room) {
+    el.style.width = 'max-content';
+    el.style.maxWidth = `${Math.round(room)}px`;
+    const width = el.offsetWidth || naturalW;
+    return { width, height: el.offsetHeight || 1, font: base, wrapped: false };
+  }
   if (wrapped && naturalW <= cap * SINGLE_LINE_RATIO) {
     // 只超出一小截：优先把字号收到刚好塞进一行（不低于可读下限）。
     const fitFont = Math.floor(((cap - WIDTH_SLACK) / naturalW) * base * 2) / 2;
