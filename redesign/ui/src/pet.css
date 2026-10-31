@@ -95,7 +95,7 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   transform: rotate(45deg);
 }
 
-/* translate 走独立属性，不覆盖 JS 的居中/小窗缩放与 overlay-wrap 的合成层提示。 */
+/* translate 走独立属性，不覆盖 JS 的居中与小窗缩放。 */
 @keyframes bubble-in {
   from { opacity: 0; translate: 0 4px; }
 }
@@ -111,20 +111,8 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
-/* 安卓悬浮窗：旧壳在人物窗内画气泡，头顶空间只有 _WRAP_BUBBLE_BAND，限三行。
-   translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
-body.overlay-wrap #dialogue-bubble {
-  top: 6px;
-  max-width: 94%;
-  transform: translateZ(0);
-  /* 3 行：3×1.6em + 上下内边距 .95em + 边框 */
-  max-height: calc(5.75em + 2px);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
-/* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。 */
+/* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。
+   悬浮窗状态也沿用同一套 #dialogue-bubble 基础规则；overlay-wrap 只负责窗口几何与穿透。 */
 body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; display: block; -webkit-line-clamp: unset; }
 
 @media (prefers-reduced-motion: reduce) {
