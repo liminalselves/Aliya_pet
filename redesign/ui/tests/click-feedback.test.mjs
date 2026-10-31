@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import ts from 'typescript';
 
 function load(name, imports = {}, globals = {}) {
@@ -9,7 +10,7 @@ function load(name, imports = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: id => imports[id] ?? {}, console,
+  vm.runInNewContext(code, { exports, require: id => imports[id] ?? (['./embed', '../embed'].includes(id) ? EMBED : {}), console,
     setTimeout, clearTimeout, performance, ...globals });
   return exports;
 }

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import { loadMskConfig } from './msk-config-helper.mjs';
 
 function loadFile(url, imports = {}, globals = {}) {
@@ -10,7 +11,7 @@ function loadFile(url, imports = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: id => imports[id] ?? {}, console,
+  vm.runInNewContext(code, { exports, require: id => imports[id] ?? (['./embed', '../embed'].includes(id) ? EMBED : {}), console,
     setTimeout, clearTimeout, performance, ...globals });
   return exports;
 }

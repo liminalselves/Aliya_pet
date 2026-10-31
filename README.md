@@ -168,6 +168,7 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 | `docs/ACTIONS.md` | 动作接入指南（自编动作工程约束 + 余量重新测量） |
 | `docs/MODEL.md` | 模型能力图谱（参数表 / 物理链 / 值域坑） |
 | `docs/AI-API.md` | PetAI 对外接口（表情 / 情绪 / 动作 / 视线 + 事件总线） |
+| `docs/EMBED.md` | 官网首页的网页嵌入构建 |
 | `CHANGELOG.md` | 版本更新记录 |
 
 ## 动作库与资源
@@ -349,6 +350,7 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 | `docs/ACTIONS.md` | Motion integration guide (self-authored motion constraints + re-measuring the margin) |
 | `docs/MODEL.md` | Model capability map (parameters / physics chains / value-range pitfalls) |
 | `docs/AI-API.md` | PetAI external API (expressions / emotion / motions / gaze + event bus) |
+| `docs/EMBED.md` | Web embed build used on the official site |
 | `CHANGELOG.md` | Version history |
 
 ### Motion Library & Assets

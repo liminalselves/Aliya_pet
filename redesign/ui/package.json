@@ -9,7 +9,8 @@
     "test": "node --test tests/regression.test.mjs tests/rendering.test.mjs tests/control.test.mjs tests/pet-regression-batch.test.mjs tests/animation-transition.test.mjs tests/eye-side.test.mjs tests/click-feedback.test.mjs",
     "test:bounds": "node --test tests/render-margin.test.mjs",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:embed": "tsc --noEmit && vite build --config vite.embed.config.ts && python ../scripts/subset-embed-font.py dist-embed"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0"

@@ -25,6 +25,8 @@ async function loadModel() {
   return { model, release() { model.release(); moc._release(); } };
 }
 
+const EMBED = { isEmbed: false, assetUrl: p => '/' + String(p).replace(/^\/+/, ''), postToHost() {} };
+
 function loadSource(name, globals = {}, imports = null) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`src/${name}.ts`, root), 'utf8'), {
@@ -32,7 +34,12 @@ function loadSource(name, globals = {}, imports = null) {
   }).outputText;
   vm.runInNewContext(code, {
     exports, ...globals,
-    require(id) { if (imports) return imports[id] ?? {}; throw new Error(`unexpected runtime import: ${id}`); },
+    require(id) {
+      if (imports?.[id]) return imports[id];
+      if (id === './embed' || id === '../embed') return EMBED;
+      if (imports) return {};
+      throw new Error(`unexpected runtime import: ${id}`);
+    },
   }, { filename: `${name}.ts` });
   return exports;
 }

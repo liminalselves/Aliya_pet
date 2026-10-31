@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Aliya Pet</title>
+<!-- 网页嵌入入口（官网首页 iframe）：与 index.html 共用 main.ts，只多一个嵌入标记。见 docs/EMBED.md -->
+<script>window.__ALIYA_EMBED__ = true;</script>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent;
+    -webkit-user-select: none; user-select: none;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script src="./core/live2dcubismcore.js"></script>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

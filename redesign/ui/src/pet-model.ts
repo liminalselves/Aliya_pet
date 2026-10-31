@@ -28,6 +28,7 @@ import {
   CheekChannel,
   HandRaiseChannel,
 } from './overlay';
+import { assetUrl } from './embed';
 
 /** 动作优先级（与官方 LAppDefine 一致）。 */
 export const MotionPriority = {
@@ -67,7 +68,7 @@ export class PetModel
   private _homeDir: string;
   private _gl: WebGL2RenderingContext = null;
   private _frameBuffer: WebGLFramebuffer = null;
-  private _shaderPath = '/shaders/';
+  private _shaderPath = assetUrl('/shaders/');
   private _ready = false;
   // 模型静态包围盒（drawable 顶点，模型坐标系）：视口适配与窗口尺寸的基准，
   // 与 native live2d_model.cpp 的 modelBoundsW_/modelBoundsH_ 一致
