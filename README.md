@@ -162,6 +162,7 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 | `docs/ARCHITECTURE.md` | 架构、渲染 / 布局算法、平台适配与双端差异 |
 | `docs/BUILD.md` | Windows / Android 构建、依赖与调试工具 |
 | `docs/RELEASE.md` | 发布流程、更新签名密钥与应用内更新（发布服务接口） |
+| `docs/CHANGELOG-GUIDE.md` | 更新日志书写规范 |
 | `docs/ANDROID.md` | Android 壳设计（悬浮窗 / 前台服务 / JS 桥 / 权限） |
 | `docs/CHAT.md` | 聊天系统（Misskey 智能体、会话与八面板托管） |
 | `docs/PERFORMANCE.md` | 表演指令协议（`[[agent_cue]]`，AI 回复驱动表情/动作） |
@@ -344,6 +345,7 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 | `docs/ARCHITECTURE.md` | Architecture, rendering / layout algorithms, platform layer and platform differences |
 | `docs/BUILD.md` | Windows / Android builds, dependencies and debug tooling |
 | `docs/RELEASE.md` | Release process, updater signing keys and in-app updates (release-service API) |
+| `docs/CHANGELOG-GUIDE.md` | How to write CHANGELOG entries (user-facing, Chinese) |
 | `docs/ANDROID.md` | Android shell design (overlay / foreground service / JS bridge / permissions) |
 | `docs/CHAT.md` | Chat system (Misskey agent, sessions and eight-panel managed config) |
 | `docs/PERFORMANCE.md` | Performance-cue protocol (`[[agent_cue]]`, AI-reply-driven expressions/motions) |

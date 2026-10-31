@@ -160,13 +160,13 @@ jobs:
       - name: 提取 CHANGELOG 版本说明
         run: |
           python3 - <<'PY'
-          import os, sys
+          import os, re, sys
           from pathlib import Path
 
           version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
           lines = Path('CHANGELOG.md').read_text(encoding='utf-8').splitlines()
           start = next((i for i, l in enumerate(lines)
-                        if l.startswith('## ') and l[3:].strip().startswith(version)), None)
+                        if l.startswith('## ') and re.match(rf'{re.escape(version)}(?![0-9.])', l[3:].strip())), None)
           if start is None:
               print(f'::error::CHANGELOG.md 未找到 ## {version}（标题以版本号开头）的小节')
               sys.exit(1)

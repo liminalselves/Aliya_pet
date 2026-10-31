@@ -19,3 +19,4 @@
 
 - 合并进 `master` 或 `develop` 的 PR，无 CI 强制要求时由作者自行确认可合并
 - PR 标题使用中文 Conventional Commit 前缀（`feat:`、`fix:`、`docs:` 等），与直接提交一致
+- 改动影响用户可见的行为时，在 PR 中同步更新 `CHANGELOG.md` 待发版本小节，写法见 [docs/CHANGELOG-GUIDE.md](docs/CHANGELOG-GUIDE.md)
