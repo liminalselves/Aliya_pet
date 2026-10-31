@@ -3,29 +3,269 @@
   "category": "time",
   "scene": "late_night",
   "entries": [
-    {"id":"aliya_time_late_night_001","text":"已经很晚啦，还忙吗","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_late_night_002","text":"我也没资格说你熬夜","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
-    {"id":"aliya_time_late_night_003","text":"事情不会乘飞船逃走","weight":1.0,"minRepeatDays":7,"tags":["rest","science_fiction"],"enabled":true},
-    {"id":"aliya_time_late_night_004","text":"让眼睛和肩膀歇会儿","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_late_night_005","text":"睡眠也有自己的价值","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_006","text":"你是不是忘记时间啦","weight":1.0,"minRepeatDays":7,"tags":["rest","playful"],"enabled":true},
-    {"id":"aliya_time_late_night_007","text":"今天已经做得够多啦","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_008","text":"先记下灵感再休息吧","weight":1.0,"minRepeatDays":7,"tags":["rest","work"],"enabled":true},
-    {"id":"aliya_time_late_night_009","text":"别让自己一直低电量","weight":1.0,"minRepeatDays":7,"tags":["rest","science_fiction"],"enabled":true},
-    {"id":"aliya_time_late_night_010","text":"海獭号已进入低功耗","weight":1.0,"minRepeatDays":7,"tags":["rest","science_fiction"],"enabled":true},
-    {"id":"aliya_time_late_night_011","text":"没完成的先放这里吧","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_012","text":"还不困也别盯太久","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_late_night_013","text":"想太久明天会头疼哦","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
-    {"id":"aliya_time_late_night_014","text":"我再陪你待一会儿","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_015","text":"晚安，愿疲惫留在过去","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_016","text":"这个点还不睡吗","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_late_night_017","text":"我把声音调小一点","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_018","text":"熬夜是要付利息的哦","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
-    {"id":"aliya_time_late_night_019","text":"明早会感谢现在的你","weight":1.0,"minRepeatDays":7,"tags":["rest","playful"],"enabled":true},
-    {"id":"aliya_time_late_night_020","text":"再十分钟就去躺下","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_late_night_021","text":"夜里想不通很正常","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_022","text":"我陪你到你说停","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_late_night_023","text":"熬夜不帅，睡觉才帅","weight":1.0,"minRepeatDays":7,"tags":["rest","humor"],"enabled":true},
-    {"id":"aliya_time_late_night_024","text":"晚安要趁清醒时说","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true}
+    {
+      "id": "aliya_time_late_night_001",
+      "text": "已经很晚啦，还忙吗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_002",
+      "text": "我也没资格说你熬夜",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "humor"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_003",
+      "text": "事情不会乘飞船逃走",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "science_fiction"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_004",
+      "text": "让眼睛和肩膀歇会儿",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_005",
+      "text": "睡眠也有自己的价值",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_006",
+      "text": "你是不是忘记时间啦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "playful"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_007",
+      "text": "今天已经做得够多啦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_008",
+      "text": "先记下灵感再休息吧",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "work"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_009",
+      "text": "别让自己一直低电量",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "science_fiction"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_010",
+      "text": "海獭号已进入低功耗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "science_fiction"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_011",
+      "text": "没完成的先放这里吧",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_012",
+      "text": "还不困也别盯太久",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_013",
+      "text": "想太久明天会头疼哦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "humor"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_014",
+      "text": "我再陪你待一会儿",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_015",
+      "text": "晚安，愿疲惫留在过去",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_016",
+      "text": "这个点还不睡吗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_017",
+      "text": "我把声音调小一点",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_018",
+      "text": "熬夜是要付利息的哦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "humor"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_019",
+      "text": "明早会感谢现在的你",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "playful"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_020",
+      "text": "再十分钟就去躺下",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_021",
+      "text": "夜里想不通很正常",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_022",
+      "text": "我陪你到你说停",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_023",
+      "text": "熬夜不帅，睡觉才帅",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "humor"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_late_night_024",
+      "text": "夜深了，把台灯调暗些",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    }
   ]
 }

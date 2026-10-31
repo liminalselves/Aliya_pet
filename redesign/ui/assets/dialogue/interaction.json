@@ -8,361 +8,271 @@
     {
       "id": "interaction_head_1",
       "text": "嗯？我在呢。",
-      "tags": [
-        "head"
-      ],
+      "tags": ["head"],
       "enabled": true
     },
     {
       "id": "interaction_head_2",
-      "text": "轻一点，头发要乱啦。",
-      "tags": [
-        "head"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_face_1",
-      "text": "怎么突然戳我的脸呀。",
-      "tags": [
-        "face"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_face_2",
-      "text": "好啦，我有在看你。",
-      "tags": [
-        "face"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_ear_left_1",
-      "text": "耳朵有一点痒。",
-      "tags": [
-        "ear_left"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_ear_left_2",
-      "text": "被你碰到了。",
-      "tags": [
-        "ear_left"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_ear_right_1",
-      "text": "耳朵有一点痒。",
-      "tags": [
-        "ear_right"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_ear_right_2",
-      "text": "被你碰到了。",
-      "tags": [
-        "ear_right"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_hair_1",
-      "text": "头发被你弄乱啦。",
-      "tags": [
-        "hair"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_body_1",
-      "text": "我在这里，怎么啦？",
-      "tags": [
-        "body"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_body_2",
-      "text": "想和我待一会儿吗？",
-      "tags": [
-        "body"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_hand_1",
-      "text": "嗯，牵到你啦。",
-      "tags": [
-        "hand"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_tablet_1",
-      "text": "想一起看看我的记录吗？",
-      "tags": [
-        "tablet"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_click_doubt_1",
-      "text": "嗯？是有什么事想告诉我吗？",
-      "tags": [
-        "click_doubt"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_click_comment_1",
-      "text": "好啦好啦，我已经注意到你了。",
-      "tags": [
-        "click_comment"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_drag_fast_1",
-      "text": "慢一点呀，我还没站稳呢。",
-      "tags": [
-        "drag_fast"
-      ],
-      "enabled": true
-    },
-    {
-      "id": "interaction_drag_fast_2",
-      "text": "呼……这次搬家有点突然。",
-      "tags": [
-        "drag_fast"
-      ],
+      "text": "轻一点，高马尾要乱啦。",
+      "tags": ["head"],
       "enabled": true
     },
     {
       "id": "interaction_head_3",
       "text": "头顶被拍到了，唔。",
-      "tags": [
-        "head"
-      ],
+      "tags": ["head"],
       "enabled": true
     },
     {
       "id": "interaction_head_4",
       "text": "这样真的会让人安心。",
-      "tags": [
-        "head"
-      ],
+      "tags": ["head"],
       "enabled": true
     },
     {
       "id": "interaction_head_5",
       "text": "手感怎么样？说实话。",
-      "tags": [
-        "head"
-      ],
+      "tags": ["head"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_face_1",
+      "text": "怎么突然戳我的脸呀。",
+      "tags": ["face"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_face_2",
+      "text": "好啦，我有在看你。",
+      "tags": ["face"],
       "enabled": true
     },
     {
       "id": "interaction_face_3",
       "text": "脸要红了，快停下。",
-      "tags": [
-        "face"
-      ],
+      "tags": ["face"],
       "enabled": true
     },
     {
       "id": "interaction_face_4",
       "text": "别捏，会变形的啦。",
-      "tags": [
-        "face"
-      ],
+      "tags": ["face"],
       "enabled": true
     },
     {
       "id": "interaction_face_5",
       "text": "你手指有点凉哦。",
-      "tags": [
-        "face"
-      ],
+      "tags": ["face"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_left_1",
+      "text": "耳朵有一点痒。",
+      "tags": ["ear_left"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_left_2",
+      "text": "被你碰到了。",
+      "tags": ["ear_left"],
       "enabled": true
     },
     {
       "id": "interaction_ear_left_3",
       "text": "左边这只更怕痒。",
-      "tags": [
-        "ear_left"
-      ],
+      "tags": ["ear_left"],
       "enabled": true
     },
     {
       "id": "interaction_ear_left_4",
       "text": "别对着耳朵说话呀。",
-      "tags": [
-        "ear_left"
-      ],
+      "tags": ["ear_left"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_right_1",
+      "text": "耳朵有一点痒。",
+      "tags": ["ear_right"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ear_right_2",
+      "text": "被你碰到了。",
+      "tags": ["ear_right"],
       "enabled": true
     },
     {
       "id": "interaction_ear_right_3",
       "text": "右边也一样很敏感。",
-      "tags": [
-        "ear_right"
-      ],
+      "tags": ["ear_right"],
       "enabled": true
     },
     {
       "id": "interaction_ear_right_4",
       "text": "再戳就要甩尾巴了。",
-      "tags": [
-        "ear_right"
-      ],
+      "tags": ["ear_right"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_hair_1",
+      "text": "头发被你弄乱啦。",
+      "tags": ["hair"],
       "enabled": true
     },
     {
       "id": "interaction_hair_2",
       "text": "刚梳好的头发呀。",
-      "tags": [
-        "hair"
-      ],
+      "tags": ["hair"],
       "enabled": true
     },
     {
       "id": "interaction_hair_3",
       "text": "这算不算很亲密？",
-      "tags": [
-        "hair"
-      ],
+      "tags": ["hair"],
       "enabled": true
     },
     {
       "id": "interaction_hair_4",
       "text": "发梢都被你揉乱了。",
-      "tags": [
-        "hair"
-      ],
+      "tags": ["hair"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_body_1",
+      "text": "我在这里，怎么啦？",
+      "tags": ["body"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_body_2",
+      "text": "想和我待一会儿吗？",
+      "tags": ["body"],
       "enabled": true
     },
     {
       "id": "interaction_body_3",
       "text": "抱一下就够啦。",
-      "tags": [
-        "body"
-      ],
+      "tags": ["body"],
       "enabled": true
     },
     {
       "id": "interaction_body_4",
       "text": "靠太近会听见心跳。",
-      "tags": [
-        "body"
-      ],
+      "tags": ["body"],
       "enabled": true
     },
     {
       "id": "interaction_body_5",
       "text": "我站得很稳，放心。",
-      "tags": [
-        "body"
-      ],
+      "tags": ["body"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_hand_1",
+      "text": "嗯，牵到你啦。",
+      "tags": ["hand"],
       "enabled": true
     },
     {
       "id": "interaction_hand_2",
       "text": "手很暖，我知道。",
-      "tags": [
-        "hand"
-      ],
+      "tags": ["hand"],
       "enabled": true
     },
     {
       "id": "interaction_hand_3",
       "text": "想牵着就别松开嘛。",
-      "tags": [
-        "hand"
-      ],
+      "tags": ["hand"],
       "enabled": true
     },
     {
       "id": "interaction_hand_4",
       "text": "今天先借你一会儿。",
-      "tags": [
-        "hand"
-      ],
+      "tags": ["hand"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_tablet_1",
+      "text": "想一起看看我的记录吗？",
+      "tags": ["tablet"],
       "enabled": true
     },
     {
       "id": "interaction_tablet_2",
       "text": "记录里全是一千年前的事。",
-      "tags": [
-        "tablet"
-      ],
+      "tags": ["tablet"],
       "enabled": true
     },
     {
       "id": "interaction_tablet_3",
       "text": "数据不会说谎，但我会。",
-      "tags": [
-        "tablet"
-      ],
+      "tags": ["tablet"],
       "enabled": true
     },
     {
       "id": "interaction_tablet_4",
       "text": "这一页是留给你的。",
-      "tags": [
-        "tablet"
-      ],
+      "tags": ["tablet"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_click_doubt_1",
+      "text": "嗯？是有什么事想告诉我吗？",
+      "tags": ["click_doubt"],
       "enabled": true
     },
     {
       "id": "interaction_click_doubt_2",
       "text": "你是不是有话没说出来？",
-      "tags": [
-        "click_doubt"
-      ],
+      "tags": ["click_doubt"],
       "enabled": true
     },
     {
       "id": "interaction_click_doubt_3",
       "text": "连续点我，是暗号吗？",
-      "tags": [
-        "click_doubt"
-      ],
+      "tags": ["click_doubt"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_click_comment_1",
+      "text": "好啦好啦，我已经注意到你了。",
+      "tags": ["click_comment"],
       "enabled": true
     },
     {
       "id": "interaction_click_comment_2",
       "text": "看见啦，一直都在看你。",
-      "tags": [
-        "click_comment"
-      ],
+      "tags": ["click_comment"],
       "enabled": true
     },
     {
       "id": "interaction_click_comment_3",
       "text": "这次我认真回应你了。",
-      "tags": [
-        "click_comment"
-      ],
+      "tags": ["click_comment"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_fast_1",
+      "text": "慢一点呀，我还没站稳呢。",
+      "tags": ["drag_fast"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_fast_2",
+      "text": "呼……这次搬家有点突然。",
+      "tags": ["drag_fast"],
       "enabled": true
     },
     {
       "id": "interaction_drag_fast_3",
       "text": "我的咖啡要洒了！",
-      "tags": [
-        "drag_fast"
-      ],
+      "tags": ["drag_fast"],
       "enabled": true
     },
     {
       "id": "interaction_drag_fast_4",
       "text": "这种搬家方式太粗暴啦。",
-      "tags": [
-        "drag_fast"
-      ],
+      "tags": ["drag_fast"],
       "enabled": true
     }
   ]

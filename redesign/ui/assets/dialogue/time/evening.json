@@ -3,29 +3,269 @@
   "category": "time",
   "scene": "evening",
   "entries": [
-    {"id":"aliya_time_evening_001","text":"晚上好，今天顺利吗","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_evening_002","text":"现在可以慢一点啦","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_evening_003","text":"我这里的星空很清楚","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","warm"],"enabled":true},
-    {"id":"aliya_time_evening_004","text":"今天有值得记住的事吗","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_evening_005","text":"夜晚适合整理思绪","weight":1.0,"minRepeatDays":7,"tags":["daily","rest"],"enabled":true},
-    {"id":"aliya_time_evening_006","text":"设备维护终于结束啦","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
-    {"id":"aliya_time_evening_007","text":"累了就少安排一点","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_evening_008","text":"也给自己留点放松吧","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_evening_009","text":"今天发现有趣东西了吗","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
-    {"id":"aliya_time_evening_010","text":"宇宙不停，我们能休息","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","warm"],"enabled":true},
-    {"id":"aliya_time_evening_011","text":"航行日志等我整理呢","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
-    {"id":"aliya_time_evening_012","text":"今晚的海獭号很安静","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","warm"],"enabled":true},
-    {"id":"aliya_time_evening_013","text":"走到这里已经很好啦","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_evening_014","text":"玩会儿游戏也不错","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
-    {"id":"aliya_time_evening_015","text":"今晚别安排得太紧","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_evening_016","text":"天黑啦，节奏放慢点","weight":1.0,"minRepeatDays":7,"tags":["rest","warm"],"enabled":true},
-    {"id":"aliya_time_evening_017","text":"今晚有什么想做的","weight":1.0,"minRepeatDays":7,"tags":["daily","playful"],"enabled":true},
-    {"id":"aliya_time_evening_018","text":"星星刚刚全部上线","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
-    {"id":"aliya_time_evening_019","text":"陪你聊一会儿再走","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_evening_020","text":"黄昏是我最喜欢的","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true},
-    {"id":"aliya_time_evening_021","text":"别把工作带进夜里","weight":1.0,"minRepeatDays":7,"tags":["rest","care"],"enabled":true},
-    {"id":"aliya_time_evening_022","text":"今晚可以早点收工","weight":1.0,"minRepeatDays":7,"tags":["rest","work"],"enabled":true},
-    {"id":"aliya_time_evening_023","text":"船上的灯都亮起来了","weight":1.0,"minRepeatDays":7,"tags":["science_fiction","bright"],"enabled":true},
-    {"id":"aliya_time_evening_024","text":"一天顺利结束就好","weight":1.0,"minRepeatDays":7,"tags":["daily","warm"],"enabled":true}
+    {
+      "id": "aliya_time_evening_001",
+      "text": "晚上好，今天顺利吗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_002",
+      "text": "现在可以慢一点啦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_003",
+      "text": "我这里的星空很清楚",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_004",
+      "text": "今天有值得记住的事吗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_005",
+      "text": "夜晚适合整理思绪",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "rest"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_006",
+      "text": "设备维护终于结束啦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "bright"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_007",
+      "text": "累了就少安排一点",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_008",
+      "text": "也给自己留点放松吧",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_009",
+      "text": "今天发现有趣东西了吗",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "playful"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_010",
+      "text": "宇宙不停，我们能休息",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_011",
+      "text": "航行日志等我整理呢",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "bright"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_012",
+      "text": "今晚的海獭号很安静",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_013",
+      "text": "走到这里已经很好啦",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_014",
+      "text": "玩会儿游戏也不错",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "playful"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_015",
+      "text": "今晚别安排得太紧",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_016",
+      "text": "天黑啦，节奏放慢点",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_017",
+      "text": "今晚有什么想做的",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "playful"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_018",
+      "text": "星星刚刚全部上线",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "bright"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_019",
+      "text": "陪你聊一会儿再走",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_020",
+      "text": "黄昏是我最喜欢的",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_021",
+      "text": "别把工作带进夜里",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "care"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_022",
+      "text": "今晚可以早点收工",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "rest",
+        "work"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_023",
+      "text": "船上的灯都亮起来了",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "science_fiction",
+        "bright"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aliya_time_evening_024",
+      "text": "傍晚像永恒的夕阳",
+      "weight": 1,
+      "minRepeatDays": 7,
+      "tags": [
+        "daily",
+        "warm"
+      ],
+      "enabled": true
+    }
   ]
 }
