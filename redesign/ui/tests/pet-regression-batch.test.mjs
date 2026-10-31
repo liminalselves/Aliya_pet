@@ -638,6 +638,19 @@ test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消�
   assert.equal(calls.length, 6); assert.equal(calls.at(-1).text, '');
 });
 
+test('Android 独立气泡入口不带旧悬浮窗类，避免覆盖 PC 气泡样式', () => {
+  const html = readFileSync(new URL('../bubble.html', import.meta.url), 'utf8');
+  assert.match(html, /<body class="bubble-window">/);
+  assert.doesNotMatch(html, /overlay-wrap/);
+});
+
+test('悬浮窗气泡不再覆盖 PC 气泡的截断与合成层样式', () => {
+  const css = readFileSync(new URL('../src/pet.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /body\.overlay-wrap #dialogue-bubble/);
+  assert.doesNotMatch(css, /-webkit-line-clamp:\s*3/);
+  assert.doesNotMatch(css, /transform:\s*translateZ\(0\)/);
+});
+
 test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
   const classes = new Set();
   const el = { id: '', style: { removeProperty() {} }, textContent: '', offsetHeight: 60,
