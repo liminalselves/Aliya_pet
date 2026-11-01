@@ -31,6 +31,10 @@ export interface PetSettings {
   chatBackgroundDim: number;
   /** 自定义背景更新标记（换图时递增，主界面据此重新读取 IndexedDB）。 */
   chatBackgroundRev?: number;
+  /** 人物 Canvas 的合成不透明度（0–100），不改变原始 Alpha 命中掩码。 */
+  petOpacity: number;
+  /** 只控制人物窗口；关闭时继续沿用智能穿透。 */
+  fullClickThrough: boolean;
 }
 
 const STORAGE_KEY = 'aliya_pet_settings_v1';
@@ -58,6 +62,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   batterySaver: false,
   chatBackground: 'none',
   chatBackgroundDim: 0.35,
+  petOpacity: 100,
+  fullClickThrough: false,
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -138,6 +144,12 @@ export function scaleRangeFor(
   return { minS, maxS };
 }
 
+/** 兼容旧存档；非法值回到可见默认值，避免 null/空串意外变为 0%。 */
+export function clampPetOpacity(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 100;
+  return Math.min(100, Math.max(0, Math.round(value / 5) * 5));
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -147,6 +159,8 @@ export function loadSettings(): PetSettings {
       ...DEFAULT_SETTINGS,
       ...parsed,
       scale: clampScale(Number(parsed.scale ?? 1.0)),
+      petOpacity: clampPetOpacity(parsed.petOpacity),
+      fullClickThrough: parsed.fullClickThrough === true,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
         ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,

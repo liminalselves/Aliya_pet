@@ -104,6 +104,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     @Volatile private var hitMask: HitMask? = null
     /** Android 12L 及以下兼容路径：穿透期间忽略 DOWN 命中测试。 */
     @Volatile private var passThrough = false
+    private var displaySettings = PetDisplaySettings()
+    private var maximumObscuringOpacity: Float? = null
+    private val restoreTouchable = Runnable {
+        passThrough = false
+        applyDisplayToWindow()
+    }
     /** 窗外触摸上报节流（视线跟随）。 */
     private var lastOutsideTouchMs = 0L
 
@@ -145,6 +151,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         var w = (winWCss * density).roundToInt()
         var h = (winHCss * density).roundToInt()
 
+        // Restore before addView: a restarted 0%/click-through pet must never briefly intercept.
+        displaySettings = ShellPrefs.getPetDisplay(this)
+        if (Build.VERSION.SDK_INT >= 31) {
+            maximumObscuringOpacity = try {
+                getSystemService(android.hardware.input.InputManager::class.java)
+                    ?.maximumObscuringOpacityForTouch
+            } catch (error: RuntimeException) {
+                android.util.Log.w("PetOverlayService", "Cannot read overlay touch opacity limit; pass-through pet will be hidden", error)
+                null
+            }
+        }
         web = PetWebViewFactory.create(this, ShellBridge(this))
         attachNativeDrag()
         params = WindowManager.LayoutParams(
@@ -174,6 +191,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
         w = w.coerceAtMost(screenW); h = h.coerceAtMost(screenH)
         params.width = w; params.height = h
+        applyDisplayToWindow()
         try {
             wm.addView(web, params)
             windowAttached = true
@@ -222,7 +240,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             wm.removeView(web)
         } catch (_: Exception) {
         }
-        if (::web.isInitialized) web.destroy()
+        if (::web.isInitialized) {
+            web.removeCallbacks(restoreTouchable)
+            web.destroy()
+        }
         super.onDestroy()
     }
 
@@ -315,6 +336,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
      */
     private fun attachNativeDrag() {
         web.setOnTouchListener listener@{ _, ev ->
+            // Also reject already-queued events while WindowManager applies the new flag.
+            if (displaySettings.ignoresTouch) return@listener true
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     tapCandidate = false
@@ -322,11 +345,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         lastTapAt = 0L
                         // 旧系统兼容：短暂放行后续触摸；已收到的 DOWN 无法重新分发给下层。
                         passThrough = true
-                        setTouchable(false)
-                        web.postDelayed({
-                            passThrough = false
-                            setTouchable(true)
-                        }, PASS_THROUGH_MS)
+                        applyDisplayToWindow()
+                        web.removeCallbacks(restoreTouchable)
+                        web.postDelayed(restoreTouchable, PASS_THROUGH_MS)
                         return@listener true
                     }
                     tapCandidate = true
@@ -463,7 +484,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         if (Build.VERSION.SDK_INT < 33 || !windowAttached) return
         val region = Region()
         val mask = hitMask
-        if (mask != null && params.width > 0 && params.height > 0) {
+        if (!displaySettings.ignoresTouch && mask != null && params.width > 0 && params.height > 0) {
             for (row in 0 until mask.rows) {
                 val top = row * params.height / mask.rows
                 val bottom = ((row + 1) * params.height + mask.rows - 1) / mask.rows
@@ -485,20 +506,43 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         web.rootSurfaceControl?.setTouchableRegion(region)
     }
 
-    /** Android 12L 及以下兼容：收到透明 DOWN 后暂时切换整窗可触摸性。 */
-    private fun setTouchable(touchable: Boolean) {
-        if (!windowAttached) return
-        val f = if (touchable) {
-            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
+    override fun setPetDisplay(opacity: Float, fullClickThrough: Boolean) {
+        val next = PetDisplaySettings.normalized(opacity, fullClickThrough)
+        ShellPrefs.setPetDisplay(this, next)
+        if (next.ignoresTouch && !displaySettings.ignoresTouch && windowAttached) {
+            // Finish an existing WebView/native gesture before suppressing all further events.
+            val now = android.os.SystemClock.uptimeMillis()
+            val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+            web.dispatchTouchEvent(cancel)
+            cancel.recycle()
+            nativeDragging = false
+            jsInteracting = false
+            tapCandidate = false
+            lastTapAt = 0L
+            dragPointerId = -1
+        }
+        displaySettings = next
+        // A stale legacy transparent-DOWN timeout must never turn a fully passive pet back on.
+        web.removeCallbacks(restoreTouchable)
+        passThrough = false
+        applyDisplayToWindow()
+        applyTouchableRegion()
+    }
+
+    /** Only this character window receives NOT_TOUCHABLE and the Android 12 security cap. */
+    private fun applyDisplayToWindow() {
+        if (!::params.isInitialized) return
+        val flags = if (PetDisplayPolicy.notTouchable(displaySettings, passThrough)) {
             params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         }
-        if (f == params.flags) return
-        params.flags = f
-        try {
-            updatePetWindow()
-        } catch (_: Exception) {
-        }
+        val alpha = PetDisplayPolicy.windowAlpha(displaySettings, passThrough,
+            Build.VERSION.SDK_INT, maximumObscuringOpacity)
+        val changed = flags != params.flags || alpha != params.alpha
+        params.flags = flags
+        params.alpha = alpha
+        if (windowAttached && changed) updatePetWindow()
     }
 
     override fun metricsJson(): String {

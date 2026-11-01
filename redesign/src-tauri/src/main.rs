@@ -26,6 +26,12 @@ struct HitMask {
     data: Vec<u8>,
     /// 指针按下期间（拖动/抚摸）强制可交互，防止穿透打断事件流。
     interacting: bool,
+    /// 持久覆盖仅供 pet；不受动态掩码更新、手势锁或 TTL 影响。
+    full_click_through: bool,
+    /// 关闭覆盖后若没有新鲜剪影，安全穿透直到下一份真实 Alpha 掩码到达。
+    awaiting_alpha: bool,
+    /// 聊天入口的归一化客户区矩形，与人物 Alpha 分离；完全穿透时仅此按钮可点击。
+    launcher_rect: Option<[f64; 4]>,
     /// 静态界面（chat）：掩码长期有效，不做陈旧回退；动态剪影（pet）陈旧即回退可交互。
     sticky: bool,
     win_x: i32,
@@ -45,6 +51,9 @@ impl Default for HitMask {
             rows: 0,
             data: Vec::new(),
             interacting: false,
+            full_click_through: false,
+            awaiting_alpha: false,
+            launcher_rect: None,
             sticky: false,
             win_x: 0,
             win_y: 0,
@@ -78,6 +87,7 @@ fn update_hit_mask(
     region_y: Option<i32>,
     region_w: Option<i32>,
     region_h: Option<i32>,
+    launcher_rect: Option<[f64; 4]>,
 ) {
     if let Ok(mut map) = state.lock() {
         let m = map
@@ -87,6 +97,7 @@ fn update_hit_mask(
         m.rows = rows;
         m.data = data;
         m.interacting = interacting;
+        m.launcher_rect = launcher_rect.filter(|r| r.iter().all(|v| v.is_finite()) && r[2] > 0.0 && r[3] > 0.0);
         m.sticky = sticky.unwrap_or(false);
         m.win_x = win_x;
         m.win_y = win_y;
@@ -97,6 +108,30 @@ fn update_hit_mask(
             _ => None,
         };
         m.updated = std::time::Instant::now();
+        if m.cols > 0 && m.rows > 0 && m.data.len() == (m.cols as usize) * (m.rows as usize) {
+            m.awaiting_alpha = false;
+        }
+    }
+}
+
+/// 仅人物窗口的持久覆盖。关闭时不调用 set_ignore_cursor_events(false)：
+/// 由原来的 Alpha 命中线程决定光标处状态，绝不恢复为整个 Canvas 矩形命中。
+#[tauri::command]
+fn set_pet_click_through(state: tauri::State<HitMaskState>, enabled: bool) -> Result<(), String> {
+    let mut map = state.lock().map_err(|e| e.to_string())?;
+    let pet = map.entry("pet".to_string()).or_default();
+    pet.set_full_click_through(enabled);
+    Ok(())
+}
+
+impl HitMask {
+    fn set_full_click_through(&mut self, enabled: bool) {
+        if !enabled && self.full_click_through {
+            self.awaiting_alpha = self.cols == 0 || self.rows == 0
+                || self.updated.elapsed() > std::time::Duration::from_millis(1500);
+        }
+        self.full_click_through = enabled;
+        if enabled { self.interacting = false; }
     }
 }
 
@@ -105,6 +140,25 @@ fn update_hit_mask(
 fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32, i32, i32)>) -> Option<bool> {
     let m = mask?;
     let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
+    if m.full_click_through || m.awaiting_alpha {
+        // 原生仍仅放行聊天按钮，绝不把人物剪影或 Canvas 矩形恢复为命中区。
+        // 归一化边界跟随当前原生窗口移动、缩放和 DPI，不依赖旧 IPC 屏幕坐标。
+        let lx = (pt.0 - x) as f64;
+        let ly = (pt.1 - y) as f64;
+        let over_launcher = w > 0 && h > 0 && lx >= 0.0 && ly >= 0.0
+            && lx < w as f64 && ly < h as f64
+            && m.launcher_rect.is_some_and(|[rx, ry, rw, rh]| {
+                let (bw, bh) = (rw * w as f64, rh * h as f64);
+                let (px, py) = (lx - rx * w as f64, ly - ry * h as f64);
+                if px < 0.0 || py < 0.0 || px >= bw || py >= bh { return false; }
+                // chat-launcher 是胶囊按钮；透明圆角也不拦截后方应用。
+                let radius = bw.min(bh) / 2.0;
+                let dx = px - px.clamp(radius, bw - radius);
+                let dy = py - py.clamp(radius, bh - radius);
+                dx * dx + dy * dy <= radius * radius
+            });
+        return Some(!over_launcher);
+    }
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
     // 指针按下期间整窗接收，拖动/抚摸的事件流不被穿透打断。
     if m.interacting { return Some(false); }
@@ -177,6 +231,57 @@ mod hit_mask_tests {
         assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(false), "陈旧时区域内回退可交互");
         m.interacting = true;
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false), "按下期间整窗接收");
+    }
+
+    #[test]
+    fn full_override_survives_stale_gesture_and_restores_same_alpha() {
+        let mut pet = mask();
+        let chat = mask();
+        pet.updated -= std::time::Duration::from_secs(20);
+        pet.interacting = true;
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (-500, -500), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&chat), (70, 30), None), Some(false));
+        assert!(!pet.interacting);
+        pet.set_full_click_through(false);
+        pet.set_full_click_through(false);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true), "陈旧剪影不得恢复矩形拦截");
+        pet.updated = std::time::Instant::now();
+        pet.awaiting_alpha = false; // update_hit_mask 收到有效真实剪影后解除等待
+        assert_eq!(want_ignore_at(Some(&pet), (20, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(false));
+    }
+
+    #[test]
+    fn full_override_keeps_only_chat_launcher_clickable_across_dpi_and_restore() {
+        let mut pet = mask();
+        pet.launcher_rect = Some([0.2, 0.6, 0.6, 0.2]);
+        pet.set_full_click_through(true);
+        for (x, y, size) in [(10, 20, 100), (321, -123, 200)] {
+            let rect = Some((x, y, size, size));
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 2, y + size * 7 / 10), rect), Some(false), "按钮中心可点击");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 5, y + size * 6 / 10), rect), Some(true), "按钮透明圆角穿透");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size * 7 / 10, y + size / 10), rect), Some(true), "人物本体仍穿透");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 10, y + size / 10), rect), Some(true), "原透明区仍穿透");
+        }
+        pet.updated -= std::time::Duration::from_secs(20);
+        pet.set_full_click_through(false);
+        assert!(pet.awaiting_alpha);
+        assert_eq!(want_ignore_at(Some(&pet), (60, 90), None), Some(false), "等候真实剪影时按钮不失效");
+        assert_eq!(want_ignore_at(Some(&pet), (80, 30), None), Some(true));
+        pet.launcher_rect = None;
+        assert_eq!(want_ignore_at(Some(&pet), (60, 90), None), Some(true), "隐藏后不保留不可见命中区");
+    }
+
+    #[test]
+    fn full_override_before_first_mask_stays_safe_on_restore() {
+        let mut pet = HitMask::default();
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
+        pet.set_full_click_through(false);
+        assert!(pet.awaiting_alpha);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
     }
 
     #[test]
@@ -386,6 +491,19 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
     show_settings_window(&app, target.as_deref())
 }
 
+/// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
+/// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
+#[tauri::command]
+fn sync_click_through_menu(
+    app: tauri::AppHandle,
+    checked: bool,
+) -> Result<(), String> {
+    if let Some(item) = app.try_state::<tauri::menu::CheckMenuItem<tauri::Wry>>() {
+        item.inner().set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     let win = app
@@ -471,8 +589,10 @@ fn main() {
             get_auto_start,
             open_url,
             update_hit_mask,
+            set_pet_click_through,
             set_pet_bounds,
             show_settings,
+            sync_click_through_menu,
             show_records,
             show_update,
             current_update_payload,
@@ -527,15 +647,22 @@ fn main() {
             let top =
                 CheckMenuItem::with_id(app, "top", "置顶显示", true, true, None::<&str>)?;
             let reset = MenuItem::with_id(app, "reset_pos", "重置位置", true, None::<&str>)?;
+            // 托盘不依赖人物命中，可切换穿透、恢复可见度或打开设置。
+            let click_through =
+                CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
+            let reset_opacity =
+                MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
             let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出桌宠", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
-                    &menu_main, &show, &sep1, &cycle, &top, &reset, &sep2, &about, &quit,
+                    &menu_main, &show, &sep1, &cycle, &top, &reset, &click_through,
+                    &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
+            app.manage(click_through.clone());
 
             let icon = app
                 .default_window_icon()
@@ -543,6 +670,7 @@ fn main() {
                 .clone();
 
             let top_item = top.clone();
+            let click_through_item = click_through.clone();
             TrayIconBuilder::new()
                 .icon(icon)
                 .tooltip("Aliya Pet")
@@ -579,6 +707,23 @@ fn main() {
                             "pet",
                             "tray-action",
                             json!({ "action": "reset-position" }),
+                        );
+                    }
+                    "click_through" => {
+                        // muda 在派发事件前已切换勾选；转发目标值给 pet 保存和应用，
+                        // 再由 pet 同步菜单。不能再次反转，否则每次点击都会被撤销。
+                        let new_val = click_through_item.is_checked().unwrap_or(false);
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "full-click-through", "value": new_val }),
+                        );
+                    }
+                    "reset_opacity" => {
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "reset-opacity" }),
                         );
                     }
                     "about" => {

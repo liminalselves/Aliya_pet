@@ -460,6 +460,10 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     override fun isAutoStart(): Boolean = ShellPrefs.getAutoStart(this)
     override fun setPref(key: String, value: String) = ShellPrefs.setPref(this, key, value)
     override fun getPref(key: String): String = ShellPrefs.getPref(this, key)
+    override fun setPetDisplay(opacity: Float, fullClickThrough: Boolean) {
+        // Activity remains interactive: only remember settings for the next overlay service.
+        ShellPrefs.setPetDisplay(this, PetDisplaySettings.normalized(opacity, fullClickThrough))
+    }
     override fun notifySettings(json: String) {
         web.evaluateJavascript("window.__applySettingsFromAndroid?.(($json))", null)
     }

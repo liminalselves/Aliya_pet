@@ -60,6 +60,18 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
 }
 
+// Pure JVM policy checks, without adding a test framework dependency.
+tasks.register<JavaExec>("testPetDisplayPolicy") {
+    group = "verification"
+    description = "Check character touch-through and Android 12 opacity safety policy"
+    dependsOn("compileDebugUnitTestKotlin")
+    mainClass.set("top.liminalselves.aliyapet.PetDisplayPolicyTest")
+    classpath = files(
+        layout.buildDirectory.dir("tmp/kotlin-classes/debugUnitTest"),
+        layout.buildDirectory.dir("tmp/kotlin-classes/debug")
+    ) + configurations.getByName("debugUnitTestRuntimeClasspath")
+}
+
 // 共享前端产物打包进 assets：ui/dist → app/src/main/assets/pet
 // （WebViewAssetLoader 以 https://appassets.androidplatform.net/ 虚拟域名提供，
 //  fetch/XHR 与浏览器同源语义一致，file:// 不行的原因见 PetWebViewFactory）

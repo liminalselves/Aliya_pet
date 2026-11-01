@@ -22,6 +22,7 @@ import {
   PetSettings,
   DEFAULT_SCALE_PERCENT,
   DEFAULT_SETTINGS,
+  clampPetOpacity,
   clampScale,
   hasSavedSettings,
   loadSettings,
@@ -191,6 +192,9 @@ export class PetApp {
   private _hitMaskGeometry = '';
   private _hitMaskSend: ((args: Record<string, unknown>) => void) | null = null;
   private _hitMaskInteracting = false;
+  private _fullClickThrough = false;
+  private _displayStateKey = '';
+  private _displaySync: Promise<unknown> = Promise.resolve();
 
   // 设置
   // 嵌入网页固定用默认设置，不读写本机存档。
@@ -278,6 +282,8 @@ export class PetApp {
     if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
     if (platform === 'android' && !this._wrapWindow) this._pinMainStageHeight();
+    // 模型加载和上下文重建期间也立即恢复显示策略，不等待资源下载完成。
+    this._applyPetDisplay(this._settings);
 
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
@@ -674,6 +680,7 @@ export class PetApp {
       s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
     }
     this._settings = s;
+    this._applyPetDisplay(s);
     const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
     const restoredPosition = restoreWindow && s.posX != null && s.posY != null
@@ -1154,6 +1161,41 @@ export class PetApp {
       .catch(() => {});
   }
 
+  /** 合成层透明度不改变 WebGL 原始 alpha，命中采样及阈值保持原样。 */
+  private _applyPetDisplay(s: PetSettings): void {
+    const opacity = clampPetOpacity(s.petOpacity);
+    if (this._canvas) this._canvas.style.opacity = String(opacity / 100);
+    // Android 主界面包含聊天：绝不对 Activity 整窗禁用触摸。
+    const full = (platform !== 'android' || this._wrapWindow)
+      && (s.fullClickThrough === true || opacity === 0);
+    if (full && !this._fullClickThrough) {
+      this._fullClickThrough = true;
+      this._cancelInteraction();
+      this._resetDragState();
+      if (platform === 'android') androidShell()?.setInteracting(false);
+    }
+    const restoring = this._fullClickThrough && !full;
+    this._fullClickThrough = full;
+    // 即使暂停渲染，也立即重报保留的原始剪影；不发送全零或全一替代掩码。
+    if (restoring) this._publishHitMask();
+    const key = `${platform === 'android' ? opacity : full}:${s.fullClickThrough === true}`;
+    if (this._displayStateKey === key) return;
+    this._displayStateKey = key;
+    if (platform === 'android') {
+      androidShell()?.setPetDisplay?.(opacity, s.fullClickThrough === true);
+    } else if (platform === 'tauri') {
+      // 串行 IPC：快速开关不能让旧响应覆盖新状态；不修改或清空已有 Alpha 掩码。
+      this._displaySync = (this._displaySync ?? Promise.resolve()).then(async () => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_pet_click_through', { enabled: full });
+        await invoke('sync_click_through_menu', { checked: s.fullClickThrough === true });
+      }).catch(error => {
+        this._displayStateKey = '';
+        console.error('Failed to synchronize pet display state', error);
+      });
+    }
+  }
+
   /**
    * 壳动作入口（tray-action 形状）：Windows 托盘/设置窗口经 Tauri 事件，
    * Android 设置页经壳桥 notifyPetAction 转发（main.ts 暴露给
@@ -1187,6 +1229,17 @@ export class PetApp {
           break;
         case 'reset-position':
           this.resetPosition();
+          break;
+        case 'full-click-through':
+          this.applySettings(
+            { ...this._settings, fullClickThrough: p.value ?? !this._settings.fullClickThrough },
+            false
+          );
+          this._broadcastSettings();
+          break;
+        case 'reset-opacity':
+          this.applySettings({ ...this._settings, petOpacity: 100 }, false);
+          this._broadcastSettings();
           break;
         case 'play-action':
           if (p.name) this._ai?.play(p.name);
@@ -1659,7 +1712,7 @@ export class PetApp {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (!e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
+      if (this._fullClickThrough || !e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
@@ -1835,7 +1888,11 @@ export class PetApp {
    * 配对的 pointerup 可能永远不到达，需主动收尾，否则按下状态与 expand=96 卡死。
    */
   private _cancelInteraction(): void {
+    const pointerId = this._activePointerId;
     this._activePointerId = null;
+    if (pointerId != null && this._canvas?.hasPointerCapture(pointerId)) {
+      this._canvas.releasePointerCapture(pointerId);
+    }
     this._touchPetting = false;
     this._touchTapCandidate = false;
     this._interaction?.cancel();
@@ -2597,10 +2654,19 @@ export class PetApp {
       || (this._chatView?.pointerActive ?? false);
   }
 
+  /** 独立 UI 命中边界：不读取人物像素，也不受人物透明度或穿透状态影响。 */
+  private _chatLauncherRect(): [number, number, number, number] | null {
+    if (!this._chatLauncher || this._chatLauncher.hidden || window.innerWidth <= 0 || window.innerHeight <= 0) return null;
+    const r = this._chatLauncher.getBoundingClientRect();
+    return r.width > 0 && r.height > 0
+      ? [r.left / window.innerWidth, r.top / window.innerHeight, r.width / window.innerWidth, r.height / window.innerHeight]
+      : null;
+  }
+
   private _hitMaskGeometryKey(): string {
     const r = this._hitMaskRect ?? { left: 0, top: 0, width: 0, height: 0 };
     return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor,
-      r.left, r.top, r.width, r.height].join(':');
+      r.left, r.top, r.width, r.height, ...(this._chatLauncherRect() ?? [])].join(':');
   }
 
   private static _unionRect(rects: { left: number; top: number; width: number; height: number }[]):
@@ -2632,6 +2698,8 @@ export class PetApp {
       rows: this._hitMaskRows,
       data: Array.from(this._hitMaskData),
       interacting: this._hitMaskInteracting,
+      // 与真实 Alpha 掩码共用通信；完全穿透仅放行聊天按钮，不放行人物。
+      launcherRect: this._chatLauncherRect(),
       winX: this._winPhysX,
       winY: this._winPhysY,
       winW: Math.round(window.innerWidth * this._scaleFactor),

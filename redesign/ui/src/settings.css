@@ -271,6 +271,11 @@ body.platform-android .card > * + button.act.wide { background-size: calc(100% -
 }
 .slider-row .val { width: 38px; flex: none; text-align: right; color: var(--al-text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 
+/* 透明度含说明文字：滑块独占下一行，窄窗也保留轨道和完整百分比。 */
+.row.opacity-row { flex-direction: column; align-items: stretch; gap: 10px; }
+.row.opacity-row .label { flex: none; white-space: normal; }
+.row.opacity-row .slider-row { width: 100%; }
+
 /* ---- 步进器：− 数值 + 一体胶囊 ---- */
 .stepper { display: flex; align-items: center; flex: none; height: 30px; border-radius: var(--al-r-pill); background: var(--al-bg-3); }
 .stepper button {
