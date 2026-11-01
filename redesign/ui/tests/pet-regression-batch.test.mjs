@@ -23,15 +23,27 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   renderer._isPremultipliedAlpha = false;
   renderer._modelColor = { r: 1, g: 1, b: 1, a: 1 };
   let decodePremultiplied = false, closed = false, bound = false;
+  const order = [], filters = [];
   const stopAfterBinding = new Error('texture binding reached');
-  const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
-    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
+  const gl = { drawingBufferWidth: 1200, drawingBufferHeight: 900,
+    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, TEXTURE_2D: 3553,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    LINEAR_MIPMAP_LINEAR: 9987, LINEAR: 9729,
+    createTexture: () => ({}), bindTexture() {},
     // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
     pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
-    texImage2D() {}, generateMipmap() {}, texParameteri() {},
+    texImage2D() {}, generateMipmap() {},
+    texParameteri: (_, pname, param) => { filters.push([pname, param]); },
   };
-  renderer.setClippingMaskBufferSize = () => {};
-  renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
+  // 桌面常规窗口按 2× 超采样选到 2048，且必须在 startUp 之前写入。
+  renderer.setClippingMaskBufferSize = size => { order.push(`mask:${size}`); };
+  renderer.getClippingMaskBufferSize = () => 2048;
+  renderer.getRenderTextureCount = () => 1;
+  renderer.getDrawableMaskBuffer = () => ({ isValid: () => true, destroyRenderTarget() {} });
+  renderer.startUp = () => {
+    order.push('startUp');
+    assert.equal(renderer.isPremultipliedAlpha(), true);
+  };
   renderer.bindTexture = () => {
     bound = true;
     assert.equal(decodePremultiplied, renderer.isPremultipliedAlpha());
@@ -47,6 +59,7 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const { PetModel } = load('pet-model', {
     '@framework/model/cubismusermodel': { CubismUserModel: class {} },
     '@framework/cubismmodelsettingjson': { CubismModelSettingJson: class { constructor() { return setting; } } },
+    './platform': { platform: 'tauri' },
   }, {
     fetch: async () => ({ ok: true, blob: async () => ({}) }),
     createImageBitmap: async (_, options) => {
@@ -62,6 +75,81 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   });
   await assert.rejects(pet.loadFromSetting(new ArrayBuffer(0), 0, '/', { gl }), error => error === stopAfterBinding);
   assert.equal(bound, true);
+  assert.deepEqual(order, ['mask:2048', 'startUp'], '裁剪蒙版档位先于 startUp 写入');
+  // 上传后设置三线性 mipmap 缩小、线性放大，否则缩小的线稿边缘重新变锯齿。
+  assert.deepEqual(filters, [[10241, 9987], [10240, 9729]], 'TEXTURE_MIN/MAG_FILTER 必须显式设置');
+});
+
+/**
+ * 走到纹理绑定为止，记录裁剪蒙版的写入顺序与档位。
+ * validSizes 模拟 startUp 后 SDK 创建蒙版 FBO 的结果（不传表示都成功）。
+ */
+async function maskHarness({ platform: kind = 'tauri', width = 1200, height = 900, validSizes = null } = {}) {
+  const { CubismRenderer } = loadFile(new URL('../../../third_party/cubism-web-sdk/Framework/src/rendering/cubismrenderer.ts', import.meta.url));
+  const renderer = Object.create(CubismRenderer.prototype);
+  renderer._isPremultipliedAlpha = false;
+  renderer._modelColor = { r: 1, g: 1, b: 1, a: 1 };
+  const events = [], warnings = [];
+  let maskSize = 0;
+  renderer.setClippingMaskBufferSize = size => { maskSize = size; events.push(`mask:${size}`); };
+  renderer.getClippingMaskBufferSize = () => maskSize;
+  renderer.getRenderTextureCount = () => 1;
+  renderer.getDrawableMaskBuffer = () => ({
+    isValid: () => (validSizes ? validSizes.includes(maskSize) : true),
+    destroyRenderTarget() {},
+  });
+  renderer.startUp = () => { events.push(`startUp:${maskSize}`); };
+  const stop = new Error('texture binding reached');
+  renderer.bindTexture = () => { throw stop; };
+  const setting = { getModelFileName: () => 'model.moc3', getPhysicsFileName: () => '',
+    getTextureCount: () => 1, getTextureFileName: () => 'texture.png' };
+  const { PetModel } = load('pet-model', {
+    '@framework/model/cubismusermodel': { CubismUserModel: class {} },
+    '@framework/cubismmodelsettingjson': { CubismModelSettingJson: class { constructor() { return setting; } } },
+    './platform': { platform: kind },
+  }, {
+    fetch: async () => ({ ok: true, blob: async () => ({}) }),
+    createImageBitmap: async () => ({ close() {} }),
+    console: { warn: (...args) => warnings.push(args) },
+  });
+  const pet = Object.create(PetModel.prototype);
+  Object.assign(pet, { _fetchArrayBuffer: async () => new ArrayBuffer(0), loadModel() {},
+    _model: { saveParameters() {}, update() {}, getDrawableCount: () => 1,
+      getDrawableVertices: () => [-0.4, -0.6, 0.4, 0.5] },
+    createRenderer() {}, getRenderer: () => renderer,
+  });
+  const gl = { drawingBufferWidth: width, drawingBufferHeight: height,
+    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, TEXTURE_2D: 3553,
+    createTexture: () => ({}), bindTexture() {}, pixelStorei() {}, texImage2D() {},
+    generateMipmap() {}, texParameteri() {} };
+  await assert.rejects(pet.loadFromSetting(new ArrayBuffer(0), 0, '/', { gl }), error => error === stop);
+  return { events, maskSize, warnings };
+}
+
+test('裁剪蒙版按平台与实际绘制尺寸选档，并在 startUp 前写入', async () => {
+  const cases = [
+    { name: '桌面常规窗口', platform: 'tauri', width: 1200, height: 900, expected: 2048 },
+    { name: '桌面小窗口降档', platform: 'tauri', width: 300, height: 450, expected: 1024 },
+    { name: 'Android 常规窗口', platform: 'android', width: 900, height: 1200, expected: 1024 },
+    { name: 'Android 小悬浮窗降档', platform: 'android', width: 300, height: 450, expected: 512 },
+  ];
+  for (const { name, expected, ...options } of cases) {
+    const { events, maskSize, warnings } = await maskHarness(options);
+    assert.equal(maskSize, expected, `${name}：裁剪蒙版档位`);
+    assert.deepEqual(events, [`mask:${expected}`, `startUp:${expected}`], `${name}：先写入档位再 startUp`);
+    assert.deepEqual(warnings, [], `${name}：不应出现告警`);
+  }
+});
+
+test('蒙版 FBO 分配失败时逐档降级，最低回到 SDK 默认 256', async () => {
+  const partial = await maskHarness({ platform: 'tauri', width: 1200, height: 900, validSizes: [512] });
+  assert.equal(partial.maskSize, 512, '大档位分配失败后应落到可用档位');
+  assert.deepEqual(partial.events, ['mask:2048', 'startUp:2048', 'mask:1024', 'startUp:1024', 'mask:512', 'startUp:512']);
+
+  const none = await maskHarness({ platform: 'tauri', width: 1200, height: 900, validSizes: [] });
+  assert.equal(none.maskSize, 256, '全部失败时退回 SDK 默认 256，而不是 0 或 undefined');
+  assert.equal(none.events.filter(event => event.startsWith('startUp')).length, 4);
+  assert.match(String(none.warnings[0]?.[0]), /仍不可用/);
 });
 
 function resizeHarness(sf = 1.5, mirror = false) {

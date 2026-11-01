@@ -20,7 +20,7 @@ import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
 import { GazeController } from './gaze';
-import { platform } from './platform';
+import { platform, PlatformKind } from './platform';
 import {
   OverlayLayer,
   InteractionOffsetChannel,
@@ -47,6 +47,34 @@ export interface ActionManifestEntry {
 }
 
 const INVALID_MOTION_HANDLE = -1;
+
+/**
+ * 裁剪蒙版缓冲档位（正方形边长，像素）与选档用的超采样倍数。
+ * 桌面按 2× 屏幕像素超采样，掩码在绘制时被放大，边缘更干净；
+ * Android 只按 1× 取档：人物显示更小、分块 GPU 带宽紧，超采样收益低于成本。
+ * 单张缓冲按 RGBA8 计 4·size² 字节，档位上限即显存与光栅化成本上限。
+ */
+const CLIPPING_MASK_TIERS = {
+  android: { tiers: [512, 1024], sampling: 1 },
+  desktop: { tiers: [1024, 2048], sampling: 2 },
+} as const;
+/** 最低回退到 SDK 默认值；再低蒙版边缘会重新出现台阶。 */
+const MIN_CLIPPING_MASK_BUFFER_SIZE = 256;
+
+/**
+ * 按平台与实际绘制尺寸选裁剪蒙版档位：取屏幕最长边的 sampling 倍，
+ * 向上落到最近的档位，超出上限时封顶。不一律顶格，也不一律用 SDK 默认 256。
+ */
+function pickClippingMaskBufferSize(
+  kind: PlatformKind,
+  drawingBufferWidth: number,
+  drawingBufferHeight: number
+): number {
+  const { tiers, sampling } =
+    CLIPPING_MASK_TIERS[kind === 'android' ? 'android' : 'desktop'];
+  const needed = Math.max(drawingBufferWidth, drawingBufferHeight, 1) * sampling;
+  return tiers.find(tier => tier >= needed) ?? tiers[tiers.length - 1];
+}
 
 /**
  * 模型装配与每帧流水线（成熟路径：五阶段，单一职责）：
@@ -194,11 +222,13 @@ export class PetModel
     // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
     this.getRenderer().setIsPremultipliedAlpha(true);
     // SDK 默认裁剪蒙版 256×256，被遮挡部件（尾巴等）边缘会出现台阶状锯齿。
-    // 必须在 startUp 之前设置：它会重建裁剪管理器，startUp 才给新管理器注入 gl。
-    // Android 人物显示更小且分块 GPU 带宽紧，1024 足够；桌面用 2048。
-    this.getRenderer().setClippingMaskBufferSize(platform === 'android' ? 1024 : 2048);
+    // 按实际绘制尺寸选档（Android 512/1024、桌面 1024/2048），不一律顶格。
+    this._setupClippingMaskBuffer();
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
+    // startUp 忽略 CubismRenderTarget_WebGL.createRenderTarget 的失败结果；
+    // 显存不足时逐档降级重建，避免蒙版 FBO 不完整导致遮挡边界异常。
+    this._ensureClippingMaskReady();
     for (let i = 0; i < textureCount; i++) {
       const tex = await this._loadTexture(
         this._setting.getTextureFileName(i)
@@ -742,6 +772,63 @@ export class PetModel
       this._gl.drawingBufferHeight,
     ]);
     this.getRenderer().drawModel(this._shaderPath);
+  }
+
+  /**
+   * 写入裁剪蒙版档位。必须在 startUp 之前：setClippingMaskBufferSize 会重建
+   * 裁剪管理器，gl 由随后的 startUp 注入新管理器。
+   */
+  private _setupClippingMaskBuffer(): void {
+    this.getRenderer().setClippingMaskBufferSize(
+      pickClippingMaskBufferSize(
+        platform,
+        this._gl.drawingBufferWidth,
+        this._gl.drawingBufferHeight
+      )
+    );
+  }
+
+  /**
+   * 校验 startUp 创建的蒙版 FBO（SDK 不检查 createRenderTarget 的返回值）。
+   * 有缓冲不完整时按 1/2 逐档降到 SDK 默认 256 后重建；仍失败只告警，
+   * 不让整个模型加载失败（无蒙版时遮挡部件仍会绘制，只是边界不准）。
+   */
+  private _ensureClippingMaskReady(): void {
+    const renderer = this.getRenderer();
+    let size = renderer.getClippingMaskBufferSize();
+    while (
+      size > MIN_CLIPPING_MASK_BUFFER_SIZE &&
+      !this._clippingMaskBuffersValid()
+    ) {
+      const count = renderer.getRenderTextureCount();
+      for (let i = 0; i < count; i++) {
+        // 失败的 render target 内部已释放 GL 资源，这里只清引用。
+        renderer.getDrawableMaskBuffer(i)?.destroyRenderTarget();
+      }
+      size = Math.max(
+        MIN_CLIPPING_MASK_BUFFER_SIZE,
+        Math.floor(size / 2)
+      );
+      renderer.setClippingMaskBufferSize(size);
+      renderer.startUp(this._gl);
+    }
+    if (!this._clippingMaskBuffersValid()) {
+      console.warn(
+        `[pet-model] 裁剪蒙版缓冲在 ${size}px 仍不可用，遮挡边界可能异常`
+      );
+    }
+  }
+
+  /** 模型不使用裁剪蒙版时视为通过。 */
+  private _clippingMaskBuffersValid(): boolean {
+    const renderer = this.getRenderer();
+    const count = renderer.getRenderTextureCount();
+    if (count <= 0) return true;
+    for (let i = 0; i < count; i++) {
+      const target = renderer.getDrawableMaskBuffer(i);
+      if (!target || !target.isValid()) return false;
+    }
+    return true;
   }
 
   private async _fetchArrayBuffer(fileName: string): Promise<ArrayBuffer> {
