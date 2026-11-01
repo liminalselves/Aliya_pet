@@ -98,6 +98,7 @@ export class PetModel
   private _frameBuffer: WebGLFramebuffer = null;
   private _shaderPath = '/shaders/';
   private _ready = false;
+  private _clippingMaskCreationFailed = false;
   // 模型静态包围盒（drawable 顶点，模型坐标系）：视口适配与窗口尺寸的基准，
   // 与 native live2d_model.cpp 的 modelBoundsW_/modelBoundsH_ 一致
   private _boundsW = 1;
@@ -790,10 +791,14 @@ export class PetModel
 
   /**
    * 校验 startUp 创建的蒙版 FBO（SDK 不检查 createRenderTarget 的返回值）。
-   * 有缓冲不完整时按 1/2 逐档降到 SDK 默认 256 后只重建蒙版；仍失败只告警，
-   * 不让整个模型加载失败（无蒙版时遮挡部件仍会绘制，只是边界不准）。
+   * 有缓冲不完整时按 1/2 逐档降到 SDK 默认 256 后只重建蒙版；仍失败则终止加载，
+   * 防止后续绘制进入无效 FBO 或每帧重复分配。
    */
   private _ensureClippingMaskReady(): void {
+    if (this._clippingMaskCreationFailed) {
+      throw new Error('[pet-model] clipping mask initialization previously failed');
+    }
+
     const renderer = this.getRenderer();
     let size = renderer.getClippingMaskBufferSize();
     while (
@@ -808,8 +813,12 @@ export class PetModel
       renderer.rebuildClippingMaskBuffers();
     }
     if (!this._clippingMaskBuffersValid()) {
+      this._clippingMaskCreationFailed = true;
       console.warn(
-        `[pet-model] 裁剪蒙版缓冲在 ${size}px 仍不可用，遮挡边界可能异常`
+        `[pet-model] 裁剪蒙版缓冲在 ${size}px 仍不可用，停止模型初始化`
+      );
+      throw new Error(
+        `[pet-model] clipping mask initialization failed at ${size}px`
       );
     }
   }
@@ -817,11 +826,24 @@ export class PetModel
   /** 模型不使用裁剪蒙版时视为通过。 */
   private _clippingMaskBuffersValid(): boolean {
     const renderer = this.getRenderer();
+    if (
+      typeof renderer.isClippingMaskBufferReady === 'function' &&
+      !renderer.isClippingMaskBufferReady()
+    ) {
+      return false;
+    }
     const count = renderer.getRenderTextureCount();
     if (count <= 0) return true;
     for (let i = 0; i < count; i++) {
       const target = renderer.getDrawableMaskBuffer(i);
-      if (!target || !target.isValid()) return false;
+      if (
+        !target ||
+        !target.isValid() ||
+        target.getBufferWidth() !== renderer.getClippingMaskBufferSize() ||
+        target.getBufferHeight() !== renderer.getClippingMaskBufferSize()
+      ) {
+        return false;
+      }
     }
     return true;
   }

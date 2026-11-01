@@ -681,6 +681,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this._offscreenClippingManager = null;
     this._offscreenMasks = new Array<CubismRenderTarget_WebGL>();
     this._offscreenList = new Array<CubismOffscreenRenderTarget_WebGL>();
+    this._clippingMaskBuffersReady = true;
 
     // テクスチャ対応マップの容量を確保しておく
     // this._textures.prepareCapacity(32, true);
@@ -697,6 +698,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     }
 
     if (this.gl == null) {
+      this._clippingMaskBuffersReady = false;
       return;
     }
     this.gl.deleteBuffer(this._bufferData.vertex);
@@ -756,6 +758,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this._sortedObjectsIndexList = null;
     this._sortedObjectsTypeList = null;
     this._currentFbo = null;
+    this._clippingMaskBuffersReady = false;
     this._model = null;
     this.gl = null;
   }
@@ -799,6 +802,20 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     ) as WebGLFramebuffer;
     const lastViewport = this.gl.getParameter(this.gl.VIEWPORT) as number[];
 
+    if (
+      !this._clippingMaskBuffersReady &&
+      (this._drawableClippingManager != null || this._offscreenClippingManager != null)
+    ) {
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, lastFbo);
+      this.gl.viewport(
+        lastViewport[0],
+        lastViewport[1],
+        lastViewport[2],
+        lastViewport[3]
+      );
+      return;
+    }
+
     // //------------ クリッピングマスク・バッファ前処理方式の場合 ------------
     if (this._drawableClippingManager != null) {
       this.preDraw();
@@ -807,19 +824,33 @@ export class CubismRenderer_WebGL extends CubismRenderer {
         i < this._drawableClippingManager.getRenderTextureCount();
         ++i
       ) {
+        const maskBuffer = this._drawableMasks[i];
+        const maskSize = this._drawableClippingManager.getClippingMaskBufferSize();
         if (
-          this._drawableMasks[i].getBufferWidth() !=
-            this._drawableClippingManager.getClippingMaskBufferSize() ||
-          this._drawableMasks[i].getBufferHeight() !=
-            this._drawableClippingManager.getClippingMaskBufferSize()
+          !maskBuffer ||
+          !maskBuffer.isValid() ||
+          maskBuffer.getBufferWidth() != maskSize ||
+          maskBuffer.getBufferHeight() != maskSize
         ) {
-          // クリッピングマスクのサイズが変更された場合は、オフスクリーンサーフェスを再作成する
-          this._drawableMasks[i].createRenderTarget(
-            this.gl,
-            this._drawableClippingManager.getClippingMaskBufferSize(),
-            this._drawableClippingManager.getClippingMaskBufferSize(),
-            lastFbo
-          );
+          if (
+            !maskBuffer ||
+            !maskBuffer.createRenderTarget(
+              this.gl,
+              maskSize,
+              maskSize,
+              lastFbo
+            )
+          ) {
+            this._clippingMaskBuffersReady = false;
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, lastFbo);
+            this.gl.viewport(
+              lastViewport[0],
+              lastViewport[1],
+              lastViewport[2],
+              lastViewport[3]
+            );
+            return;
+          }
         }
       }
 
@@ -848,18 +879,33 @@ export class CubismRenderer_WebGL extends CubismRenderer {
         i < this._offscreenClippingManager.getRenderTextureCount();
         ++i
       ) {
+        const maskBuffer = this._offscreenMasks[i];
+        const maskSize = this._offscreenClippingManager.getClippingMaskBufferSize();
         if (
-          this._offscreenMasks[i].getBufferWidth() !=
-            this._offscreenClippingManager.getClippingMaskBufferSize() ||
-          this._offscreenMasks[i].getBufferHeight() !=
-            this._offscreenClippingManager.getClippingMaskBufferSize()
+          !maskBuffer ||
+          !maskBuffer.isValid() ||
+          maskBuffer.getBufferWidth() != maskSize ||
+          maskBuffer.getBufferHeight() != maskSize
         ) {
-          this._offscreenMasks[i].createRenderTarget(
-            this.gl,
-            this._offscreenClippingManager.getClippingMaskBufferSize(),
-            this._offscreenClippingManager.getClippingMaskBufferSize(),
-            lastFbo
-          );
+          if (
+            !maskBuffer ||
+            !maskBuffer.createRenderTarget(
+              this.gl,
+              maskSize,
+              maskSize,
+              lastFbo
+            )
+          ) {
+            this._clippingMaskBuffersReady = false;
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, lastFbo);
+            this.gl.viewport(
+              lastViewport[0],
+              lastViewport[1],
+              lastViewport[2],
+              lastViewport[3]
+            );
+            return;
+          }
         }
       }
 
@@ -1567,19 +1613,28 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   }
 
   /**
+   * 裁剪蒙版资源是否可安全用于后续绘制。
+   */
+  public isClippingMaskBufferReady(): boolean {
+    return this._clippingMaskBuffersReady;
+  }
+
+  /**
    * Drawable 用のクリッピング蒙版バッファだけを再作成する。
    * Renderer 全体の初期化や Blend Mode 用のオフスクリーン資源には触れない。
    */
-  public rebuildClippingMaskBuffers(): void {
+  public rebuildClippingMaskBuffers(): boolean {
     if (
       this._model == null ||
       !this._model.isUsingMasking() ||
       this.gl == null ||
       this._drawableClippingManager == null
     ) {
-      return;
+      this._clippingMaskBuffersReady = true;
+      return true;
     }
 
+    this._clippingMaskBuffersReady = false;
     this._drawableClippingManager.setGL(this.gl);
 
     for (const renderTarget of this._drawableMasks) {
@@ -1590,19 +1645,32 @@ export class CubismRenderer_WebGL extends CubismRenderer {
       this._drawableClippingManager.getRenderTextureCount();
     const bufferSize = this._drawableClippingManager.getClippingMaskBufferSize();
     this._drawableMasks.length = renderTextureCount;
+    let allCreated = true;
 
     for (let i = 0; i < renderTextureCount; ++i) {
       const renderTarget = new CubismRenderTarget_WebGL();
-      renderTarget.createRenderTarget(
-        this.gl,
-        bufferSize,
-        bufferSize,
-        this._currentFbo
-      );
+      if (
+        !renderTarget.createRenderTarget(
+          this.gl,
+          bufferSize,
+          bufferSize,
+          this._currentFbo
+        )
+      ) {
+        allCreated = false;
+      }
       this._drawableMasks[i] = renderTarget;
     }
 
+    if (!allCreated) {
+      for (const renderTarget of this._drawableMasks) {
+        renderTarget?.destroyRenderTarget();
+      }
+    }
+
+    this._clippingMaskBuffersReady = allCreated;
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this._currentFbo);
+    return allCreated;
   }
 
   /**
@@ -1719,12 +1787,16 @@ export class CubismRenderer_WebGL extends CubismRenderer {
           this._offscreenClippingManager.getRenderTextureCount();
         for (let i = 0; i < this._offscreenMasks.length; ++i) {
           const offscreenMask = new CubismRenderTarget_WebGL();
-          offscreenMask.createRenderTarget(
-            this.gl,
-            this._offscreenClippingManager.getClippingMaskBufferSize(),
-            this._offscreenClippingManager.getClippingMaskBufferSize(),
-            this._currentFbo
-          );
+          if (
+            !offscreenMask.createRenderTarget(
+              this.gl,
+              this._offscreenClippingManager.getClippingMaskBufferSize(),
+              this._offscreenClippingManager.getClippingMaskBufferSize(),
+              this._currentFbo
+            )
+          ) {
+            this._clippingMaskBuffersReady = false;
+          }
           this._offscreenMasks[i] = offscreenMask;
         }
       }
@@ -1770,6 +1842,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   _offscreenMasks: Array<CubismRenderTarget_WebGL>; ///< オフスクリーン機能マスク描画用のフレームバッファ
 
   _offscreenList: Array<CubismOffscreenRenderTarget_WebGL>; ///< モデルのオフスクリーン
+  _clippingMaskBuffersReady: boolean; // 裁剪蒙版资源是否可安全使用
   _currentFbo: WebGLFramebuffer; ///< 現在のフレームバッファオブジェクト
   _currentOffscreen: CubismOffscreenRenderTarget_WebGL | null; // 現在のオフスクリーン
 
