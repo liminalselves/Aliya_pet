@@ -398,6 +398,45 @@ fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 更新窗口状态：最近一次检查结果 + 强制更新标记（关窗行为分叉依据）。
+#[derive(Default)]
+struct UpdateWindowState {
+    payload: Mutex<Option<serde_json::Value>>,
+    mandatory: std::sync::atomic::AtomicBool,
+}
+
+/// 显示预创建的更新窗口并转交 /api/check 结果：
+/// `update-open` 事件即时渲染 + 暂存一份供页面（重）加载后兜底拉取。
+#[tauri::command]
+fn show_update(
+    app: tauri::AppHandle,
+    state: tauri::State<UpdateWindowState>,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let mandatory = payload
+        .get("mandatory")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    *state.payload.lock().map_err(|e| e.to_string())? = Some(payload.clone());
+    state
+        .mandatory
+        .store(mandatory, std::sync::atomic::Ordering::Relaxed);
+    let win = app
+        .get_webview_window("update")
+        .ok_or("update 窗口未预创建")?;
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    let _ = app.emit_to("update", "update-open", payload);
+    Ok(())
+}
+
+/// 更新页面加载时兜底拉取最近一次检查结果（覆盖事件早于监听安装的时序）。
+#[tauri::command]
+fn current_update_payload(state: tauri::State<UpdateWindowState>) -> Option<serde_json::Value> {
+    state.payload.lock().ok().and_then(|p| p.clone())
+}
+
 /// 由托盘菜单「显示 / 隐藏桌宠」切换桌宠窗口显隐。
 /// chat 伴侣窗跟随 pet：pet 藏则 chat 藏，pet 现则带回之前开着的 chat。
 fn toggle_pet_visibility(app: &tauri::AppHandle) {
@@ -421,10 +460,12 @@ fn main() {
     let hit_mask_for_setup = hit_mask.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(hit_mask)
         .manage(chat_window::ChatAnchorState::default())
         .manage(chat_window::ChatRuntimeState::default())
         .manage(miauth::MiauthState::default())
+        .manage(UpdateWindowState::default())
         .invoke_handler(tauri::generate_handler![
             set_auto_start,
             get_auto_start,
@@ -433,6 +474,8 @@ fn main() {
             set_pet_bounds,
             show_settings,
             show_records,
+            show_update,
+            current_update_payload,
             chat_window::show_chat,
             chat_window::hide_chat,
             chat_window::sync_chat_anchor,
@@ -449,6 +492,23 @@ fn main() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
+                    return;
+                }
+            }
+            // 更新窗口：非强制更新关闭即隐藏（与 settings/records 一致复用）；
+            // 强制更新不可隐藏，关闭按钮视作退出应用（更新是唯一继续使用的途径）。
+            if window.label() == "update" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let state = window.app_handle().state::<UpdateWindowState>();
+                    if state
+                        .mandatory
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        window.app_handle().exit(0);
+                    } else {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                     return;
                 }
             }

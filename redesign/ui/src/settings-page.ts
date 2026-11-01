@@ -29,6 +29,8 @@ import { MOODS } from './emotion';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
 import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
+import { checkForUpdate } from './update/check';
+import { openUpdateModal } from './update/dialog';
 import './settings.css';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
@@ -900,6 +902,51 @@ if (platform === 'android') {
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
+
+  // 检查更新：手动入口不看「跳过/稍后」抑制；结果就地一行展示。
+  // Windows 弹独立 update 窗口（pet 窗口透明不能画 UI）；Android 本页内模态。
+  const checkRow = document.createElement('div');
+  checkRow.className = 'row';
+  const checkLab = document.createElement('div');
+  checkLab.className = 'label';
+  checkLab.textContent = '软件更新';
+  const checkSub = document.createElement('span');
+  checkSub.className = 'sub';
+  checkSub.setAttribute('role', 'status');
+  checkLab.appendChild(checkSub);
+  const checkBtn = document.createElement('button');
+  checkBtn.className = 'act';
+  checkBtn.type = 'button';
+  checkBtn.textContent = '检查更新';
+  checkBtn.addEventListener('click', async () => {
+    if (checkBtn.disabled) return;
+    checkBtn.disabled = true;
+    checkSub.textContent = '正在检查…';
+    try {
+      const result = await checkForUpdate(
+        platform === 'android' ? 'android' : 'windows',
+        __APP_VERSION__
+      );
+      if (result.updateAvailable) {
+        checkSub.textContent = `可更新到 v${result.latest}`;
+        if (platform === 'tauri') {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('show_update', { payload: result });
+        } else {
+          openUpdateModal(result);
+        }
+      } else {
+        checkSub.textContent = `已是最新版本 v${result.latest}`;
+      }
+    } catch {
+      checkSub.textContent = '检查失败，请稍后重试';
+    } finally {
+      checkBtn.disabled = false;
+    }
+  });
+  checkRow.append(checkLab, checkBtn);
+  box.appendChild(checkRow);
+
   const repo = document.createElement('button');
   repo.className = 'act wide';
   repo.textContent = '打开项目仓库';

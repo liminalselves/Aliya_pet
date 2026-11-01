@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "update",
+  "description": "更新窗口权限：监听 update-open 事件、updater 插件检查与安装、隐藏窗口；show_update/current_update_payload 为应用自定义命令，无需授权",
+  "windows": ["update"],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:window:allow-hide",
+    "updater:default"
+  ]
+}

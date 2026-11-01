@@ -132,8 +132,10 @@ debug 与 release 签名不同，从 debug 覆盖装 release 前必须先卸载�
 ## 发布构建（GitHub Actions）
 
 推送 `v*` 标签且指向 master 时，`.github/workflows/release.yml` 自动：
-校验 tag 在 master 上且与各端包内版本一致 → 构建 Windows 安装包（NSIS + MSI）与 Android 签名 APK →
-附到对应 tag 的 GitHub Release（也可在 Actions 页下载 artifact）。
+校验 tag 在 master 上且与各端包内版本一致 → 构建 Windows 安装包（NSIS + MSI，含应用内
+更新所需的 `.sig` 签名产物）与 Android 签名 APK → Release 说明取自 `CHANGELOG.md`
+对应版本小节 → 附到对应 tag 的 GitHub Release（也可在 Actions 页下载 artifact）。
+完整发布说明（版本说明格式、强制更新标记、本地联调发布服务）见 [RELEASE.md](RELEASE.md)。
 
 Android 签名需在仓库 Settings → Secrets and variables → Actions 配置：
 
@@ -143,6 +145,13 @@ Android 签名需在仓库 Settings → Secrets and variables → Actions 配置
 | `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
 | `ANDROID_KEY_ALIAS` | 密钥别名 |
 | `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+Windows 更新签名（应用内一键更新校验安装包用，缺失时发布构建明确失败）另需：
+
+| Secret | 内容 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | `npx tauri signer generate` 产出的 minisign 私钥 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码；密钥未设密码时留空 |
 
 生成 base64（PowerShell）：
 
