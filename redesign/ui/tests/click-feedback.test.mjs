@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import ts from 'typescript';
 
 function load(name, imports = {}, globals = {}) {
@@ -9,7 +10,7 @@ function load(name, imports = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: id => imports[id] ?? {}, console,
+  vm.runInNewContext(code, { exports, require: id => imports[id] ?? (['./embed', '../embed'].includes(id) ? EMBED : {}), console,
     setTimeout, clearTimeout, performance, ...globals });
   return exports;
 }
@@ -23,7 +24,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const { InteractionService } = load('interaction/interaction', {
     './petting-controller': petting, './procedural': procedural,
   }, globals);
-  const writes = {}, trace = [], lines = [], captures = [], masks = [], shellCalls = [], actions = [];
+  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], actions = [];
   const target = {
     getInteractionParamInfo: () => ({ angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
       angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
@@ -40,7 +41,8 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
   const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
-    androidShell: () => ({ setInteracting: value => shellCalls.push(value) }) } }, { ...globals, window });
+    androidShell: () => ({ setInteracting: value => shellCalls.push(value),
+      setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) } }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
   const app = Object.create(PetApp.prototype);
   Object.assign(app, {
@@ -54,7 +56,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     _bubble: { play: r => lines.push(r.pages[0].text), cancel: () => assert.fail('点击不能取消现有气泡') },
     _activePointerId: null, _leftDown: false, _touchPetting: false, _touchTapCandidate: false,
     _dragCandidate: false, _dragging: false, _wrapWindow: false, _scaleFactor: 1,
-    _winPhysX: 0, _winPhysY: 0, _hitMaskData: new Uint8Array(48 * 48).fill(1), _hitMaskRows: 48,
+    _winPhysX: 0, _winPhysY: 0, _hitMaskData: new Uint8Array(96 * 96).fill(1), _hitMaskRows: 96,
     _hitMaskInteracting: false, _hitMaskLastMs: 0, _hitMaskSentMs: 0,
     _hitMaskSend: args => masks.push(args), _settings: { mirror: false },
     _syncWindowMetrics() {}, _cancelSnapAnimation() {}, _moveWindowBy() {}, _onDragFinished() {},
@@ -67,7 +69,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const ctx = (x = 400, secondary = true) => ({ normX: .5, normY: .2, pxX: x, pxY: 200,
     dtSeconds: 1 / 60, leftPressed: !secondary, isSecondary: secondary });
   const advance = ms => { now += ms; service.tick(ms); };
-  return { app, service, writes, trace, lines, captures, masks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
+  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
     area: value => { area = value; }, speaking: value => { speaking = value; }, setTime: value => { now = value; },
     click(overrides = {}) { canvasEvents.pointerdown(event(overrides)); canvasEvents.pointerup(event({ ...overrides, buttons: 0 })); },
     stroke() { for (let i = 1; i <= 90; i++) { now += 1000 / 60;
@@ -112,7 +114,8 @@ for (const ending of ['cancel', 'onModelReloaded', 'onWindowClosed']) test(`冷�
 for (const chat of ['local', 'remote']) test(`${chat}聊天打开时身体、手部、平板和未命名可见区仍有视觉反馈`, () => {
   for (const area of ['body', 'hand', 'tablet', null]) {
     const h = harness(); h.area(area);
-    if (chat === 'local') h.app._chatView.isOpen = true; else h.app._remoteChat.open = true;
+    // 内嵌聊天显示面板（回复/连接）时台词让位；只有输入框时照常说话（安卓主界面常态）。
+    if (chat === 'local') Object.assign(h.app._chatView, { isOpen: true, panelVisible: true }); else h.app._remoteChat.open = true;
     h.click(); h.advance(100);
     assert.equal(h.service.procedural.isPlaying, true, `${area}必须独立于台词产生反应`);
     assert.ok(h.writes.offsets.some(v => Math.abs(v) > .1), `${area}存在可见偏移`);
@@ -230,9 +233,9 @@ test('Windows透明命中与指针交接立即锁定右键，up/cancel/失焦后
 
 test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相同掩码去重', () => {
   const h = harness({ platform: 'tauri' });
-  const pixels = new Uint8ClampedArray(48 * 48 * 4).fill(255);
+  const pixels = new Uint8ClampedArray(96 * 96 * 4).fill(255);
   Object.assign(h.app, { _model: { isReady: () => true },
-    _hitMaskCanvas: { width: 48, height: 48 }, _hitMaskCtx: {
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
       clearRect() {}, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {}, fillRect() {},
       getImageData: () => ({ data: pixels }),
     }, _chatView: { hitRects: () => [] },
@@ -248,20 +251,55 @@ test('静止剪影保持TTL心跳，窗口移动和DPI/尺寸改变不会被相�
   h.setTime(1800); h.app._maybeSendHitMask(); assert.equal(h.masks.length, before + 1, '在1.5s TTL前刷新');
 });
 
+test('Android局部舞台按整窗映射掩码，气泡上方留白穿透且人物和聊天入口仍命中', () => {
+  const h = harness({ platform: 'android' });
+  const maskCanvas = { width: 0, height: 0 };
+  let pixels, tx = 0, ty = 0;
+  const ctx = {
+    clearRect() { pixels = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height * 4); },
+    save() {}, restore() { tx = 0; ty = 0; },
+    translate(x, y) { tx += x; ty += y; },
+    paint(x, y, w, height) {
+      for (let row = 0; row < maskCanvas.height; row++) for (let col = 0; col < maskCanvas.width; col++) {
+        if (col + .5 >= x && col + .5 < x + w && row + .5 >= y && row + .5 < y + height)
+          pixels[(row * maskCanvas.width + col) * 4 + 3] = 255;
+      }
+    },
+    drawImage(_canvas, x, y, w, height) { this.paint(x + tx, y + ty, w, height); },
+    fillRect(x, y, w, height) { this.paint(x, y, w, height); },
+    getImageData: () => ({ data: pixels }),
+  };
+  Object.assign(h.app, { _wrapWindow: true, _model: { isReady: () => true },
+    _hitMaskCanvas: maskCanvas, _hitMaskCtx: ctx,
+    _chatView: { hitRects: () => [{ left: 650, top: 130, width: 80, height: 60 }] },
+  });
+  h.app._canvas.getBoundingClientRect = () => ({ left: 160, top: 240, width: 480, height: 480 });
+  h.setTime(200); h.app._maybeSendHitMask();
+  const mask = h.androidMasks.at(-1);
+  assert.equal(mask.cols, 96); assert.equal(mask.rows, 96);
+  const hit = (x, y) => mask.data[Math.floor(y / 800 * mask.rows) * mask.cols + Math.floor(x / 800 * mask.cols)];
+  assert.equal(hit(400, 80), '0', '气泡上方的透明区域不能被局部剪影拉伸占用');
+  assert.equal(hit(400, 200), '0', '人物上方留白保持透明');
+  assert.equal(hit(400, 400), '1', '人物仍可交互');
+  assert.equal(hit(680, 150), '1', '聊天入口仍可点击');
+  assert.equal(hit(100, 400), '0', '人物左右留白保持透明');
+  assert.equal(hit(400, 770), '0', '人物下方留白保持透明');
+});
+
 test('监听降级提示区域加入Windows命中掩码，成功移除提示后恢复穿透', () => {
-  const h = harness({ platform: 'tauri' }), pixels = new Uint8ClampedArray(48 * 48 * 4), fills = [];
+  const h = harness({ platform: 'tauri' }), pixels = new Uint8ClampedArray(96 * 96 * 4), fills = [];
   Object.assign(h.app, { _model: { isReady: () => true },
     _shellSyncNotice: { getBoundingClientRect: () => ({ left: 100, top: 50, width: 200, height: 100 }) },
-    _hitMaskCanvas: { width: 48, height: 48 }, _hitMaskCtx: {
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
       clearRect() { pixels.fill(0); }, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {},
       fillRect(x, y, w, h) {
         fills.push([x, y, w, h]);
-        for(let row=y;row<Math.min(48,y+h);row++)for(let col=x;col<Math.min(48,x+w);col++)pixels[(row*48+col)*4+3]=255;
+        for(let row=y;row<Math.min(96,y+h);row++)for(let col=x;col<Math.min(96,x+w);col++)pixels[(row*96+col)*4+3]=255;
       }, getImageData: () => ({ data: pixels }),
     }, _chatView: { hitRects: () => [] },
   });
   h.setTime(200); h.app._maybeSendHitMask();
-  assert.deepEqual(fills, [[6, 3, 13, 7]]);assert.equal(h.masks.at(-1).data[4 * 48 + 7], 1);
+  assert.deepEqual(fills, [[12, 6, 25, 13]]);assert.equal(h.masks.at(-1).data[8 * 96 + 14], 1);
   h.app._shellSyncNotice = null; h.setTime(400); h.app._maybeSendHitMask();
   assert.ok(h.masks.at(-1).data.every(v => v === 0));
 });

@@ -26,6 +26,8 @@ export default defineConfig({
         settings: path.resolve(__dirname, 'settings.html'),
         chat: path.resolve(__dirname, 'chat.html'),
         records: path.resolve(__dirname, 'records.html'),
+        bubble: path.resolve(__dirname, 'bubble.html'),
+        update: path.resolve(__dirname, 'update.html'),
       },
     },
   },

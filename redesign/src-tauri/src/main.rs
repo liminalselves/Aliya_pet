@@ -32,6 +32,9 @@ struct HitMask {
     win_y: i32,
     win_w: i32,
     win_h: i32,
+    /// 掩码覆盖的客户区内矩形（物理 px，(x, y, w, h)）；None = 整个窗口。
+    /// 区域外一律穿透，掩码陈旧时也只把区域内回退为可交互，透明大窗不吞点击。
+    region: Option<(i32, i32, i32, i32)>,
     updated: std::time::Instant,
 }
 
@@ -47,6 +50,7 @@ impl Default for HitMask {
             win_y: 0,
             win_w: 0,
             win_h: 0,
+            region: None,
             // 启动即视为陈旧：掩码到达前窗口正常接收事件
             updated: std::time::Instant::now() - std::time::Duration::from_secs(3600),
         }
@@ -70,6 +74,10 @@ fn update_hit_mask(
     win_h: i32,
     label: Option<String>,
     sticky: Option<bool>,
+    region_x: Option<i32>,
+    region_y: Option<i32>,
+    region_w: Option<i32>,
+    region_h: Option<i32>,
 ) {
     if let Ok(mut map) = state.lock() {
         let m = map
@@ -84,6 +92,10 @@ fn update_hit_mask(
         m.win_y = win_y;
         m.win_w = win_w;
         m.win_h = win_h;
+        m.region = match (region_x, region_y, region_w, region_h) {
+            (Some(x), Some(y), Some(w), Some(h)) if w > 0 && h > 0 => Some((x, y, w, h)),
+            _ => None,
+        };
         m.updated = std::time::Instant::now();
     }
 }
@@ -94,16 +106,25 @@ fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32
     let m = mask?;
     let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
-    if m.interacting || stale || m.cols == 0 || m.rows == 0 || w <= 0 || h <= 0 {
-        return Some(false);
-    }
+    // 指针按下期间整窗接收，拖动/抚摸的事件流不被穿透打断。
+    if m.interacting { return Some(false); }
+    if w <= 0 || h <= 0 { return Some(false); }
     let lx = pt.0 - x;
     let ly = pt.1 - y;
     if lx < 0 || ly < 0 || lx >= w || ly >= h {
         return None; // 光标在窗口外：保持当前状态
     }
-    let gx = (lx as u32 * m.cols / w as u32).min(m.cols - 1);
-    let gy = (ly as u32 * m.rows / h as u32).min(m.rows - 1);
+    // 掩码区域外（固定容量外窗的透明部分）一律穿透，陈旧时也不回退。
+    let (rx, ry, rw, rh) = m.region.unwrap_or((0, 0, w, h));
+    let (lx, ly) = (lx - rx, ly - ry);
+    if lx < 0 || ly < 0 || lx >= rw || ly >= rh {
+        return Some(true);
+    }
+    if stale || m.cols == 0 || m.rows == 0 {
+        return Some(false);
+    }
+    let gx = (lx as u32 * m.cols / rw as u32).min(m.cols - 1);
+    let gy = (ly as u32 * m.rows / rh as u32).min(m.rows - 1);
     let idx = (gy * m.cols + gx) as usize;
     Some(m.data.get(idx).copied().unwrap_or(1) == 0)
 }
@@ -141,6 +162,21 @@ mod hit_mask_tests {
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false));
         m.updated = std::time::Instant::now();
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true));
+    }
+
+    #[test]
+    fn region_limits_mask_and_stale_fallback() {
+        let mut m = mask();
+        // 区域 = 客户区 (50,50) 起 50x50；掩码 2x2 铺在区域内。
+        m.region = Some((50, 50, 50, 50));
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true), "区域外穿透");
+        assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(true), "区域内透明格");
+        assert_eq!(want_ignore_at(Some(&m), (90, 70), None), Some(false), "区域内不透明格");
+        m.updated -= std::time::Duration::from_secs(2);
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(true), "陈旧时区域外仍穿透");
+        assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(false), "陈旧时区域内回退可交互");
+        m.interacting = true;
+        assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false), "按下期间整窗接收");
     }
 
     #[test]
@@ -301,6 +337,37 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 缩放时一次性提交 pet 窗口的位置与尺寸（物理像素）。分开 set_size + set_position
+/// 时窗口先沿左上角伸缩一帧，角色会先跳走再被补偿拉回。
+#[tauri::command]
+/// chat 按同一几何同步就位（模型局部锚点与窗口尺寸无关，缩放不需要前端重报）。
+fn set_pet_bounds(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    if w == 0 || h == 0 { return Err("invalid pet bounds".into()); }
+    chat_window::begin_pet_bounds(&app, chat_window::PetAnchor { x, y, w: w as i32, h: h as i32 });
+    let result = apply_pet_bounds(&pet, x, y, w, h);
+    chat_window::end_pet_bounds(&app);
+    result
+}
+
+fn apply_pet_bounds(pet: &tauri::WebviewWindow, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER};
+        let hwnd = pet.hwnd().map_err(|e| e.to_string())?;
+        if unsafe { SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w as i32, h as i32,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        pet.set_size(tauri::PhysicalSize::new(w, h)).map_err(|e| e.to_string())?;
+        pet.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 显示预创建的设置窗口，并按需通知页面打开指定区域。
 fn show_settings_window(app: &tauri::AppHandle, target: Option<&str>) -> Result<(), String> {
     let win = app
@@ -331,6 +398,45 @@ fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 更新窗口状态：最近一次检查结果 + 强制更新标记（关窗行为分叉依据）。
+#[derive(Default)]
+struct UpdateWindowState {
+    payload: Mutex<Option<serde_json::Value>>,
+    mandatory: std::sync::atomic::AtomicBool,
+}
+
+/// 显示预创建的更新窗口并转交 /api/check 结果：
+/// `update-open` 事件即时渲染 + 暂存一份供页面（重）加载后兜底拉取。
+#[tauri::command]
+fn show_update(
+    app: tauri::AppHandle,
+    state: tauri::State<UpdateWindowState>,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let mandatory = payload
+        .get("mandatory")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    *state.payload.lock().map_err(|e| e.to_string())? = Some(payload.clone());
+    state
+        .mandatory
+        .store(mandatory, std::sync::atomic::Ordering::Relaxed);
+    let win = app
+        .get_webview_window("update")
+        .ok_or("update 窗口未预创建")?;
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    let _ = app.emit_to("update", "update-open", payload);
+    Ok(())
+}
+
+/// 更新页面加载时兜底拉取最近一次检查结果（覆盖事件早于监听安装的时序）。
+#[tauri::command]
+fn current_update_payload(state: tauri::State<UpdateWindowState>) -> Option<serde_json::Value> {
+    state.payload.lock().ok().and_then(|p| p.clone())
+}
+
 /// 由托盘菜单「显示 / 隐藏桌宠」切换桌宠窗口显隐。
 /// chat 伴侣窗跟随 pet：pet 藏则 chat 藏，pet 现则带回之前开着的 chat。
 fn toggle_pet_visibility(app: &tauri::AppHandle) {
@@ -354,23 +460,29 @@ fn main() {
     let hit_mask_for_setup = hit_mask.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(hit_mask)
         .manage(chat_window::ChatAnchorState::default())
         .manage(chat_window::ChatRuntimeState::default())
         .manage(miauth::MiauthState::default())
+        .manage(UpdateWindowState::default())
         .invoke_handler(tauri::generate_handler![
             set_auto_start,
             get_auto_start,
             open_url,
             update_hit_mask,
+            set_pet_bounds,
             show_settings,
             show_records,
+            show_update,
+            current_update_payload,
             chat_window::show_chat,
             chat_window::hide_chat,
             chat_window::sync_chat_anchor,
-            chat_window::set_chat_layout,
             chat_window::set_chat_state,
             chat_window::send_chat_cue,
+            chat_window::chat_layout,
+            chat_window::set_chat_layout,
             miauth::miauth_begin,
             miauth::miauth_end
         ])
@@ -380,6 +492,23 @@ fn main() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
+                    return;
+                }
+            }
+            // 更新窗口：非强制更新关闭即隐藏（与 settings/records 一致复用）；
+            // 强制更新不可隐藏，关闭按钮视作退出应用（更新是唯一继续使用的途径）。
+            if window.label() == "update" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let state = window.app_handle().state::<UpdateWindowState>();
+                    if state
+                        .mandatory
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        window.app_handle().exit(0);
+                    } else {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                     return;
                 }
             }

@@ -4,6 +4,8 @@
  * PetApp 先反解实际渲染变换，再按 referenceRenderMargin 换算到本坐标系。
  */
 
+import { assetUrl } from '../embed';
+
 export interface HitAreaDefinition {
   id: string;
   type: string; // 当前仅支持 ellipse
@@ -35,7 +37,7 @@ export class HitAreas {
   /** 是否镜像（左右互换）。 */
   mirrored = false;
 
-  async load(url = '/interaction/aliya_hit_areas.json'): Promise<void> {
+  async load(url = assetUrl('/interaction/aliya_hit_areas.json')): Promise<void> {
     try {
       const res = await fetch(url);
       if (!res.ok) return;

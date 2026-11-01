@@ -22,6 +22,8 @@ export interface AndroidShell {
   setWindowPos(xCss: number, yCss: number): void;
   /** 原子设置窗口矩形（CSS px）：内容贴合模式下逐帧调用。 */
   setWindowRect(xCss: number, yCss: number, wCss: number, hCss: number): void;
+  /** 窗口平滑平移（CSS px，原生动画）；完成回调 __pet.onNativeSnapEnd，被抓起打断回调 onNativeSnapInterrupted。 */
+  animateWindowTo?(xCss: number, yCss: number, durationMs: number): void;
   /** 容器类型：activity=App 内全屏 / overlay=悬浮窗。 */
   getMode(): string;
   openUrl(url: string): void;
@@ -38,6 +40,8 @@ export interface AndroidShell {
   setInteracting(interacting: boolean): void;
   /** 像素占用掩码（0/1 字符串， cols×rows 覆盖整个窗口）：壳命中透明区时穿透触摸。 */
   setHitMask(cols: number, rows: number, data: string): void;
+  /** 独立台词气泡：JSON 含文本、窗口内锚点和适配视口；空文本隐藏，closing 淡出。 */
+  setDialogueBubble?(json: string): void;
   /** 设置页全量设置变更（JSON）：壳转发给桌宠页实时生效。 */
   notifySettings(json: string): void;
   /** 设置页动作转发（play-action/express/set-mood 等 tray-action 形状 JSON）给桌宠页。 */
@@ -74,6 +78,19 @@ function detectPlatform(): PlatformKind {
 }
 
 export const platform: PlatformKind = detectPlatform();
+
+/**
+ * 桌面壳去掉 WebView2 的浏览器右键菜单（返回/刷新/另存为/检查），所有窗口共用；
+ * 输入框与已选中的文字保留系统菜单，复制粘贴照常可用。右键抚摸等交互走 pointer 事件，不受影响。
+ */
+if (platform === 'tauri' && typeof document !== 'undefined') {
+  document.addEventListener('contextmenu', event => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+    if (String(window.getSelection?.() ?? '').trim()) return;
+    event.preventDefault();
+  });
+}
 
 export function androidShell(): AndroidShell | null {
   return platform === 'android'

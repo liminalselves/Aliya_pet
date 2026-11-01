@@ -18,7 +18,7 @@ export interface ChatMessage {
 }
 
 export interface ChatRequest {
-  messages: ReadonlyArray<Pick<ChatMessage, 'role' | 'text'>>;
+  messages: ReadonlyArray<Pick<ChatMessage, 'role' | 'text' | 'file'>>;
   signal: AbortSignal;
 }
 

@@ -11,6 +11,8 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
   拖动、多指与取消事件不计作双击。系统限制后台拉起时可从常驻通知进入。
 - **主界面就是完整桌宠**：角色居中，输入框在底部，回复以 GAL 面板向上展开；
   授权、新建/选择会话、聊天、停止/重试、图片/贴纸、表演指令均复用 Windows 实现。
+  角色位置与大小固定（舞台高钉住首个视口，只随旋转更新），输入框、回复卡与软键盘直接盖在角色上，
+  不为它们缩放或上移。只剩输入框时照常显示随机/互动台词气泡；回复面板出现时台词让位。
 - 「记录」打开全屏 `records.html`，支持刷新、最近 50 轮、消息定位和重新播放；
   「配置」打开设置页的八个托管面板。菜单提供聊天、记录、设置、悬浮窗、关于、退出。
 - Windows 的系统托盘对应安卓菜单/通知；置顶对应系统悬浮窗。主界面自动适配
@@ -36,13 +38,44 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 - `WebViewAssetLoader` 将 `assets/pet/` 映射到
   `https://appassets.androidplatform.net/`；Gradle 从 `ui/dist` 同步打包。
 - 同源 WebView 共享 localStorage，设置经 `notifySettings` 即时应用，动作/表情/
-  情绪经 `notifyPetAction` 转给桌宠。辅助页关闭时补发 focus 处理配置与重播请求。
+  情绪经 `notifyPetAction` 转给桌宠；设置页整屏盖住桌宠，这类表演按钮发出后
+  约 160ms 自动 `open-main` 滑回主界面（`settings-page.ts` `perform`）。
+  辅助页关闭时补发 focus 处理配置与重播请求。
+- 系统 WebView 版本可能落后桌面 WebView2：前端不得依赖 Chrome 116+ 新 API
+  （实机踩过 `AbortSignal.any`，信号合并用 `msk/client.ts` `combineSignals`）。
+- 渲染开销：安卓 WebGL 关闭 MSAA 与 preserveDrawingBuffer（Live2D 边缘靠贴图
+  alpha，保留缓冲在分块 GPU 上每帧多一次整屏拷贝）；Windows 保留两者防缩放闪帧。
+  设置/记录页盖住桌宠时，壳发 `covered`/`uncovered` 停启渲染循环，聊天状态不中断。
+- 启动：原生遮罩（主题底色 + 转圈）盖住页面与菜单键；前端用 WebGL fence 确认角色首帧
+  GPU 绘制完成、再等一帧上屏后发 `pet-ready`，遮罩与菜单键一起淡出（弱机上角色与 UI 同时出现）。
+  桌宠显示不依赖会话：聊天 UI 在此之前隐藏，同一时刻才淡入并开始恢复连接（`ChatView.start`），
+  网络请求不与模型加载抢资源。
+  启动失败也会发，15s 兜底。贴图用 `createImageBitmap` 离主线程解码，上传后释放位图。衬线字体先加载
+  常用字子集 `NotoSerifSC-common.woff2`（约 2.7MB），生僻字才回落完整 25MB 字体；
+  台词或字体有变动时运行 `python redesign/scripts/subset-serif-font.py` 重新生成。
 - 全屏通过 system bars / display cutout / IME insets 调整实际 WebView 空间；
   不用固定高度估算键盘。原生背景与菜单颜色映射共享 `styles/tokens.css`。
-- `WebChromeClient` 接系统文件选择器，托管配置可导入文件；document-start 脚本
+- `WebChromeClient` 接系统文件选择器，托管配置可导入文件；聊天发图（accept 全为 image/*）时
+  选择器附带系统相机（`ACTION_IMAGE_CAPTURE` 输出到 `cache/camera/`，经 FileProvider
+  `${applicationId}.files` 授权）。未声明 CAMERA 权限，因此无需运行时授权；document-start 脚本
   在创建 Blob 的 frame 中截取下载，交给系统「另存为」。保存不需要存储全盘权限；
   该导出通道要求 WebView 支持 `DOCUMENT_START_SCRIPT`，旧系统 WebView 需更新。
 - 普通 HTTP(S) 外链交给浏览器，音频可随互动播放。当前没有后台聊天通知功能。
+
+### 聊天背景
+
+主界面可在设置「聊天背景」里选：无背景（默认）、内置场景（星夜/圆窗/涟漪）、自定义上传，
+并调背景暗化（0–80%）。内置场景是 DOM + CSS 动画（`ui/src/chat-scenes.ts` `CHAT_SCENES` +
+`styles/chat-scenes.css`），尺寸全用容器查询单位，长屏、平板、横屏都按角色站位重新排布，
+设置页缩略图就是缩小的同一场景；省电模式、后台、被辅助页覆盖时冻结动画。
+自定义图压缩到长边 ≤ 2048 后存 IndexedDB（`aliya_backgrounds`），设置里只存选中 id、
+暗化值与换图标记；显示时 cover 铺满，图比屏幕瘦长时对焦 30% 高度保住上半部主体，旋转后重新对焦。
+背景层高度钉住首个视口，软键盘弹出不挤压；切换时新内容就绪后淡入。悬浮窗不加载背景。
+
+### 网络
+
+不做本地接口缓存，每次都取服务器当前数据。会话恢复时验权与会话列表并行，记录页会话详情与
+角色正则并行。只读接口网络瞬断自动重试一次，写接口与超时不重发。
 
 ### 授权回跳
 
@@ -53,8 +86,13 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 ### 悬浮窗口与桥
 
 窗口始终保持 `FLAG_NOT_FOCUSABLE`，WebGL 必须显式硬件加速。
-窗口尺寸仅包含角色、动作余量和顶部气泡带；缩放按屏幕限制并保持脚底锚点，
-旋转后刷新尺寸。位置以模型原点 CSS px 双写 localStorage 与 ShellPrefs 的 Float。
+窗口尺寸仅包含角色与动作余量；缩放按屏幕限制并保持脚底锚点，旋转后刷新尺寸。
+台词气泡是独立的不可触摸悬浮窗（`DialogueBubbleWindow` + `bubble.html`），整页文字完整显示，
+窗口钳在屏幕内。位置以模型原点 CSS px 双写 localStorage 与 ShellPrefs 的 Float。
+
+台词气泡尺寸（三端共用 `dialogue/bubble-fit.ts`）：字号 = 20 × k^0.6（k 为人物当前显示高相对
+scale=1 的倍数，含缩放补间），钳在 11–30px；内边距、圆角、尾巴以 em 计，整只气泡随字号等比。
+气泡可比人物宽，短句优先单行（最多约 18 字），只钳在外窗或屏幕内，尾巴始终指向人物中线。
 透明格通过命中掩码暂时切换触摸能力；此机制不等于保证系统重投最初 DOWN，
 穿透手感需要真机确认。
 
@@ -74,7 +112,7 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
 | 聊天与媒体 | 发送、停止/重试、分段逐字、图片/贴纸、表情动作正常 |
 | 记录与配置 | 八面板可切换保存；消息/分界可定位；重播回主界面播放 |
 | 导入/导出 | 文件选择可取消后重试；JSON 导出可选路径保存，中文内容不损坏 |
-| 设置 | 镜像、省电、自动行为、动作/表情/情绪实时生效；悬浮尺寸/位置重置可恢复 |
+| 设置 | 镜像、省电、自动行为实时生效；动作/表情/情绪点击后返回主界面表演；悬浮尺寸/位置重置可恢复 |
 | 返回与退出 | 逐层返回；关闭退后台开关不自动悬浮；菜单/通知退出后不自行重启 |
 | 熄屏、亮屏与通知权限 | 渲染暂停/恢复；通知拒绝不影响主界面；厂商后台限制按实机记录 |
 

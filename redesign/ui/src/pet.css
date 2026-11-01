@@ -41,7 +41,8 @@ body[data-snap-edge~="top"]::after { border-top-color: var(--al-accent-emphasis)
 body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emphasis); }
 @keyframes snap-confirm { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
 
-/* 台词气泡：角色头顶居中，不拦截指针。
+/* 台词气泡：沿用 app 记录页的暖石墨台词卡片、常规字重与左对齐，保留头顶尾巴。
+   不透明底色让桌面背景不透字，尾巴与主体叠合处也不会因透明度叠加出现色差。
    居中用 left:0;right:0+margin auto——left:50% 会把可用宽度压成窗口右半，
    max-content 下气泡被迫窄列换行。text-size-adjust 关掉 WebView 字体放大。 */
 #dialogue-bubble {
@@ -53,70 +54,66 @@ body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emp
   /* border-box：JS 小窗适配用 offsetWidth 量宽后回写 width，保持口径一致 */
   box-sizing: border-box;
   width: fit-content;
-  max-width: min(82%, 300px);
+  /* 宽度上限由 JS 适配写入（dialogue/bubble-fit.ts，94% 可用宽）。 */
+  max-width: 94%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  padding: 10px 16px;
-  border-radius: var(--al-r-l);
-  border: 1px solid var(--al-line-strong);
-  background: var(--al-surface-card-strong);
+  /* 内边距/圆角/尾巴以 em 计：字号随人物缩放时整只气泡等比。 */
+  padding: .45em .75em .5em;
+  border-radius: .8em;
+  border: 1px solid var(--al-line);
+  background: var(--al-bg-2);
   color: var(--al-text-1);
   font-family: var(--al-font-serif);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.55;
-  text-align: center;
-  letter-spacing: 0.02em;
-  box-shadow: var(--al-shadow-2);
+  /* 字号由 JS 按人物显示大小写入（bubbleFontFor）；这里只是首帧默认值。 */
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: left;
+  letter-spacing: normal;
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
   z-index: 10;
-  /* display:none→block 会重放该动画，即每次翻页/新台词弹入 */
-  animation: bubble-pop 0.22s var(--al-ease-spring);
+  /* 与 app 面板一致：轻上浮淡入，不缩放文字；翻页只淡入。 */
+  animation: bubble-in var(--al-t-med) var(--al-ease);
 }
 
 /* 指向角色的小尾巴 */
 #dialogue-bubble::after {
   content: "";
   position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
+  /* --tail-x：气泡被钳在屏幕边时由 pet-app 写入人物中线位置，尾巴仍指向角色。 */
+  left: var(--tail-x, 50%);
+  bottom: -.25em;
+  width: .5em;
+  height: .5em;
+  margin-left: -.25em;
   background: inherit;
-  border-right: 1px solid var(--al-line-strong);
-  border-bottom: 1px solid var(--al-line-strong);
+  border-right: 1px solid var(--al-line);
+  border-bottom: 1px solid var(--al-line);
   transform: rotate(45deg);
 }
 
-/* scale 走独立属性，不碰 transform（overlay-wrap 的 translateZ 合成层提示不被覆盖） */
-@keyframes bubble-pop {
-  from { opacity: 0; scale: 0.92; translate: 0 4px; }
+/* translate 走独立属性，不覆盖 JS 的居中与小窗缩放。 */
+@keyframes bubble-in {
+  from { opacity: 0; translate: 0 4px; }
 }
+
+/* 翻页/被新台词打断：气泡不重弹，只让文字淡入（opacity 走独立动画，不动 transform/scale） */
+#dialogue-bubble.turn { animation: bubble-turn var(--al-t-med) var(--al-ease); }
+@keyframes bubble-turn { from { opacity: .35; } }
 
 /* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切；出场加速。 */
 #dialogue-bubble.closing {
   opacity: 0;
-  scale: 0.95;
   translate: 0 3px;
-  transition: opacity var(--al-t-out) var(--al-ease-in), scale var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
+  transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
 }
 
-/* 安卓悬浮窗内容贴合模式：窗口顶部永久预留气泡带（见 pet-app _WRAP_BUBBLE_BAND），
-   气泡落在带内——窗口不随气泡出现/消失改尺寸（表面重配会出残影）。
-   translateZ(0) 强制独立合成层，避免与 WebGL 主层的合成次序问题。 */
-body.overlay-wrap #dialogue-bubble {
-  top: 6px;
-  max-width: min(260px, 92%);
-  transform: translateZ(0);
-  max-height: 76px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
+/* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。
+   悬浮窗状态也沿用同一套 #dialogue-bubble 基础规则；overlay-wrap 只负责窗口几何与穿透。 */
+body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; display: block; -webkit-line-clamp: unset; }
 
 @media (prefers-reduced-motion: reduce) {
   #dialogue-bubble { animation: none; }
@@ -124,5 +121,25 @@ body.overlay-wrap #dialogue-bubble {
 }
 
 body.android-main { background:var(--al-bg-0); }
-body.android-main #stage { inset:56px 0 20px; }
-body.android-main.chat-open #stage { bottom:calc(var(--chat-composer-height, 88px) + 12px); }
+/* 主界面舞台位置与大小静态：不为输入框、回复卡或软键盘让位（它们直接盖在角色上）。
+   高度钉住首个视口（--stage-h 由 pet-app 写入，只在旋转屏幕时更新），键盘弹出 WebView
+   变矮时角色不缩小、不上移，与聊天背景层同一口径。 */
+body.android-main #stage { inset:56px 0 auto; height:calc(var(--stage-h, 100vh) - 56px - 20px); }
+
+/* 冷启动：聊天 UI 等角色首帧上屏（pet-app 挂 body.pet-ready）后与角色一起出现，
+   不在角色之前露出连接卡片与输入框。 */
+body:not(.pet-ready) #chat-ui { visibility:hidden; }
+body.pet-ready #chat-ui { animation:al-fade-in var(--al-t-med) var(--al-ease); }
+
+/* Android 主界面聊天背景（chat-background.ts）：铺在角色画布之下，高度钉住首个视口，
+   软键盘弹出不挤压；两层图交替淡入，遮罩 --bg-dim 保证角色与文字可读。 */
+.chat-bg { position:fixed; left:0; top:0; width:100%; height:100%; z-index:0; pointer-events:none; overflow:hidden; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
+.chat-bg.active { opacity:1; }
+/* 两个槽位交替淡入：槽内是内置场景（chat-scenes.ts）或自定义图。 */
+.chat-bg-slot { position:absolute; inset:0; opacity:0; transition:opacity var(--al-t-slow) var(--al-ease); }
+.chat-bg-slot.shown { opacity:1; }
+/* 自定义图：cover 铺满任意机型，对焦点由 chat-background.ts 按宽高比给出。 */
+.chat-bg-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.chat-bg-dim { position:absolute; inset:0; background:var(--al-bg-0); opacity:var(--bg-dim,.35); transition:opacity var(--al-t-med) var(--al-ease); }
+body.android-main #stage { z-index:1; }
+@media (prefers-reduced-motion: reduce) { .chat-bg, .chat-bg-slot { transition:none; } }

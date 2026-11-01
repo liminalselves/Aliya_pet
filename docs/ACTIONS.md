@@ -177,6 +177,8 @@ Android 设备的实际渲染与触摸观感仍需人工确认。跨平台使用
 `PetApp` 的渲染和命中反解共享模型到画布的变换，点击先按真实 canvas 像素尺寸反投影，
 再换算到参考坐标；镜像只消除一次，聊天适配、贴合原点和 DPR 取整均纳入计算。
 因此当前或后续渲染余量变化不需手工平移椭圆；注视及指针速度仍保持原口径。
+椭圆比剪影大（头部区域伸出头顶），是否落在角色上先由像素 alpha 门控（`PetApp._isOnCharacter`），
+椭圆只在门控通过后决定部位。
 
 在 `redesign/ui` 运行 `node --test tests/eye-side.test.mjs` 可复现命中回归：
 正式 Core/moc 的全部顶点及椭圆采样点，经真实 `PetApp._render` 和 Cubism 矩阵投影，

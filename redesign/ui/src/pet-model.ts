@@ -28,6 +28,7 @@ import {
   CheekChannel,
   HandRaiseChannel,
 } from './overlay';
+import { assetUrl } from './embed';
 
 /** 动作优先级（与官方 LAppDefine 一致）。 */
 export const MotionPriority = {
@@ -67,7 +68,7 @@ export class PetModel
   private _homeDir: string;
   private _gl: WebGL2RenderingContext = null;
   private _frameBuffer: WebGLFramebuffer = null;
-  private _shaderPath = '/shaders/';
+  private _shaderPath = assetUrl('/shaders/');
   private _ready = false;
   // 模型静态包围盒（drawable 顶点，模型坐标系）：视口适配与窗口尺寸的基准，
   // 与 native live2d_model.cpp 的 modelBoundsW_/modelBoundsH_ 一致
@@ -747,31 +748,27 @@ export class PetModel
     return response.arrayBuffer();
   }
 
-  /** 加载 PNG 并上传为预乘 alpha 纹理（与官方渲染器的混合方式配套）。 */
-  private _loadTexture(fileName: string): Promise<WebGLTexture> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.addEventListener('load', () => {
-        const gl = this._gl;
-        const texture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.RGBA,
-          gl.RGBA,
-          gl.UNSIGNED_BYTE,
-          img
-        );
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        resolve(texture);
-      });
-      img.addEventListener('error', () =>
-        reject(new Error(`failed to load texture ${fileName}`))
-      );
-      img.src = `${this._homeDir}${fileName}`;
-    });
+  /**
+   * 加载 PNG 并上传为预乘 alpha 纹理（与官方渲染器的混合方式配套）。
+   * createImageBitmap 在解码线程完成 2048² 贴图解码与预乘，主线程只做上传，
+   * 启动时不卡交互；上传后立即 close 释放解码位图，不让 16MB 像素常驻图片缓存。
+   */
+  private async _loadTexture(fileName: string): Promise<WebGLTexture> {
+    const response = await fetch(`${this._homeDir}${fileName}`);
+    if (!response.ok) throw new Error(`failed to load texture ${fileName}`);
+    const bitmap = await createImageBitmap(await response.blob(), { premultiplyAlpha: 'premultiply' });
+    try {
+      const gl = this._gl;
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      // ImageBitmap 的预乘已在解码时完成，像素存储标志对它无效，保持默认避免二次预乘。
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      return texture;
+    } finally {
+      bitmap.close();
+    }
   }
 }

@@ -6,6 +6,8 @@
  *   - 抽取：shuffle_bag 洗牌袋（一轮内不重复）、tag 分组袋、minRepeatDays 冷却
  */
 
+import { assetUrl } from '../embed';
+
 export interface DialogueEntry {
   id?: string;
   text?: string;
@@ -213,17 +215,17 @@ export function paginate(
 // ---------- 仓库 + 抽取 ----------
 
 const SCENE_URLS: Record<string, string> = {
-  user_click: '/dialogue/user_click.json',
-  interaction: '/dialogue/interaction.json',
-  head_petting: '/dialogue/head_petting.json',
-  morning: '/dialogue/time/morning.json',
-  forenoon: '/dialogue/time/forenoon.json',
-  lunch: '/dialogue/time/lunch.json',
-  afternoon: '/dialogue/time/afternoon.json',
-  dinner: '/dialogue/time/dinner.json',
-  evening: '/dialogue/time/evening.json',
-  late_night: '/dialogue/time/late_night.json',
-  deep_night: '/dialogue/time/deep_night.json',
+  user_click: assetUrl('/dialogue/user_click.json'),
+  interaction: assetUrl('/dialogue/interaction.json'),
+  head_petting: assetUrl('/dialogue/head_petting.json'),
+  morning: assetUrl('/dialogue/time/morning.json'),
+  forenoon: assetUrl('/dialogue/time/forenoon.json'),
+  lunch: assetUrl('/dialogue/time/lunch.json'),
+  afternoon: assetUrl('/dialogue/time/afternoon.json'),
+  dinner: assetUrl('/dialogue/time/dinner.json'),
+  evening: assetUrl('/dialogue/time/evening.json'),
+  late_night: assetUrl('/dialogue/time/late_night.json'),
+  deep_night: assetUrl('/dialogue/time/deep_night.json'),
 };
 
 const DAY_MS = 24 * 3600 * 1000;

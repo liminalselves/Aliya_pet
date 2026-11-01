@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import { loadMskConfig } from './msk-config-helper.mjs';
 
 function loadFile(url, imports = {}, globals = {}) {
@@ -10,7 +11,7 @@ function loadFile(url, imports = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: id => imports[id] ?? {}, console,
+  vm.runInNewContext(code, { exports, require: id => imports[id] ?? (['./embed', '../embed'].includes(id) ? EMBED : {}), console,
     setTimeout, clearTimeout, performance, ...globals });
   return exports;
 }
@@ -22,17 +23,19 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const renderer = Object.create(CubismRenderer.prototype);
   renderer._isPremultipliedAlpha = false;
   renderer._modelColor = { r: 1, g: 1, b: 1, a: 1 };
-  let uploadPremultiplied = false, bound = false;
+  let decodePremultiplied = false, closed = false, bound = false;
   const stopAfterBinding = new Error('texture binding reached');
   const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
-    pixelStorei: (key, value) => { assert.equal(key, 37440); uploadPremultiplied = value === 1; },
+    // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
+    pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
     texImage2D() {}, generateMipmap() {},
   };
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
     bound = true;
-    assert.equal(uploadPremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(decodePremultiplied, renderer.isPremultipliedAlpha());
+    assert.equal(closed, true, '上传后释放解码位图');
     for (const opacity of [0, 0.2, 0.6, 1]) {
       const c = renderer.getModelColorWithOpacity(opacity);
       assert.deepEqual([c.r, c.g, c.b, c.a], [opacity, opacity, opacity, opacity]);
@@ -44,10 +47,13 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const { PetModel } = load('pet-model', {
     '@framework/model/cubismusermodel': { CubismUserModel: class {} },
     '@framework/cubismmodelsettingjson': { CubismModelSettingJson: class { constructor() { return setting; } } },
-  }, { Image: class {
-    addEventListener(name, fn) { if (name === 'load') this.loaded = fn; }
-    set src(_) { queueMicrotask(() => this.loaded()); }
-  } });
+  }, {
+    fetch: async () => ({ ok: true, blob: async () => ({}) }),
+    createImageBitmap: async (_, options) => {
+      decodePremultiplied = options?.premultiplyAlpha === 'premultiply';
+      return { close: () => { closed = true; } };
+    },
+  });
   const pet = Object.create(PetModel.prototype);
   Object.assign(pet, { _fetchArrayBuffer: async () => new ArrayBuffer(0), loadModel() {},
     _model: { saveParameters() {}, update() {}, getDrawableCount: () => 1,
@@ -69,9 +75,19 @@ function resizeHarness(sf = 1.5, mirror = false) {
     scaleFactor: sf, workArea: { position: { x: -3000, y: 0 }, size: { width: 3000, height: 2400 } },
   }; }, LogicalSize: class { constructor(width, height) { this.width = width; this.height = height; } },
   PhysicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } } };
-  const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api,
+  // set_pet_bounds：位置+尺寸一次原生提交；impl 可被用例替换以模拟 IPC 失败。
+  const bounds = { impl: async ({ x, y, w, h }) => {
+    await pause('position-before-effect');
+    events.push('bounds'); sizes.push({ width: w / sf, height: h / sf });
+    size = { width: w, height: h }; pos = { x, y }; positions.push(pos);
+    await pause('resize'); await pause('position');
+  } };
+  const core = { invoke: async (command, args) => { if (command === 'set_pet_bounds') return bounds.impl(args); } };
+  const { PetApp } = load('pet-app', { '@tauri-apps/api/window': api, '@tauri-apps/api/core': core,
     './platform': { platform: 'tauri' }, './settings': { ...settings, saveSettings: s => saved.push({ ...s }) },
-  }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {} } },
+  }, { document: { body: { classList: { toggle() {}, remove() {} }, dataset: {}, style: {} } },
+    window: { get innerWidth() { return size.width / sf; }, get innerHeight() { return size.height / sf; } },
+    requestAnimationFrame: fn => setImmediate(() => fn(0)),
     console: { warn: (...args) => warnings.push(args) } });
   const app = Object.create(PetApp.prototype);
   Object.assign(app, { _windowSettingsRevision: 0, _windowSettingsTask: Promise.resolve(), _windowResizeRemainder: { x: 0, y: 0 },
@@ -80,6 +96,9 @@ function resizeHarness(sf = 1.5, mirror = false) {
     _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
       getStaticBounds: () => ({ minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 }) },
     _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _cancelSnapAnimation() {}, setFpsCap() {}, setMirrored() {},
+    // 这些用例验证原生几何补偿（启动恢复、换显示器时仍走这条路径）：不按显示器开足容量，
+    // 外窗尺寸跟随比例，每次设置都重新走一次完整补偿。
+    _scaleLimitsFrom: () => null,
     _syncChatAnchor: anchor => anchors.push(anchor), _broadcastSettings() {},
     _tauriWindow: { setAlwaysOnTop: async () => {},
       outerPosition: async () => { await pause('before-position'); return { ...pos }; },
@@ -94,7 +113,16 @@ function resizeHarness(sf = 1.5, mirror = false) {
       setPosition: async target => { await pause('position-before-effect'); events.push('position'); pos = { ...target }; positions.push(pos); await pause('position'); },
     },
   });
-  return { app, positions, sizes, anchors, saved, warnings, events,
+  // 每次设置都走原生几何补偿路径（不进入固定容量的窗内缩放）。
+  Object.defineProperty(app, '_deskCapacityReady', { get: () => false, set() {} });
+  /** 位置写入失败（尺寸已生效）：原子提交只改尺寸后拒绝，单独 setPosition 也拒绝。 */
+  const failPosition = message => {
+    const setPosition = app._tauriWindow.setPosition, original = bounds.impl;
+    app._tauriWindow.setPosition = async () => { throw new Error(message); };
+    bounds.impl = async args => { await original({ ...args, x: pos.x, y: pos.y }); throw new Error(message); };
+    return () => { app._tauriWindow.setPosition = setPosition; bounds.impl = original; };
+  };
+  return { app, positions, sizes, anchors, saved, warnings, events, bounds, failPosition,
     change(scale, restore = false) { app.applySettings({ ...app._settings, scale }, restore); },
     hold(stage) {
       const reached = deferred(), release = deferred();
@@ -134,7 +162,8 @@ test('快速缩放在所有异步边界保持尺寸/位置成对提交，只应�
     gate.release(); await h.app._windowSettingsTask;
     nearFoot(h.foot(), foot);
     const mutated = ['resize', 'after-size', 'scale-factor', 'position'].includes(stage);
-    assert.deepEqual(h.events, mutated ? ['size', 'position', 'size', 'position'] : ['size', 'position'], stage);
+    // 每次缩放只有一次原子提交；预测命中时补偿不再追加位置写入。
+    assert.deepEqual(h.events, mutated ? ['bounds', 'bounds'] : ['bounds'], stage);
     assert.equal(h.sizes.at(-1).height, 480);
     assert.ok(Math.abs(h.app._windowResizeRemainder.x) <= 0.5);
     assert.ok(Math.abs(h.app._windowResizeRemainder.y) <= 0.5);
@@ -180,6 +209,18 @@ test('快捷尺寸保留三档循环，两次放大的实际尺寸增量相等',
   assert.equal(nextSizePreset(0.2, 0.2, 0.2), 0.2);
 });
 
+test('首次启动默认缩放取设置页滑杆的 40%', async () => {
+  const { scaleToPercent, scaleRangeFor, DEFAULT_SCALE_PERCENT } = load('settings');
+  for (const sf of [1, 1.25, 1.5, 2]) {
+    const h = resizeHarness(sf);
+    const scale = await h.app._defaultScale();
+    const range = scaleRangeFor(3000 / sf, 2400 / sf);
+    const percent = scaleToPercent(scale, range.minS, range.maxS);
+    assert.ok(Math.abs(percent - DEFAULT_SCALE_PERCENT) < 0.5, `sf=${sf} percent=${percent}`);
+    assert.ok(scale >= range.minS && scale <= range.maxS, `sf=${sf} scale=${scale}`);
+  }
+});
+
 test('快捷切换按设备范围等步长缩放，连续点击不丢档位且脚底不漂移', async () => {
   for (const sf of [1, 1.5, 2]) {
     const h = resizeHarness(sf), foot = h.foot();
@@ -202,18 +243,45 @@ test('快捷切换按设备范围等步长缩放，连续点击不丢档位且�
   }
 });
 
+test('缩放补间以静态脚底为锚：任意中间比例脚底像素不动，播完落定撤销补间', () => {
+  const { PetApp } = load('pet-app', { './platform': { platform: 'tauri' } });
+  const app = Object.create(PetApp.prototype);
+  let now = 1000;
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  Object.assign(app, { _wrapWindow: false, _dpr: 1.5, _chatView: null, _canvas: { width: 600, height: 900 },
+    _model: { boundsH: 1.1, boundsAspect: 0.5 / 1.1, getStaticBounds: () => bounds } });
+  const foot = t => ({ x: t.originX + ((bounds.minX + bounds.maxX) / 2) * t.scale, y: t.originY - bounds.minY * t.scale });
+  const natural = app._modelViewportTransform();
+  for (const k of [0.4, 0.75, 1.3]) {
+    app._scaleTween = { from: natural.scale / 1.5 * k, to: 0, start: null, settled: false };
+    const t = app._modelViewportTransform();
+    assert.ok(Math.abs(t.scale - natural.scale * k) < 1e-9);
+    const a = foot(t), b = foot(natural);
+    assert.ok(Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9);
+  }
+  const perf = globalThis.performance.now;
+  globalThis.performance.now = () => now;
+  try {
+    app._scaleTween = { from: 100, to: 200, start: 1000, settled: true };
+    now = 1100; const mid = app._scaleTweenValue(now);
+    assert.ok(mid > 150 && mid < 200, '缓出：前半程走过一半以上');
+    now = 1300; assert.equal(app._scaleTweenValue(now), null); assert.equal(app._scaleTween, null);
+    app._scaleTween = { from: 100, to: 200, start: 1000, settled: false };
+    assert.equal(app._scaleTweenValue(1300), 200, '原生尺寸未落定前停在终点、不撤销');
+  } finally { globalThis.performance.now = perf; }
+});
+
 test('启动恢复尊重保存位置；失败不伪造位置成功，也不会阻断后续缩放', async () => {
   const h = resizeHarness();
   Object.assign(h.app._settings, { posX: -1800, posY: -200 });
   h.change(0.7, true); await h.app._windowSettingsTask;
   assert.deepEqual(h.geometry().pos, { x: -1800, y: -200 });
-  const setPosition = h.app._tauriWindow.setPosition;
-  h.app._tauriWindow.setPosition = async () => { throw new Error('position rejected'); };
+  const restore = h.failPosition('position rejected');
   h.change(0.4); await h.app._windowSettingsTask;
   assert.equal(h.warnings.length, 1);
   assert.equal(h.saved.at(-1).posX, -1800);
   assert.equal(h.anchors.length, 1);
-  h.app._tauriWindow.setPosition = setPosition;
+  restore();
   h.change(1); await h.app._windowSettingsTask;
   assert.equal(h.anchors.length, 2);
 });
@@ -263,37 +331,35 @@ test('拖动与缩放共用几何队列，补偿会重定位待提交的拖动�
 });
 
 test('原生尺寸修改后即使 Promise 拒绝也完成补偿；位置失败的补偿债务先于后续缩放恢复', async () => {
-  const h = resizeHarness(), before = h.foot(), originalSize = h.app._tauriWindow.setSize;
-  h.app._tauriWindow.setSize = async s => { await originalSize(s); throw new Error('resize IPC failed after effect'); };
+  const h = resizeHarness(), before = h.foot(), originalBounds = h.bounds.impl;
+  // 尺寸生效但位置没跟上，且 IPC 仍报错：补偿必须按实测尺寸把脚底拉回。
+  h.bounds.impl = async args => { await originalBounds({ ...args, x: args.x + 37, y: args.y - 19 }); throw new Error('resize IPC failed after effect'); };
   h.change(0.4); await h.app._windowSettingsTask;
   nearFoot(h.foot(), before); assert.equal(h.warnings.length, 1);
-  h.app._tauriWindow.setSize = originalSize;
-  const originalPos = h.app._tauriWindow.setPosition;
-  h.app._tauriWindow.setPosition = async () => { throw new Error('position failed before effect'); };
+  h.bounds.impl = originalBounds;
+  const restore = h.failPosition('position failed before effect');
   h.change(0.7); await h.app._windowSettingsTask;
   assert.equal(h.warnings.length, 2);
-  h.app._tauriWindow.setPosition = originalPos;
+  restore();
   h.change(1.2); await h.app._windowSettingsTask;
   nearFoot(h.foot(), before); assert.equal(h.warnings.length, 2);
 });
 
-test('聊天只测自然页高，不累计旧窗口高度或滚动填充；测量后恢复约束', () => {
-  const { ChatView } = load('chat/view');
-  const view = Object.create(ChatView.prototype);
-  let measuring = false, naturalHeight = 96;
+test('聊天按页锁高取自然高并按 max-height 钳制；测量后恢复约束', () => {
+  let measuring = false, naturalHeight = 96, maxHeight = '240px';
+  const { ChatView } = load('chat/view', {}, { getComputedStyle: () => ({ maxHeight }), window: { matchMedia: () => ({ matches: true }) } });
+  const view = Object.create(ChatView.prototype), styles = new Map();
   view.root = { classList: { add() { measuring = true; }, remove() { measuring = false; } } };
-  view.panel = { hidden: false, getBoundingClientRect() { assert.equal(measuring, true); return { height: naturalHeight }; } };
-  view.composer = { hidden: false, getBoundingClientRect: () => ({ height: 64 }) };
-  view.content = { get scrollHeight() { throw new Error('不能叠加视口滚动高度'); } };
-  assert.equal(view.measureContentHeight(), 166);
-  assert.equal(measuring, false);
-  naturalHeight = 202;
-  assert.equal(view.measureContentHeight(), 272);
-  assert.equal(measuring, false);
+  view.panel = { hidden: false, style: { setProperty(k, v) { styles.set(k, v); }, removeProperty(k) { styles.delete(k); }, getPropertyValue: k => styles.get(k) ?? '' },
+    classList: { contains: () => false },
+    get offsetHeight() { return measuring ? naturalHeight : 50; } };
+  view.morph = null;
+  assert.equal(view.lockPanel(), 96); assert.equal(measuring, false);
+  assert.equal(styles.get('--chat-panel-height'), '96px');
+  naturalHeight = 400;
+  assert.equal(view.lockPanel(), 240);
   view.panel.hidden = true;
-  assert.equal(view.measureContentHeight(), 70);
-  view.composer.hidden = true;
-  assert.equal(view.measureContentHeight(), 6);
+  assert.equal(view.lockPanel(), 0);
 });
 
 test('整条回复在异步渲染期间脱离布局，settled 后才按页显示与量高', async () => {
@@ -314,66 +380,37 @@ test('整条回复在异步渲染期间脱离布局，settled 后才按页显示
   assert.equal(children[1].hidden, false); assert.equal(view.playing, true); assert.equal(syncs, 1);
 });
 
-function layoutReportHarness() {
-  const frames = new Map(), calls = [], gates = [], styles = new Map();
-  let id = 0;
-  const body = { dataset: { chatLayout: 'reply' }, style: { setProperty() {} } };
-  const { ChatView } = load('chat/view', { '../platform': { platform: 'tauri' },
-    '@tauri-apps/api/core': { invoke: async (_command, payload) => { calls.push(payload); const gate = gates.shift(); if (gate) await gate.promise; } },
-  }, { document: { body }, requestAnimationFrame(fn) { frames.set(++id, fn); return id; },
-    cancelAnimationFrame(id) { frames.delete(id); } });
-  const view = Object.create(ChatView.prototype);
-  Object.assign(view, { layoutFrame: null, layoutRevision: 0, layoutTask: Promise.resolve(), lastLayoutKey: '',
-    composer: { hidden: false, getBoundingClientRect: () => ({ height: 64 }) },
-    panel: { style: { setProperty(k, v) { styles.set(k, v); }, removeProperty(k) { styles.delete(k); } } },
-    measureContentHeight: () => 180, typewriter: null });
-  return { view, body, frames, calls, gates, styles };
-}
-
-test('布局上报合并同帧请求，丢弃旧模式并去重；关闭不再误撑成 setup', async () => {
-  const h = layoutReportHarness();
-  h.view.reportLayout(); h.view.reportLayout(); h.view.reportLayout();
-  assert.equal(h.frames.size, 1);
-  const stale = [...h.frames.values()][0];
-  h.body.dataset.chatLayout = 'composer'; h.view.reportLayout(70);
-  stale(); await h.view.layoutTask;
-  assert.deepEqual(JSON.parse(JSON.stringify(h.calls)), [{ mode: 'composer', contentHeight: 70 }]);
-  h.view.reportLayout(70); await h.view.layoutTask;
-  assert.equal(h.calls.length, 1);
-  h.body.dataset.chatLayout = 'reply'; h.view.reportLayout(500);
-  h.body.dataset.chatLayout = 'closed'; h.view.reportLayout();
-  await h.view.layoutTask;
-  assert.equal(h.calls.length, 1);
+test('面板高度变化从上次高度补间，补间中途与隐藏态不改基准', () => {
+  const { ChatView } = load('chat/view', {}, { window: { matchMedia: () => ({ matches: false }) }, document: { timeline: { currentTime: 1000 } } });
+  const view = Object.create(ChatView.prototype), animations = [];
+  view.panel = { hidden: false, classList: { contains: () => false },
+    animate(frames) { const a = { frames, cancel() {} }; animations.push(a); return a; } };
+  Object.assign(view, { morph: null, panelHeight: 0 });
+  view.onPanelResize(120);
+  assert.equal(animations.length, 0); assert.equal(view.panelHeight, 120);
+  view.onPanelResize(200);
+  assert.deepEqual(JSON.parse(JSON.stringify(animations[0].frames)), [{ height: '120px' }, { height: '200px' }]);
+  assert.equal(animations[0].startTime, 1000);
+  view.onPanelResize(160);
+  assert.equal(animations.length, 1); assert.equal(view.panelHeight, 200);
+  animations[0].onfinish(); assert.equal(view.morph, null);
+  view.panel.hidden = true; view.onPanelResize(0);
+  assert.equal(view.panelHeight, 0);
+  view.panel.hidden = false; view.onPanelResize(150);
+  assert.equal(animations.length, 1);
 });
 
-test('原生布局请求串行且仅保留最新目标，逐字播放不取消整页目标', async () => {
-  const h = layoutReportHarness(), gate = deferred(); h.gates.push(gate);
-  h.view.reportLayout(240); await new Promise(setImmediate);
-  assert.equal(h.calls.length, 1);
-  h.body.dataset.chatLayout = 'setup'; h.view.reportLayout();
-  h.body.dataset.chatLayout = 'composer'; h.view.reportLayout(70);
-  gate.resolve(); await h.view.layoutTask;
-  assert.deepEqual(JSON.parse(JSON.stringify(h.calls)), [{ mode: 'reply', contentHeight: 240 }, { mode: 'composer', contentHeight: 70 }]);
-  h.body.dataset.chatLayout = 'reply'; h.view.reportLayout(220);
-  h.view.typewriter = { typing: true }; h.view.reportLayout();
-  await h.view.layoutTask;
-  assert.equal(h.calls.at(-1).contentHeight, 220);
-  assert.equal(h.styles.get('--chat-panel-height'), '150px');
-  h.view.typewriter = null; h.view.reportLayout(9999); await h.view.layoutTask;
-  assert.equal(h.calls.at(-1).contentHeight, 330);
-});
-
-test('忙碌状态提示和停止按钮显隐后重新上报聊天高度', () => {
+test('等待回复时停止键可用、状态行让位给占位提示，结束后复位并重新上报高度', () => {
   const { ChatView } = load('chat/view');
   const view = Object.create(ChatView.prototype), elements = new Map(), measured = [];
   Object.assign(view, { screen: 'connect', lastBusy: false, status: { textContent: '' },
     controller: { busy: true }, notify() {}, applyControlRequest() {},
     get(selector) { if (!elements.has(selector)) elements.set(selector, {}); return elements.get(selector); },
-    reportLayout() { measured.push([this.status.textContent, this.get('.stop').hidden]); } });
+    reportLayout() { measured.push([this.status.textContent, this.get('.stop').disabled]); } });
   view.changed();
   view.controller.busy = false;
   view.changed();
-  assert.deepEqual(measured, [['等待回应…', false], ['', true]]);
+  assert.deepEqual(measured, [['', false], ['', true]]);
 });
 
 function playbackHarness() {
@@ -396,7 +433,7 @@ function playbackHarness() {
   Object.assign(view, { controller, screen: 'ready', replyActive: true, replyToken: 'reply-1', playing: true,
     historyVisible: false, segments: [], pageIndex: 0, typewriter: null, cueTimer: null,
     content: { scrollTop: 0, scrollHeight: 100, ownerDocument: { getSelection: () => null } },
-    updateHint() {}, reportLayout() {}, measureContentHeight: () => 100,
+    updateHint() {}, reportLayout() {}, lockPanel: () => 100,
     clearRendering() {}, hidePanelAnimated() {}, updateLayoutMode() {}, markSessionRead() { reads++; },
   });
   const page = (cue = false) => ({ hidden: true, dataset: cue ? { express: 'shy' } : {},
@@ -492,19 +529,242 @@ for (const platform of ['tauri', 'android', 'web']) {
   });
 }
 
+test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大小和三行气泡空间不变', () => {
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => null },
+    './dialogue/bubble-fit': load('dialogue/bubble-fit'),
+  });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
+  for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
+    const baseH = 675 * 1.18 * scale, contentScale = baseH / 1.30 / 1.1;
+    const app = Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr,
+      _originCssX: -120, _originCssY: 650, _contentScaleCss: contentScale,
+      _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
+        getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
+    });
+    const oldBottom = app._originCssY - (bounds.minY + bounds.maxY) / 2 * contentScale + baseH / 2;
+    const headY = app._originCssY - bounds.maxY * contentScale;
+    const r = app._fixedWindowRect();
+    assert.ok(r.h < baseH + 116 - 1, '必须缩小实际外窗，而不是仅修改气泡样式');
+    assert.ok(r.h >= baseH, '不裁减人物动作区域');
+    near(r.y + r.h, oldBottom);
+    near(r.w, baseH * 0.5 / 1.1);
+    assert.ok(headY - r.y >= 116 - 1e-6, '保留三行气泡所需高度、头部间隙和顶部边距');
+    app._appliedRectX = r.x; app._appliedRectY = r.y;
+    const t = app._modelViewportTransform();
+    near(t.scale, contentScale * dpr);
+    for (const [x, y] of [[bounds.minX, bounds.maxY], [0.05, bounds.minY]]) {
+      near(r.x + (t.originX + x * t.scale) / dpr, app._originCssX + x * contentScale);
+      near(r.y + (t.originY - y * t.scale) / dpr, app._originCssY - y * contentScale);
+    }
+    const el = { style: { setProperty() {} }, offsetWidth: 240, offsetHeight: 76, textContent: '第一行\n第二行\n第三行' };
+    app._bubble = { isActive: true, el };
+    app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
+    app._positionBubble();
+    const top = Number.parseFloat(el.style.top);
+    assert.ok(top >= 4);
+    assert.ok(top + app._bubbleFitH <= r.h, '多行气泡不超出窗口');
+    const font = Number.parseFloat(el.style.fontSize);
+    assert.ok(font >= 11 && font <= 30, '字号随人物缩放并钳在可读范围');
+    assert.ok(top + app._bubbleFitH + font * 0.3 <= headY - r.y + 0.51, '不挤占人物头部');
+    const fixed = app._fixedWindowRect();
+    app._bubble.isActive = false;
+    assert.deepEqual(app._fixedWindowRect(), fixed, '气泡显隐不反复调整窗口表面');
+  }
+});
+
+test('独立原生气泡取消人物气泡带，保留动作余量、脚底与缩放补间的头顶锚点', () => {
+  const shell = { setDialogueBubble() {} };
+  const fit = load('dialogue/bubble-fit');
+  const { PetApp } = load('pet-app', { './platform': { platform: 'android', androidShell: () => shell }, './dialogue/bubble-fit': fit });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
+  for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
+    const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
+    const sent = [];
+    const app = Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400, _screenH: 800,
+      _originCssX: -120, _originCssY: 650, _contentScaleCss: s,
+      _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1,
+        getStaticBounds: () => bounds, getDynamicBounds: () => bounds },
+      _androidBubble: { sync: (...args) => sent.push(args), hide: () => sent.push('hide') },
+      _bubble: { isActive: true, el: { textContent: '独立气泡不会被人物窗口裁掉' } },
+    });
+    const r = app._fixedWindowRect();
+    near(r.h, baseH);
+    near(r.y + r.h, 650 - (bounds.minY + bounds.maxY) / 2 * s + baseH / 2);
+    app._appliedRectX = r.x; app._appliedRectY = r.y;
+    app._canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: r.w, height: r.h }) };
+    const t = app._modelViewportTransform();
+    near(r.y + (t.originY - bounds.maxY * t.scale) / dpr, 650 - bounds.maxY * s);
+    near(t.scale / dpr, s);
+    app._scaleTweenValue = () => s * 0.7;
+    app._positionBubble();
+    const shown = app._modelViewportTransform();
+    near(sent.at(-1)[2], (shown.originY - bounds.maxY * shown.scale) / dpr);
+    // 独立气泡窗不受人物窗裁切：可用宽只受屏幕限制；字号随人物当前显示大小（含补间）。
+    near(sent.at(-1)[3], 400 - 16); near(sent.at(-1)[4], 400);
+    near(sent.at(-1)[5], fit.bubbleFontFor(scale * 0.7));
+    app._bubble.isActive = false; app._positionBubble();
+    assert.equal(sent.at(-1), 'hide');
+    assert.deepEqual(app._fixedWindowRect(), r, '气泡显隐不重配人物窗口');
+  }
+});
+
+test('独立气泡静止不重复 IPC，动作限频，翻页、淡出和取消立即同步', () => {
+  let now = 0;
+  const calls = [];
+  const { AndroidDialogueBubble } = load('dialogue/android-bubble', {}, {
+    performance: { now: () => now }, getComputedStyle: () => assert.fail('样式由气泡页面直接加载，不在桥接中重画'),
+  });
+  const bubble = new AndroidDialogueBubble(json => calls.push(JSON.parse(json)));
+  bubble.sync('第一页', 100, 20, 260, 500);
+  for (let i = 0; i < 60; i++) { now += 16; bubble.sync('第一页', 100, 20, 260, 500); }
+  assert.equal(calls.length, 1, '静止气泡没有逐帧通信或重读 CSS');
+  now = 1000; bubble.sync('第一页', 100, 22, 260, 500);
+  now = 1016; bubble.sync('第一页', 100, 24, 260, 500);
+  assert.equal(calls.length, 2, '动作锚点变化限频');
+  bubble.sync('第二页\n<纯文本>', 100, 24, 260, 500);
+  assert.equal(calls.length, 3, '翻页不受动作限频影响');
+  assert.equal(calls.at(-1).text, '第二页\n<纯文本>');
+  assert.equal(calls.at(-1).viewportWidth, 260);
+  assert.equal(calls.at(-1).viewportHeight, 500);
+  bubble.close(); bubble.close();
+  assert.equal(calls.length, 4); assert.equal(calls.at(-1).closing, true);
+  bubble.sync('第二页\n<纯文本>', 100, 24, 260, 500);
+  assert.equal(calls.length, 5, '相同台词也能打断淡出并立即恢复');
+  bubble.hide(); bubble.hide();
+  assert.equal(calls.length, 6); assert.equal(calls.at(-1).text, '');
+});
+
+test('Android 独立气泡入口不带旧悬浮窗类，避免覆盖 PC 气泡样式', () => {
+  const html = readFileSync(new URL('../bubble.html', import.meta.url), 'utf8');
+  assert.match(html, /<body class="bubble-window">/);
+  assert.doesNotMatch(html, /overlay-wrap/);
+});
+
+test('悬浮窗气泡不再覆盖 PC 气泡的截断与合成层样式', () => {
+  const css = readFileSync(new URL('../src/pet.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /body\.overlay-wrap #dialogue-bubble/);
+  assert.doesNotMatch(css, /-webkit-line-clamp:\s*3/);
+  assert.doesNotMatch(css, /transform:\s*translateZ\(0\)/);
+});
+
+test('独立气泡复用原 DialogueBubble 的安全文本、翻页动效与淡出，不另设字体或外观', () => {
+  const classes = new Set();
+  const el = { id: '', style: { removeProperty() {} }, textContent: '', offsetHeight: 60,
+    // 适配会把换行宽度写回 style.width，这里让 offsetWidth 跟随它（真浏览器同样如此）。
+    get offsetWidth() { return Number.parseFloat(this.style.width) || 200; },
+    classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
+  const { DialogueBubble } = load('dialogue/bubble', {}, { document: { createElement: () => el } });
+  const bubble = new DialogueBubble({ appendChild() {} });
+  const { createBubbleRenderer } = load('dialogue/bubble-window', {
+    './bubble-fit': load('dialogue/bubble-fit'),
+  });
+  const render = createBubbleRenderer(bubble);
+  const size = render({ text: '<纯文本>\n第二行', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(el.textContent, '<纯文本>\n第二行');
+  assert.equal(classes.has('turn'), false, '首次显示保留原来的弹入');
+  // 可用宽 100px → 94px 换行；默认 20px 字号时四周留 0.3em=6px，窗口宽 = 气泡宽 + 12。
+  assert.equal(size.width, 106, '窗口随气泡实际宽度收紧');
+  assert.equal(size.bottom, 66, '气泡底边取实际高度');
+  assert.equal(el.style.fontSize, '20px', '字号由人物页传入，缺省 20');
+  const small = render({ text: '小字', viewportWidth: 100, viewportHeight: 200, font: 12 });
+  assert.equal(el.style.fontSize, '12px', '人物缩小时字号随之变小');
+  assert.equal(small.bottom, 4 + 60, '边距随字号等比（0.3em 取整）');
+  render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(classes.has('turn'), true, '翻页仍走原 turn 样式');
+  render({ closing: true });
+  assert.equal(classes.has('closing'), true);
+  render({ text: '翻页', viewportWidth: 100, viewportHeight: 200 });
+  assert.equal(classes.has('closing'), false, '打断淡出不留下隐藏计时器');
+  render({ text: '' });
+  assert.equal(el.style.display, 'none');
+  for (const prop of ['font', 'fontFamily', 'background', 'color', 'border', 'borderRadius', 'boxShadow']) {
+    assert.equal(el.style[prop], undefined, `${prop} 必须保留原 pet.css 定义`);
+  }
+});
+
+test('Android 左下角贴边在松手时保存终点，进入 App 打断动画也不丢位置', () => {
+  const saved = [], prefs = [], animations = [];
+  const settings = load('settings');
+  const shell = {
+    getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+    setPref: (key, value) => prefs.push([key, value]),
+    animateWindowTo: (x, y, duration) => animations.push({ x, y, duration }),
+  };
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => shell },
+    './settings': { ...settings, saveSettings: value => saved.push({ ...value }) },
+  }, { window: { matchMedia: () => ({ matches: false }) } });
+  const app = Object.create(PetApp.prototype);
+  Object.assign(app, {
+    _wrapWindow: true, _settings: { ...settings.DEFAULT_SETTINGS, snapEdges: true },
+    _originCssX: 30, _originCssY: 760, _appliedRectX: -50, _appliedRectY: 500,
+    _contentScaleCss: 100, _rectInited: true, _nativeSnapping: false, _scaleTween: null,
+    _model: { getStaticBounds: () => ({ minX: -0.2, maxX: 0.2, minY: -1, maxY: 1 }) },
+    _cancelSnapAnimation() {},
+  });
+  app._onDragFinishedAndroid();
+  assert.deepEqual(prefs, [['petX', '20'], ['petY', '700']], '必须在原生动画结束回调之前双写最终原点');
+  assert.equal(saved.at(-1).posX, 20); assert.equal(saved.at(-1).posY, 700);
+  assert.equal(animations.length, 1);
+});
+
+for (const entry of ['resume', 'startup']) {
+  test(`Android 主界面${entry}不把旧坐标写回悬浮窗存档`, () => {
+    const storage = new Map();
+    const settings = load('settings', {}, {
+      localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    });
+    const shell = {
+      getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+      setPref() {},
+    };
+    const { PetApp } = load('pet-app', {
+      './platform': { platform: 'android', androidShell: () => shell }, './settings': settings,
+    });
+    const stale = { ...settings.DEFAULT_SETTINGS, posX: 360, posY: 360, snapEdges: false };
+    settings.saveSettings(stale);
+    const makeApp = wrap => Object.assign(Object.create(PetApp.prototype), {
+      _wrapWindow: wrap, _settings: { ...stale }, _baseFpsCap: 30, _hitAreas: {}, _canvas: { style: {} },
+      _originCssX: stale.posX, _originCssY: stale.posY, _appliedRectX: 280, _appliedRectY: 160,
+      _contentScaleCss: 100, _rectInited: false, _model: null, _scaleTween: null,
+      _coordination: { activity() {} }, _chatBackground: { apply() {}, setStill() {} },
+      _cancelSnapAnimation() {}, setPaused() {}, _reloadAfterContextLoss() {},
+    });
+    // 主界面 WebView 留在后台，悬浮窗是另一个持有同一份存储的实例。
+    const main = makeApp(false), overlay = makeApp(true);
+    for (const target of [{ x: 30, y: 700 }, { x: 120, y: 650 }]) {
+      overlay.onNativeDragEnd(target.x - overlay._originCssX, target.y - overlay._originCssY, 0, true);
+      if (entry === 'resume') main.onShellEvent('resume');
+      else main.applySettings({ ...stale }, true); // 主界面异步加载完成时也不能回写初始化快照。
+      assert.deepEqual([settings.loadSettings().posX, settings.loadSettings().posY], [target.x, target.y]);
+      assert.deepEqual([main.settings.posX, main.settings.posY], [target.x, target.y]);
+      const restored = makeApp(true);
+      restored.applySettings(settings.loadSettings(), true);
+      assert.deepEqual([restored._originCssX, restored._originCssY], [target.x, target.y], '退出后新悬浮窗恢复最后拖动位置');
+      main.applySettings({ ...main.settings, batterySaver: true }, false);
+      assert.equal(settings.loadSettings().batterySaver, true, '其他设置仍正常保存');
+      assert.deepEqual([settings.loadSettings().posX, settings.loadSettings().posY], [target.x, target.y]);
+    }
+  });
+}
+
 test('真实拖动收尾不持久化尺寸已生效但补偿失败的位置', async () => {
   for (const sf of [1, 1.5, 2]) {
     const h = resizeHarness(sf), before = h.foot();
     h.app._settings.snapEdges = false; h.app._snapAnimToken = 0; h.app._dragging = true;
-    const setPosition = h.app._tauriWindow.setPosition;
-    h.app._tauriWindow.setPosition = async () => { throw new Error('position failed before effect'); };
+    const restore = h.failPosition('position failed before effect');
     h.change(0.3); await h.app._windowSettingsTask;
     assert.ok(h.app._windowResizeRecovery, '失败后必须保留补偿债务');
     const saved = h.saved.length;
     h.app._onDragFinished(); h.app._dragging = false;
     await new Promise(setImmediate);
     assert.equal(h.saved.length, saved, '真实收尾不得保存尚未补偿的原点');
-    h.app._tauriWindow.setPosition = setPosition;
+    restore();
     h.change(1); await h.app._windowSettingsTask;
     nearFoot(h.foot(), before);
     assert.equal(h.saved.at(-1).posX, h.geometry().pos.x);
@@ -528,4 +788,53 @@ test('重置位置已生效但 IPC 拒绝后，下一次真实拖动不跳回旧
     assert.equal(h.saved.at(-1).posX, expected.x);
     assert.equal(h.saved.at(-1).posY, expected.y);
   }
+});
+
+test('Windows 固定容量外窗：缩放只改窗内舞台，脚底浮点不动，反向输入从当前显示比例继续', () => {
+  const W = 800, H = 1200;
+  const { PetApp } = load('pet-app', { './platform': { platform: 'tauri' }, './settings': { saveSettings() {} } },
+    { window: { innerWidth: W, innerHeight: H, devicePixelRatio: 1 } });
+  const app = Object.create(PetApp.prototype);
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const queued = [], anchors = [];
+  const stage = { style: {} };
+  Object.assign(app, { _wrapWindow: false, _dpr: 1, _chatView: null, _deskScale: null, _deskCapacityReady: true,
+    _stageKey: '', _settings: { scale: 1, mirror: false }, _scaleFactor: 1, _winPhysX: 0, _winPhysY: 0,
+    _canvas: { width: 400, height: 600, parentElement: stage },
+    _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1, getStaticBounds: () => bounds },
+    _baseWindowSize: () => ({ baseW: 400, baseH: 600 }), _persistDesktopPos() {}, _syncChatAnchor() { anchors.push(1); },
+    _queueWindowGeometry: (op, label) => { queued.push(label); return new Promise(() => {}); } });
+  // 舞台在外窗内的屏幕脚底 = 舞台左上 + 画布内脚底（缓冲 = 舞台 CSS 尺寸，dpr 1）。
+  const screenFoot = () => {
+    const r = app._deskScale ? { left: 0, top: 0, width: W, height: H } : app._stageRect(app._deskRestScale, W, H, 1);
+    app._canvas.width = r.width; app._canvas.height = r.height;
+    const t = app._modelViewportTransform();
+    return { x: r.left + t.originX + ((bounds.minX + bounds.maxX) / 2) * t.scale, y: r.top + t.originY - bounds.minY * t.scale };
+  };
+  const near = (a, b) => assert.ok(Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6, `${a.x},${a.y} vs ${b.x},${b.y}`);
+  let now = 1000;
+  const perf = globalThis.performance.now;
+  globalThis.performance.now = () => now;
+  try {
+  app._layoutStage();
+  assert.deepEqual([stage.style.width, stage.style.height], ['400px', '600px'], '静止舞台 = 当前比例的自然矩形');
+  const foot = screenFoot();
+  app._settings.scale = 0.6; app._setDesktopScaleTarget(0.6);
+  const shown = [];
+  for (let i = 0; i < 6; i++) {
+    now += 16; app._stepDesktopScale(now); app._layoutStage(); shown.push(app._deskScale.shown);
+    near(screenFoot(), foot);
+  }
+  assert.deepEqual([stage.style.width, stage.style.height], [`${W}px`, `${H}px`], '补间期间舞台铺满外窗');
+  assert.ok(shown.every((v, i) => i === 0 || v < shown[i - 1]), '缩小过程单调');
+  const mid = app._deskScale.shown;
+  app._settings.scale = 1.8; app._setDesktopScaleTarget(1.8); now += 16; app._stepDesktopScale(now);
+  assert.ok(app._deskScale.shown > mid, '反向从当前显示值继续');
+  assert.ok(app._deskScale.target <= app._deskCapacityCss() + 1e-9, '目标钳在外窗容量内');
+  for (let i = 0; i < 60; i++) { now += 16; app._stepDesktopScale(now); app._layoutStage(); near(screenFoot(), foot); }
+  assert.equal(app._deskScale, null, '到位且静置后结束补间');
+  app._layoutStage(); near(screenFoot(), foot);
+  assert.deepEqual(queued, [], '缩放全程不触发任何原生窗口几何');
+  assert.ok(anchors.length > 0, 'chat 锚点随显示比例更新');
+  } finally { globalThis.performance.now = perf; }
 });

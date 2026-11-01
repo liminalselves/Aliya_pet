@@ -18,9 +18,10 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  for(const group of json(refs.Physics).PhysicsSettings){for(const p of group.Input)assert.ok(ids.has(p.Source.Id),p.Source.Id);for(const p of group.Output)assert.ok(ids.has(p.Destination.Id),p.Destination.Id)}
  for(const id of ['Param30','Param31','Param36'])assert.ok(ids.has(id));
 });
+const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 function load(name,imports={},globals={}){
  const code=ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2021}}).outputText;
- const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,...globals});return exports;
+ const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
 const newActionNames=['cheerful_bounce','shy_sway'];
@@ -653,10 +654,18 @@ test('手动随机台词保留暂停、互动和聊天防抢话规则，不积�
   h.state[key]=true;h.app.onShellAction({action:'random-speech'});h.state[key]=false;
  }
  h.app._remoteChat.open=true;h.app.onShellAction({action:'random-speech'});h.app._remoteChat.open=false;
- h.app._chatView.isOpen=true;h.app.onShellAction({action:'random-speech'});h.app._chatView.isOpen=false;
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:true});h.app.onShellAction({action:'random-speech'});Object.assign(h.app._chatView,{isOpen:false,panelVisible:false});
  assert.equal(h.draws,0);assert.equal(h.played.length,0);
   h.app._dialogue._files.clear();h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
  });
+
+test('安卓主界面只剩输入框时照常说台词，回复面板显示时让位',()=>{
+ const h=randomSpeechHarness();
+ Object.assign(h.app._chatView,{isOpen:true,panelVisible:false});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'输入框常开不应吞掉台词');
+ Object.assign(h.app._chatView,{panelVisible:true});h.app.onShellAction({action:'random-speech'});
+ assert.equal(h.played.length,1,'回复面板显示时不说台词');
+});
 
 test('模型与台词尚未加载时手动随机台词不丢失且只补发一次',()=>{
   const h=randomSpeechHarness(); let calls=0;
@@ -685,7 +694,7 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
  class Mood{onMoodChanged(){}}
  class AI{play(name){calls.push(name)}express(name){calls.push(name)}clearExpression(){}setMood(name){calls.push(name)}}
  const {PetApp}=load('pet-app',{
-  './platform':{platform:'tauri'},'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
+  './platform':{platform:'tauri'},'./settings':load('settings'),'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
   './dialogue/bubble':{DialogueBubble:class{}},'./interaction/interaction':{InteractionService:class{}},
   './behavior':{BehaviorService:Behavior},'./emotion':{MoodEngine:Mood},'./pet-ai':{PetAI:AI},
  },{document:{getElementById:()=>({})},window:{},fetch:async()=>{fetchStarted.resolve();await fetchGate.promise;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
@@ -728,7 +737,7 @@ test('Tauri监听失败降级加载模型，可见提示重试只补装失败项
    if(name==='tray-action'&&failing)throw new Error('listen IPC failed');
    assert.equal(listeners.has(name),false,'成功项不能重复注册');listeners.set(name,handler);return ()=>{};
   }},
-  './startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
+  './settings':load('settings'),'./startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
   './pet-model':{PetModel:Model},'./dialogue/bubble':{DialogueBubble:class{}},
   './interaction/interaction':{InteractionService:class{onClick(){clicks++}}},
   './behavior':{BehaviorService:class{setActionMeta(){}start(){}}},
@@ -792,10 +801,11 @@ for(const failure of ['construct','initialize-throw','initialize-false','load'])
   initialize(){if(failure==='initialize-throw')throw new Error('initialize failed');return failure!=='initialize-false'}
   async loadModel(){assert.equal(window.__pet,this);assert.equal(typeof window.__applySettingsFromAndroid,'function');throw new Error('load failed')}
  }
- load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)}},
-  {window,console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
+ const actions=[],bodyClasses=[];
+ load('main',{'./pet-app':{PetApp:App},'./startup-notice':{showStartupNotice:(...args)=>notices.push(args)},'./platform':{shellAction:a=>actions.push(a)}},
+  {window,document:{body:{classList:{add:c=>bodyClasses.push(c)}}},console:{...console,log(){},error:(...args)=>errors.push(args)},Live2DCubismCore:{Version:{csmGetLatestMocVersion(){},csmGetMocVersion(){},csmGetVersion:()=>6}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(notices.length,1);assert.equal(errors.length,1);
- assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
+ assert.deepEqual(actions,['pet-ready'],'启动失败也撤掉安卓加载遮罩');assert.deepEqual(bodyClasses,['pet-ready'],'启动失败也放出聊天界面');assert.equal(notices[0][0],'pet-startup-error');assert.match(String(notices[0][2]),/failed|WebGL2/);
  await notices[0][3]();assert.equal(window.location.reloaded,true);
 });
 
@@ -1008,6 +1018,16 @@ test('MSK 客户端：会话只保留 Aliya 角色，时间线过滤 system 并�
  const list=await client.listAliyaSessions();
  assert.deepEqual(list.map(s=>s.id),['s1','s3']);assert.equal(calls[0].i,'tk');
  const tl=await client.timeline('s1',30);
+});
+
+test('MSK 信号合并不依赖 AbortSignal.any/timeout（旧安卓 WebView 无此 API）',async()=>{
+ const {combineSignals}=load('chat/msk/client',{},{AbortSignal:{}});
+ const a=new AbortController(),b=new AbortController();
+ const one=combineSignals([a.signal,undefined,b.signal]);
+ assert.equal(one.signal.aborted,false);b.abort('stop');assert.equal(one.signal.aborted,true);assert.equal(one.signal.reason,'stop');
+ const pre=new AbortController();pre.abort('early');assert.equal(combineSignals([pre.signal]).signal.reason,'early');
+ const t=combineSignals([],5);await new Promise(r=>setTimeout(r,20));assert.equal(t.signal.reason.name,'TimeoutError');
+ const d=combineSignals([new AbortController().signal],5);d.dispose();await new Promise(r=>setTimeout(r,20));assert.equal(d.signal.aborted,false);
 });
 
 test('MSK 客户端：401 视为连接失效，send 带 clientRequestId 并读取 assistantText 与消息 id',async()=>{

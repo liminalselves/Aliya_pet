@@ -16,7 +16,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
   button.className = 'act wide'; button.textContent = '配置当前会话';
   container.append(button);
   const drawer = document.createElement('dialog'); drawer.className = 'agent-control-drawer';
-  drawer.innerHTML = `<header><div><small>ALIYA</small><h2>会话配置</h2><p class="control-session"></p></div><button class="control-close" aria-label="关闭会话配置">×</button></header>
+  drawer.innerHTML = `<header><div><small>ALIYA</small><h2>会话配置</h2><p class="control-session"></p></div><button class="control-close" aria-label="关闭会话配置"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></header>
     <nav aria-label="会话配置面板"></nav><div class="control-status" role="status"></div><button class="control-retry" hidden>重新加载</button><div class="control-body"></div>`;
   document.body.append(drawer);
   const status = drawer.querySelector<HTMLElement>('.control-status')!;
@@ -92,12 +92,13 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
       drawer.querySelector('.control-session')!.textContent = name;
       refreshSummary();
       await publish('refresh');
-    } catch { if (drawer.open && revision === currentRevision) status.textContent = '配置已保存，但会话信息刷新失败。'; }
+    } catch { if (drawer.open && revision === currentRevision) { status.className = 'control-status error'; status.textContent = '配置已保存，但会话信息刷新失败。'; } }
   };
   const onEvent = (event: ControlEvent) => {
     if (!drawer.open) return;
-    if (event.type === 'misskey:agent-control:authenticated') { status.textContent = ''; retry.hidden = true; }
+    if (event.type === 'misskey:agent-control:authenticated') { status.textContent = ''; status.className = 'control-status'; retry.hidden = true; }
     if (event.type === 'misskey:agent-control:error') {
+      status.className = 'control-status error';
       status.textContent = event.code === 'AUTHENTICATION_FAILED' ? '连接已失效，请回聊天重新授权。' : '配置页未能加载，请确认 Misskey 已启动并支持托管控制台。';
       retry.hidden = false;
     }
@@ -118,7 +119,27 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     }
   };
   const activate = () => {
-    nav.querySelectorAll<HTMLButtonElement>('button').forEach(tab => tab.setAttribute('aria-pressed', String(tab.dataset.panel === panel)));
+    let active: HTMLButtonElement | null = null;
+    nav.querySelectorAll<HTMLButtonElement>('button').forEach(tab => {
+      const on = tab.dataset.panel === panel;
+      tab.setAttribute('aria-pressed', String(on));
+      if (on) active = tab;
+    });
+    if (active) revealTab(active);
+  };
+  /** 选中页签滚进可视区（两侧各留 24px 渐隐余量）；只动 nav 自身，不牵动对话框纵向滚动。 */
+  const revealTab = (tab: HTMLElement) => {
+    const pad = 24;
+    const left = tab.offsetLeft - nav.offsetLeft;
+    const target = left < nav.scrollLeft + pad ? left - pad
+      : left + tab.offsetWidth > nav.scrollLeft + nav.clientWidth - pad ? left + tab.offsetWidth - nav.clientWidth + pad : null;
+    if (target !== null) nav.scrollTo({ left: Math.max(0, target), behavior: reducedMotion() ? 'auto' : 'smooth' });
+  };
+  /** 两侧有隐藏页签时挂 more-left/more-right，CSS 用遮罩渐隐边缘示意可滑动。 */
+  const syncNavEdges = () => {
+    const max = nav.scrollWidth - nav.clientWidth;
+    nav.classList.toggle('more-left', nav.scrollLeft > 1);
+    nav.classList.toggle('more-right', max - nav.scrollLeft > 1);
   };
   /** 内容区淡入重触发（control.css .swap）：切页签/重载共用。 */
   const swapBody = () => {
@@ -127,7 +148,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     body.classList.add('swap');
   };
   const load = () => {
-    frame?.destroy(); frame = null; status.textContent = '正在连接配置页…'; retry.hidden = true;
+    frame?.destroy(); frame = null; status.textContent = '正在连接配置页'; status.className = 'control-status loading'; retry.hidden = true;
     activate(); swapBody();
     frame = new AgentControlFrame(body, sessionId, panel, () => saved().token, onEvent);
   };
@@ -140,6 +161,35 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     };
     nav.append(tab);
   }
+  // 页签条隐藏了滚动条：触屏/触控板原生横滑可用，鼠标另补滚轮与拖动两条路径。
+  nav.addEventListener('scroll', syncNavEdges, { passive: true });
+  new ResizeObserver(syncNavEdges).observe(nav);
+  nav.addEventListener('wheel', e => {
+    if (nav.scrollWidth <= nav.clientWidth || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    nav.scrollLeft += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  }, { passive: false });
+  let drag: { id: number; x: number; left: number; moved: boolean } | null = null;
+  nav.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || e.button !== 0 || nav.scrollWidth <= nav.clientWidth) return;
+    drag = { id: e.pointerId, x: e.clientX, left: nav.scrollLeft, moved: false };
+  });
+  nav.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) < 5) return;
+    if (!drag.moved) { drag.moved = true; nav.setPointerCapture(e.pointerId); nav.classList.add('dragging'); }
+    nav.scrollLeft = drag.left - dx;
+  });
+  const endDrag = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const moved = drag.moved; drag = null;
+    nav.classList.remove('dragging');
+    // 拖动结束时松手位置的页签会收到 click，拦下避免误切。
+    if (moved) nav.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+  };
+  nav.addEventListener('pointerup', endDrag);
+  nav.addEventListener('pointercancel', endDrag);
   retry.onclick = load;
   drawer.querySelector<HTMLButtonElement>('.control-close')!.onclick = () => closeDrawer();
   // Esc 触发 cancel：拦下默认立即 close，走退出动画。
@@ -152,6 +202,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     drawer.querySelector('.control-session')!.textContent = current.name;
     if (!drawer.open) drawer.showModal();
     load();
+    syncNavEdges();
   };
   button.onclick = open;
   window.addEventListener('storage', sync);

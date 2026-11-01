@@ -7,6 +7,30 @@
 import { DEFAULT_MSK_ORIGIN, MSK_BASE } from './config';
 
 /** 桌宠固定对接的 Aliya 角色与文风（与 Aliya_web 一致）。 */
+/**
+ * 任一信号中止即中止；可选超时以 TimeoutError 中止。手写而非 AbortSignal.any/timeout：
+ * 前者要 Chrome 116+，安卓系统 WebView 常更老（实机报 "AbortSignal.any is not a function"）。
+ * 返回 dispose 释放计时器与监听，长生命周期的外部信号不会累积监听器。
+ */
+export function combineSignals(signals: (AbortSignal | undefined)[], timeoutMs?: number): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const sources = signals.filter((s): s is AbortSignal => !!s);
+  const cleanups: (() => void)[] = [];
+  const dispose = () => { for (const fn of cleanups.splice(0)) fn(); };
+  const abort = (reason: unknown) => { if (!controller.signal.aborted) { controller.abort(reason); dispose(); } };
+  for (const source of sources) {
+    if (source.aborted) { abort(source.reason); return { signal: controller.signal, dispose }; }
+    const onAbort = () => abort(source.reason);
+    source.addEventListener('abort', onAbort, { once: true });
+    cleanups.push(() => source.removeEventListener('abort', onAbort));
+  }
+  if (timeoutMs !== undefined) {
+    const timer = setTimeout(() => abort(new DOMException('请求超时', 'TimeoutError')), timeoutMs);
+    cleanups.push(() => clearTimeout(timer));
+  }
+  return { signal: controller.signal, dispose };
+}
+
 export const ALIYA_CHARACTER_ID = 'akqruskge8w6003j';
 export const ALIYA_DIALOGUE_STYLE_ID = 'aofoi210vawt01t4';
 
@@ -57,7 +81,20 @@ const KNOWN_ERRORS: Record<string, string> = {
   AGENT_MESSAGE_EMPTY: '消息不能为空。',
   AGENTS_LLM_FAILED: 'Aliya 暂时没能生成回复，请稍后重试。',
   AGENTS_MODEL_NOT_CONFIGURED: '当前没有可用的对话模型。',
+  NO_FREE_SPACE: 'Misskey 网盘空间不足，图片没能上传。',
+  FILE_TOO_BIG: '图片超过服务器允许的大小。',
+  UNALLOWED_FILE_TYPE: '服务器不接受这种文件类型。',
+  INAPPROPRIATE: '图片被判定为可能含不当内容，未能上传。',
 };
+
+/** 幂等只读接口：网络层失败可安全重试。 */
+const READ_ONLY_PATHS = new Set([
+  '/i', '/agents/sessions/list-mine', '/agents/sessions/show', '/agents/characters/show',
+  '/agents/messages/timeline', '/agents/styles/list-usable', '/emojis',
+]);
+
+/** 上传前的本地上限：与常见实例默认的 Drive 单文件上限同级，超出直接提示而不白传。 */
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 /** 可中断的等待；中止时抛 AbortError 名的 Error（沙箱测试环境没有 DOMException）。 */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -80,7 +117,17 @@ export class MskClient {
   ) {}
 
   async post<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal, timeoutMs = 30_000): Promise<T> {
-    const { status, data } = await this.postRaw(path, body, signal, timeoutMs);
+    let res: { status: number; data: unknown };
+    try {
+      res = await this.postRaw(path, body, signal, timeoutMs);
+    } catch (e) {
+      // 只读接口在网络瞬断（移动网络切换、弱网）时自动重试一次；写接口可能已生效，不盲重发。
+      // 超时不重试：已经等满一轮，再等一轮只会更卡。
+      if (signal?.aborted || !READ_ONLY_PATHS.has(path) || (e instanceof Error && e.message.includes('超时'))) throw e;
+      await sleep(600, signal);
+      res = await this.postRaw(path, body, signal, timeoutMs);
+    }
+    const { status, data } = res;
     const err = (data as { error?: { message?: string; code?: string } } | null)?.error;
     if (status < 200 || status >= 300 || err) {
       if (status === 401 || status === 403 || err?.code === 'CREDENTIAL_REQUIRED') {
@@ -93,8 +140,7 @@ export class MskClient {
 
   /** 只发请求并解析 JSON；非 2xx 不抛错（由调用方按状态决定），网络/超时/中止才抛。 */
   private async postRaw(path: string, body: Record<string, unknown>, signal: AbortSignal | undefined, timeoutMs: number): Promise<{ status: number; data: unknown }> {
-    const signals = [signal, AbortSignal.timeout(timeoutMs)].filter((s): s is AbortSignal => !!s);
-    const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    const { signal: combined, dispose } = combineSignals([signal], timeoutMs);
     let res: Awaited<ReturnType<FetchLike>>;
     try {
       res = await this.fetchImpl(`${MSK_BASE}/api${path}`, {
@@ -105,7 +151,11 @@ export class MskClient {
       });
     } catch (e) {
       if (signal?.aborted) throw e;
-      fail(e instanceof Error && e.name === 'TimeoutError' ? '请求超时，请检查网络。' : '网络异常，请稍后重试。');
+      const timedOut = combined.reason instanceof Error && combined.reason.name === 'TimeoutError';
+      fail(timedOut || (e instanceof Error && e.name === 'TimeoutError') ? '请求超时，请检查网络。' : '网络异常，请稍后重试。');
+    } finally {
+      // 只覆盖到响应头：读 body 期间不再受超时约束，与原 fetch 语义一致。
+      dispose();
     }
     let data: unknown = null;
     try { data = await res.json(); } catch { /* 非 JSON 响应当空对象处理 */ }
@@ -166,20 +216,51 @@ export class MskClient {
    *  回执缺失时（空 200/204、网关 5xx、网络超时）按 Aliya_web 的成熟做法处理：
    *  消息多半已送达应用层，回复经时间线落库——轮询取回，而不是直接判失败。
    *  performance 携带桌宠表情/动作清单：服务端据此识别桌宠环境并注入表演协议。 */
-  async send(sessionId: string, text: string, signal?: AbortSignal, requestId: string = crypto.randomUUID(), pollIntervalMs = 2500, performance?: import('../performance-manifest').PerformanceRequestPayload): Promise<{ text: string; messageId: string }> {
+  /**
+   * POST /api/drive/files/create（multipart）：图片上传到当前账号网盘，返回 DriveFile。
+   * FetchLike 只覆盖 JSON 请求，这里直接用全局 fetch；超时/中止与 post 同一套语义。
+   */
+  async uploadFile(file: Blob, name: string, signal?: AbortSignal, timeoutMs = 90_000): Promise<import('../rendering/types').DriveFileLike & { id: string }> {
+    if (file.size > MAX_UPLOAD_BYTES) fail('图片太大了（上限 20MB）。');
+    const form = new FormData();
+    form.append('i', this.token);
+    form.append('name', name);
+    form.append('force', 'true');
+    form.append('file', file, name);
+    const { signal: combined, dispose } = combineSignals([signal], timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(`${MSK_BASE}/api/drive/files/create`, { method: 'POST', body: form, signal: combined });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      const timedOut = combined.reason instanceof Error && combined.reason.name === 'TimeoutError';
+      fail(timedOut ? '图片上传超时，请检查网络。' : '图片上传失败，请稍后重试。');
+    } finally {
+      dispose();
+    }
+    let data: Record<string, unknown> | null = null;
+    try { data = await res.json() as Record<string, unknown>; } catch { /* 非 JSON 响应 */ }
+    const err = (data as { error?: { code?: string } } | null)?.error;
+    if (res.status === 401 || res.status === 403 || err?.code === 'CREDENTIAL_REQUIRED') fail('连接已失效，请重新授权。');
+    if (err || !res.ok) fail((err?.code && KNOWN_ERRORS[err.code]) ?? `图片上传失败（${res.status}）。`);
+    if (typeof data?.id !== 'string') fail('图片上传失败。');
+    return { id: data.id, url: (data.url as string | null) ?? null, thumbnailUrl: (data.thumbnailUrl as string | null) ?? null, type: (data.type as string | null) ?? null };
+  }
+
+  async send(sessionId: string, text: string, signal?: AbortSignal, requestId: string = crypto.randomUUID(), pollIntervalMs = 2500, performance?: import('../performance-manifest').PerformanceRequestPayload, fileId: string | null = null): Promise<{ text: string; messageId: string }> {
     const startedAt = Date.now();
     let status = 0;
     let data: Record<string, unknown> | null = null;
     // LLM 上游偶发失败时服务端会删除本轮用户消息并释放锁；复用 requestId 最多重试两次，既不重复入库也不让用户手点。
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await this.postRaw('/agents/messages/send', { sessionId, text, clientRequestId: requestId, performance }, signal, 120_000);
+        const res = await this.postRaw('/agents/messages/send', { sessionId, text, clientRequestId: requestId, performance, ...(fileId ? { fileId } : {}) }, signal, 120_000);
         status = res.status;
         data = res.data as Record<string, unknown> | null;
       } catch (e) {
         if (signal?.aborted) throw e;
         // 网络异常/超时：请求可能已到达应用层，不能盲重发；轮询确认送达并等回复。
-        return this.awaitAssistantReply(sessionId, text, startedAt, signal, pollIntervalMs);
+        return this.awaitAssistantReply(sessionId, text, startedAt, signal, pollIntervalMs, fileId);
       }
       const code = (data as { error?: { code?: string } } | null)?.error?.code;
       if (code !== 'AGENTS_LLM_FAILED' || attempt === 2) break;
@@ -194,11 +275,11 @@ export class MskClient {
     const assistantMessageId = typeof data?.assistantMessageId === 'string' ? data.assistantMessageId : '';
     if (assistantText.trim() && assistantMessageId) return { text: assistantText, messageId: assistantMessageId };
     // 空回执（回复可能是内部控制消息、被整体过滤，或回执丢失）：轮询时间线等可见回复。
-    return this.awaitAssistantReply(sessionId, text, startedAt, signal, pollIntervalMs);
+    return this.awaitAssistantReply(sessionId, text, startedAt, signal, pollIntervalMs, fileId);
   }
 
   /** 回执缺失的兜底：轮询时间线，先确认本次用户消息已落库，再等其后的助手回复。 */
-  private async awaitAssistantReply(sessionId: string, text: string, startedAt: number, signal: AbortSignal | undefined, pollIntervalMs: number): Promise<{ text: string; messageId: string }> {
+  private async awaitAssistantReply(sessionId: string, text: string, startedAt: number, signal: AbortSignal | undefined, pollIntervalMs: number, fileId: string | null = null): Promise<{ text: string; messageId: string }> {
     const deadline = Date.now() + 90_000;
     let delivered = false;
     for (;;) {
@@ -216,7 +297,9 @@ export class MskClient {
       let userIdx = -1;
       for (let i = list.length - 1; i >= 0; i--) {
         const m = list[i];
-        if (m.role === 'user' && m.content === text && Date.parse(m.createdAt) >= startedAt - 15_000) { userIdx = i; break; }
+        // 图片消息按附件 id 匹配（服务端可能补写识图描述，文本不一定原样）。
+        const same = fileId ? m.file?.id === fileId : m.content === text;
+        if (m.role === 'user' && same && Date.parse(m.createdAt) >= startedAt - 15_000) { userIdx = i; break; }
       }
       if (userIdx < 0) continue;
       delivered = true;

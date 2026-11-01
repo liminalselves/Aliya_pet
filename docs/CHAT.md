@@ -33,12 +33,11 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   缩放越大 chat 离脚越远。缩放落定（applySettings 完成路径）立即用已知几何
   重报，不等 onMoved→位置查询的异步往返；壳侧 pet Resized 事件只按现有
   锚点重排，绝不用窗口外接矩形覆盖锚点。
-- 窗口底边恒定 = 脚底 + 56 CSS px（脚线），与内容态无关：面板出现、
-  收起、换页只伸缩顶边，输入框纹丝不动。宽高变化一律单步即时落定——
-  WebView2 外窗分步 resize 会让 webview 位图滞后于窗框，残影/黑块/抽搐
-  （实测），窗口级补间不可行；平滑感由 DOM 内 CSS 动画承担（面板出入场
-  走共享动效库 al-rise-in/al-sink-out，收起=先播出场帧再隐藏并单步收缩）。前端 chat-shell
-  同为底锚布局：面板/输入框贴窗口底，透明余量留在顶部。
+- 外窗尺寸恒定（`CHAT_WINDOW_W/H_CSS` 560×380），pet 移动/缩放时壳只平移；
+  外窗底边 = 脚底 + 56 CSS px，卡片底边 = 脚底 + 50 × 卡片缩放（见下条）。
+  前端 chat-shell 为底锚布局：面板/输入框贴窗口底，透明余量留在顶部；平滑感
+  全由 DOM 内动画承担（面板出入场走共享动效库 al-rise-in/al-sink-out，
+  退出规则须带 `#chat-ui` 前缀，否则特异性低于入场规则、收起动画不播）。
   输入框是常驻锚点：`hidden` 只由 setOpen 管（开=显），切连接/会话屏
   只禁用不隐藏（占位符提示下一步，发送键随屏态置灰）——显隐切换会让
   卡片在过渡帧撕裂（面板方角底边悬空 + 矮窗把面板压条），是闪烁根因；
@@ -55,15 +54,15 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   fade-in 上浮淡入，列表类子项错落（stagger-in，30-50ms 阶梯，第 8 项起
   共用最大延迟）；回复流（打字点/分页）不参与错落，打点落定后正文以
   gal-text-in 淡入衔接。
-- chat 宽按可见模型宽 × 1.18（钳 260–560 CSS px）；外窗高度由前端
-  `set_chat_layout(mode,contentHeight)` 按内容态动态调整：composer 62–88、
-  reply 118–默认比例、setup 至少 300 CSS px。连接/会话屏按 setup 全高；
-  Windows 的记录与上下文定位已迁入独立 `records` 窗口，不再撑大贴附桌宠的
-  GAL 面板。壳侧重排幂等：outer 几何未变就不调 set_size/set_position——
-  每次调用都触发 webview 重合成，布局上报/锚点同步/打字大多几何未变，
-  照单全收就是「刷新状态就闪」。setup 高与内容无关，前端不同步等 rAF
-  测量，直接同步直发；「正在输入」占位同样同步量高直发——晚一帧窗口才
-  顶起面板，矮窗会把刚展开的面板压成细条。
+- 卡片宽 = pet 窗宽 × 1.18（钳 250–560 CSS px，250 约等于人物缩到 40% 时的宽度）；窄于 380 时按 380 排版、整卡
+  `transform: scale(宽/380)`（`chat_layout_for_width`）。pet 前端逐帧 `set_chat_layout(width)`，
+  壳换算后以 `chat-layout {zoom,width}` 发给页面（启动用 `chat_layout` 命令补拉），页面写
+  `--chat-zoom/--chat-width`，卡片与角色同帧变化；外窗既不 resize 也不 `set_zoom`（二者都会让
+  WebView2 位图滞后于窗框而闪）。`set_pet_bounds` 先登记终点几何再 SetWindowPos，chat 在同一调用内
+  就位。命中掩码按原生外窗尺寸换算。面板出现/伸缩/收起全在
+  DOM 内完成，面板上方透明区经命中掩码穿透到 pet（`window.ts`
+  `startHitMaskRelay`，ResizeObserver 即时刷新）。壳侧重排幂等：outer 几何
+  未变就不调 set_size/set_position。
 - chat 不提供独立拖动；pet 移动/缩放时 chat 严格跟随。水平方向 pet 中心
   在屏内时 chat 钳回工作区（chat 比 pet 宽，纯居中会在贴边时把发送按钮
   切出屏幕）；pet 中心出屏（被拖出桌面）时 chat 作为影子随之越界。
@@ -196,7 +195,10 @@ Aliya_web 相同。
   pending、审核拦截等）也翻译成中文，不向界面泄漏服务器英文原文。
 - 回复为单个 segment（不再按句切分），带 `messageId`；发送后 GAL 面板
   立即弹出显示「正在输入」三点脉冲动画，回复到达后原位
-  替换；停止等待则收起了占位。可 Esc/× 关闭。
+  替换；停止等待则收起了占位。可 Esc/× 关闭。等待期间输入框只读（保留
+  焦点），占位符换成「Aliya 正在想……」，状态行不再重复提示；停止键与发送键
+  叠放在同一槽位（`.composer-action`），busy 时缩放交叉淡入替换，隐藏的一方
+  同时 disabled。占位符与禁用态统一由 `syncComposerState` 按屏态/忙碌维护。
 - 回复播放是萝莉斯式逐页对话（`view.ts` + `typewriter.ts`）：assistant
   回复按 MSK 展示分段机制（`rendering/segments.ts`，逐行移植 misskey
   `agent-message-segments.ts`）拆成多页，一段一页；空行分页，代码块/
@@ -212,13 +214,21 @@ Aliya_web 相同。
   gal-content 为 user-select:none：可选文本时快速连点会触发浏览器
   双击选词/三击选段，选区反复重建既吞点击（曾表现为文本页
   「点不动」）又闪高亮；划选复制去记录窗口（非 replying 态仍可选）。
-  页脚提示行显示「▼ 点击继续 n/N」。播放等
+  页脚提示行显示「点击继续 n/N」。
+- 发图：工具栏 × 左侧图片键（也可粘贴截图）选一张图，缩略图预览可移除；发送时先
+  `POST /api/drive/files/create`（multipart，`MskClient.uploadFile`，本地上限 20MB）拿 DriveFile，
+  再随 `messages/send` 带 `fileId`，有图时文本可为空。上传失败保留图与文字可直接重发；
+  上传成功后的重试复用同一 fileId（provider 按文本+fileId 复用 clientRequestId）。
+  回执缺失轮询时图片消息按附件 id 匹配。播放等
   渲染 settled 再开始（表情表/生图状态首轮查询完成），之后的生图状态
-  更新只静态刷新当前页。面板样式为贴附式：顶部紫色名牌条，窗口锚定
-  Live2D 可见矩形并覆盖角色下半部；输入框和回复共用 `chat-shell` 连成
-  一张卡片，外窗高度随 composer/reply/setup 状态收放；量高补上
-  gal-content 滚动溢出量（面板被 max-height 钳住时不会越量越矮），
-  生图/附图解码完成再补量。记录/会话/连接屏不分页不逐字。
+  更新只静态刷新当前页。窗口锚定 Live2D 可见矩形并覆盖角色下半部；
+  回复卡与输入框是 `chat-shell` 内两张独立卡片（间距 8px = view.ts
+  `PANEL_GAP`，输入框形状永不随面板显隐变化）。每页播放前锁定本页完整
+  高度，逐字揭示不改卡片尺寸：`lockPanel` 写 `--chat-panel-height`（按
+  max-height 钳制，超高页在内部滚动），双端一致；面板任何高度变化由
+  ResizeObserver（`onPanelResize`）以 WAAPI 从旧高补间，startTime 钉在当前
+  帧防首帧闪跳。收起=`.leaving` 下沉淡出 150ms 后补 hidden；淡出中被新内容
+  打断则从当前不透明度浮回，不重播入场。生图/附图解码完成再补锁高。记录/会话/连接屏不分页不逐字。
 - 表演走「表演指令协议」（`PERFORMANCE.md`）：send 请求携带表情/动作清单
   （`performance-manifest.ts`，即桌宠环境标记），AI 回复内嵌独占一行的
   `[[agent_cue express=… play=…]]`；渲染时指令行自成隐藏 cue 页（`msk-cue`），
@@ -276,7 +286,7 @@ Aliya_web 相同。
 ## 验证
 
 `redesign/ui` 下 `npm test`（回归、渲染与托管协议）与 `npm run build`；
-`redesign/src-tauri` 下 `cargo test`（窗口几何/MiAuth 共 21 项）。
+`redesign/src-tauri` 下 `cargo test`（窗口几何/MiAuth 共 26 项）。
 Windows 已实机验收：chat 窗口预创建、贴 pet 右侧底对齐、授权全链路
 （错误 session/favicon 404 且监听存活、正确 session 200、未授权时
 界面显示错误）、× 收起窗口、边缘避让（pet 贴近右缘时 chat 翻到左侧、

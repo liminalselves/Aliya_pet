@@ -3,10 +3,12 @@
     <!-- The adaptive foreground is inset; this color fills the surrounding area. -->
     <color name="ic_launcher_background">#EAE6FB</color>
     <!-- Native shell equivalents of ui/src/styles/tokens.css. -->
-    <color name="pet_background">#0B1210</color>
-    <color name="pet_surface">#121B17</color>
-    <color name="pet_text">#E6FFF7</color>
-    <color name="pet_muted">#8FA9A0</color>
-    <color name="pet_accent">#63E6BE</color>
-    <color name="pet_line">#1FE6FFF7</color>
+    <color name="pet_background">#141312</color>
+    <color name="pet_surface">#211F1E</color>
+    <color name="pet_text">#F2EEEA</color>
+    <color name="pet_muted">#8B847D</color>
+    <color name="pet_accent">#E29BA3</color>
+    <color name="pet_line">#12FFF6EC</color>
+    <color name="pet_chip">#2A2826</color>
+    <color name="pet_danger">#E58B7A</color>
 </resources>
