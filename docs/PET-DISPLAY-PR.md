@@ -52,7 +52,9 @@ Add pet opacity and native full click-through while preserving alpha hit testing
 
 ### Windows 聊天隔离与既有拖动限制
 
-人物命令不修改 chat 的样式、焦点、透明度或命中表，也不隐藏 chat。托盘→设置→打开聊天仍可在人物完全穿透时使用。
+人物命令不修改 chat 的样式、焦点、透明度或命中表，也不隐藏 chat。完全穿透或 0% 时，人物窗口内的独立“聊天”胶囊按钮仍可点击：通过原有掩码通信捎带其归一化边界，Rust 仅保留可见胶囊内部命中，人物和按钮外的透明区域继续透传；按钮隐藏时移除例外。按钮位置变化参与原有去重判断，当前原生窗口几何继续负责移动、DPI 和负坐标映射。托盘→设置→打开聊天也仍可使用。
+
+人物透明度行采用说明在上、滑块在下的独立布局，避免长说明挤占轨道和百分比。只修改该行，不改变其他设置项。
 
 基线 `chat_window.rs` 明确将聊天窗口固定跟随人物，未提供独立聊天拖动。本次保留该架构，不顺带重构聊天拖动；“聊天窗口可独立拖动”未实现，不能作为已通过的验收项。重叠窗口、键盘焦点、消息发送和滚动仍需 Windows 实机端到端验证；自动化命中单元测试不能替代这些测试。
 
@@ -62,16 +64,17 @@ Add pet opacity and native full click-through while preserving alpha hit testing
 
 | 检查 | 命令 | 实际结果 |
 | --- | --- | --- |
-| 前端回归 | `cd redesign/ui && npm test` | 192/192 通过；含新增 5 项行为测试 |
+| 前端回归 | `cd redesign/ui && npm test` | 193/193 通过；含新增 6 项行为测试 |
 | TypeScript/Vite | `cd redesign/ui && npm run build` | 类型检查及生产构建通过 |
-| Rust | `cargo test --manifest-path redesign/src-tauri/Cargo.toml` | 28/28 通过；含 Windows 命中、TTL/切换与隔离测试 |
+| Rust | `cargo test --manifest-path redesign/src-tauri/Cargo.toml` | 29/29 通过；含聊天按钮胶囊命中、隐藏、DPI/负坐标、TTL/切换与隔离测试 |
+| 设置布局 | 使用现有 Edge 无头浏览器加载生产构建 | 桌面/Android 样式在 320/360/526/640 CSS px 均无该行溢出，滑块宽 112–452 px；50% 实时更新及恢复 100% 通过。这是网页布局检查，不是设备输入测试 |
 | Android | `cd redesign/android && ./gradlew :app:compileDebugKotlin :app:testPetDisplayPolicy :app:lintDebug -x copyWebAssets --offline --console=plain` | Kotlin、独立 JVM 策略回归、lint 均通过；未打包 APK、未执行设备测试 |
 | 边界补充测试 | `cd redesign/ui && npm run test:bounds` | 失败：既有 VM 测试加载 `embed.ts` 时出现 `SyntaxError: Cannot use 'import.meta' outside a module` |
 | 差异检查 | `git diff --check` | 通过 |
 
 `test:bounds` 对应的 `tests/render-margin.test.mjs`、`src/embed.ts`、`src/pet-model.ts` 与 `origin/develop` 完全一致；未为绕过既有测试加载器问题而修改渲染、AA 或测试断言。Vite 的未来 configLoader/__dirname 警告、Undici 实验性代理警告，以及 AGP 8.9.0 对 compileSdk 36 的既有版本警告仍存在。
 
-新增前端测试覆盖真实方法：五档 opacity 不改变原始 Alpha 剪影及阈值、模式切换释放 capture 并恢复点击、连续 20 次串行切换的最终状态、Android 主界面/悬浮窗隔离、旧配置与持久化。Android `testPetDisplayPolicy` 是无新增测试库的 JavaExec JVM 策略检查，覆盖 API 26/30/31/32/33/36、0%、系统阈值异常及旧定时器，不是仪器测试。
+新增前端测试覆盖真实方法：五档 opacity 不改变原始 Alpha 剪影及阈值、模式切换释放 capture 并恢复点击、连续 20 次串行切换的最终状态、Android 主界面/悬浮窗隔离、旧配置与持久化；完全穿透及 0% 时聊天按钮边界仍上报，移动/隐藏不被相同 Alpha 去重吞掉。Android `testPetDisplayPolicy` 是无新增测试库的 JavaExec JVM 策略检查，覆盖 API 26/30/31/32/33/36、0%、系统阈值异常及旧定时器，不是仪器测试。
 
 ### 未验证的人工验收清单
 
@@ -87,6 +90,7 @@ Add pet opacity and native full click-through while preserving alpha hit testing
 
 - `redesign/ui/src/settings.ts`：设置字段、默认值与旧配置归一化。
 - `redesign/ui/src/settings-page.ts`：显示与穿透界面、说明和同步。
+- `redesign/ui/src/settings.css`：仅透明度行改为纵向布局，避免滑块与百分比被挤压。
 - `redesign/ui/src/pet-app.ts`：Canvas 合成透明度、手势清理、pet 原生状态串行同步与托盘操作。
 - `redesign/ui/src/platform.ts`：Android bridge 类型。
 - `redesign/ui/tests/click-feedback.test.mjs`：行为回归及指针捕获测试桩。

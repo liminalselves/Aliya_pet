@@ -348,6 +348,36 @@ test('完全穿透结束真实手势并释放capture，关闭后保留透明格�
   await h.app._displaySync;
 });
 
+test('人物完全穿透及0%仍发布聊天按钮边界，移动和隐藏不被相同Alpha去重吞掉', async () => {
+  const h = harness({ platform: 'tauri' });
+  let rect = { left: 300, top: 600, width: 120, height: 40 };
+  const pixels = new Uint8ClampedArray(96 * 96 * 4);
+  const launcher = { hidden: false, getBoundingClientRect: () => rect };
+  Object.assign(h.app, { _chatLauncher: launcher, _model: { isReady: () => true },
+    _chatView: { hitRects: () => [] },
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
+      clearRect() {}, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {}, fillRect() {},
+      getImageData: () => ({ data: pixels }),
+    },
+  });
+  for (const opacity of [100, 0]) {
+    h.app._applyPetDisplay({ petOpacity: opacity, fullClickThrough: true });
+    h.setTime(200); h.app._maybeSendHitMask();
+    assert.deepEqual(Array.from(h.masks.at(-1).launcherRect), [300 / 800, 600 / 800, 120 / 800, 40 / 800]);
+    const before = h.lines.length; h.click();
+    assert.equal(h.lines.length, before, '保留按钮边界不应恢复人物互动');
+  }
+  const sent = h.masks.length;
+  rect = { ...rect, left: 301 };
+  h.setTime(240); h.app._maybeSendHitMask();
+  assert.equal(h.masks.length, sent + 1, '按钮几何变化绕过120ms节流及相同Alpha去重');
+  assert.equal(h.masks.at(-1).launcherRect[0], 301 / 800);
+  launcher.hidden = true;
+  h.setTime(260); h.app._maybeSendHitMask();
+  assert.equal(h.masks.at(-1).launcherRect, null, '隐藏按钮后删除原生命中例外');
+  await h.app._displaySync;
+});
+
 test('快速切换通过串行IPC收敛最后状态，只调用pet专属命令', async () => {
   const calls = []; let active = 0, maximum = 0, release;
   const h = harness({ platform: 'tauri', invoke: async (command, args) => {

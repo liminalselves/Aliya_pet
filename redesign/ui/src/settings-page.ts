@@ -550,7 +550,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   // 人物不透明度：滑杆 0–100%，步进 5，实时预览；0% 时人物不可见，
   // 关闭完全穿透会形成不可见的鼠标拦截区，因此 pet 侧兜底按整窗穿透处理。
   const opRow = document.createElement('div');
-  opRow.className = 'row';
+  opRow.className = 'row opacity-row';
   const opLab = document.createElement('div');
   opLab.className = 'label';
   opLab.textContent = '人物透明度';

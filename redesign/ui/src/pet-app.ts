@@ -2654,10 +2654,19 @@ export class PetApp {
       || (this._chatView?.pointerActive ?? false);
   }
 
+  /** 独立 UI 命中边界：不读取人物像素，也不受人物透明度或穿透状态影响。 */
+  private _chatLauncherRect(): [number, number, number, number] | null {
+    if (!this._chatLauncher || this._chatLauncher.hidden || window.innerWidth <= 0 || window.innerHeight <= 0) return null;
+    const r = this._chatLauncher.getBoundingClientRect();
+    return r.width > 0 && r.height > 0
+      ? [r.left / window.innerWidth, r.top / window.innerHeight, r.width / window.innerWidth, r.height / window.innerHeight]
+      : null;
+  }
+
   private _hitMaskGeometryKey(): string {
     const r = this._hitMaskRect ?? { left: 0, top: 0, width: 0, height: 0 };
     return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor,
-      r.left, r.top, r.width, r.height].join(':');
+      r.left, r.top, r.width, r.height, ...(this._chatLauncherRect() ?? [])].join(':');
   }
 
   private static _unionRect(rects: { left: number; top: number; width: number; height: number }[]):
@@ -2689,6 +2698,8 @@ export class PetApp {
       rows: this._hitMaskRows,
       data: Array.from(this._hitMaskData),
       interacting: this._hitMaskInteracting,
+      // 与真实 Alpha 掩码共用通信；完全穿透仅放行聊天按钮，不放行人物。
+      launcherRect: this._chatLauncherRect(),
       winX: this._winPhysX,
       winY: this._winPhysY,
       winW: Math.round(window.innerWidth * this._scaleFactor),
