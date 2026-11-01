@@ -28,8 +28,9 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
     // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
     pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
-    texImage2D() {}, generateMipmap() {},
+    texImage2D() {}, generateMipmap() {}, texParameteri() {},
   };
+  renderer.setClippingMaskBufferSize = () => {};
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
     bound = true;
