@@ -38,6 +38,8 @@ export interface AndroidShell {
   shellAction(action: string): void;
   /** 声明当前手势是抚摸/互动（悬浮窗壳据此不抢拖动）；手势结束传 false。 */
   setInteracting(interacting: boolean): void;
+  /** 人物显示/穿透偏好；仅悬浮窗改变 WindowManager 输入标志。 */
+  setPetDisplay?(opacity: number, fullClickThrough: boolean): void;
   /** 像素占用掩码（0/1 字符串， cols×rows 覆盖整个窗口）：壳命中透明区时穿透触摸。 */
   setHitMask(cols: number, rows: number, data: string): void;
   /** 独立台词气泡：JSON 含文本、窗口内锚点和适配视口；空文本隐藏，closing 淡出。 */

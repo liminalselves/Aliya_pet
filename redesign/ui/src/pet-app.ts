@@ -192,8 +192,9 @@ export class PetApp {
   private _hitMaskGeometry = '';
   private _hitMaskSend: ((args: Record<string, unknown>) => void) | null = null;
   private _hitMaskInteracting = false;
-  /** 完全穿透生效中的兜底全 0 掩码（按最近一次几何）。 */
   private _fullClickThrough = false;
+  private _displayStateKey = '';
+  private _displaySync: Promise<unknown> = Promise.resolve();
 
   // 设置
   // 嵌入网页固定用默认设置，不读写本机存档。
@@ -281,6 +282,8 @@ export class PetApp {
     if (this._hasNativeBubble()) androidShell().setDialogueBubble('{"text":""}');
     document.body.classList.toggle('android-main', platform === 'android' && !this._wrapWindow);
     if (platform === 'android' && !this._wrapWindow) this._pinMainStageHeight();
+    // 模型加载和上下文重建期间也立即恢复显示策略，不等待资源下载完成。
+    this._applyPetDisplay(this._settings);
 
     this._gl = this._canvas.getContext('webgl2', {
       alpha: true,
@@ -398,9 +401,6 @@ export class PetApp {
       frameBuffer: this._frameBuffer,
       shaderPath: assetUrl('/shaders/'),
     });
-    // 新 renderer 的 model color 已重置为默认：立刻回灌用户不透明度，
-    // 否则模型重载/GL 重建后透明度跳回 100%。
-    (this._model as { setOpacity?: (a: number) => void }).setOpacity?.(clampPetOpacity(this._settings.petOpacity) / 100);
 
     // 逻辑层装配
     await Promise.all([this._dialogue.loadAll(), this._hitAreas.load()]);
@@ -680,6 +680,7 @@ export class PetApp {
       s = { ...s, posX: this._settings.posX, posY: this._settings.posY };
     }
     this._settings = s;
+    this._applyPetDisplay(s);
     const positionRevision = this._windowPositionRevision ?? 0;
     const revision = ++this._windowSettingsRevision;
     const restoredPosition = restoreWindow && s.posX != null && s.posY != null
@@ -698,15 +699,6 @@ export class PetApp {
     this.setFpsCap(s.batterySaver ? 15 : this._baseFpsCap);
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
-
-    // 人物不透明度：只作用 Live2D 模型（setModelColor uniform），
-    // 不影响聊天窗口/气泡/设置页；命中掩码按纹理剪影归一，不随显示 alpha 退化。
-    const opacity = clampPetOpacity(s.petOpacity);
-    // 测试/早期装配期模型可能尚未具备 setOpacity（mock/未完全加载），静默跳过。
-    (this._model as { setOpacity?: (a: number) => void } | null)?.setOpacity?.(opacity / 100);
-    // 透明度变化会让旧掩码阈值失效（剪影按显示 alpha 归一），强制重采样。
-    this._hitMaskLastMs = -Infinity;
-    this._applyClickThrough(s);
 
     // 窗口层
     if (platform === 'android') {
@@ -1103,84 +1095,6 @@ export class PetApp {
   }
 
   /**
-   * 人物完全穿透开/关（pet 窗口独占，不碰 chat/settings/records）。
-   * Windows 复用 update_hit_mask：开启时把 pet 掩码整体置 0，壳轮询自然落为
-   * 整窗 set_ignore_cursor_events(true)；关闭后下一次几何/帧循环重发真实剪影掩码，
-   * 恢复原有智能穿透（模型区域可交互、透明区永远穿透），绝不是整窗矩形命中。
-   * Android 走 Kotlin：PetOverlayService 解析同一设置 JSON 直接翻 FLAG_NOT_TOUCHABLE。
-   * 0% 不透明度 + 关闭穿透是矛盾态（人物不可见却拦截鼠标），按安全降级强制
-   * 整窗穿透，与「完全穿透开启」同一路径。
-   */
-  private _applyClickThrough(s: PetSettings): void {
-    const opacity = clampPetOpacity(s.petOpacity);
-    const full = s.fullClickThrough === true || opacity <= 0;
-    if (full === this._fullClickThrough) return;
-    this._fullClickThrough = full;
-
-    // 切换瞬间正在拖动/抚摸：先收尾手势，避免指针捕获残留在穿透窗口上。
-    if (full) {
-      this._cancelInteraction();
-      this._resetDragState();
-      if (platform === 'android') androidShell()?.setInteracting(false);
-    }
-
-    // Windows / Android 悬浮窗都靠掩码通道：立刻强制重算一次掩码并下发。
-    // 关闭路径同理——清掉节流时间戳，让下一帧把真实剪影掩码补发出去。
-    this._hitMaskLastMs = -Infinity;
-    this._hitMaskSentMs = 0;
-    this._hitMaskInteracting = this._isPointerInteracting();
-    if (full) this._sendFullClickThroughMask(this._hitMaskGeometryKey());
-    else this._hitMaskData = new Uint8Array(0);
-
-    // 托盘复选框回写：设置页开关、0% 不透明度兜底都会改变穿透态，
-    // CheckMenuItem 展示值由这里统一同步（命令是 no-op 当 managed state 缺失）。
-    if (platform === 'tauri') {
-      import('@tauri-apps/api/core')
-        .then((m) => m.invoke('sync_click_through_menu', { checked: full }))
-        .catch(() => {});
-    }
-  }
-
-  /**
-   * 完全穿透生效中向壳发全 0 掩码：region 外壳已穿透，region 内也穿透 →
-   * 整窗 set_ignore_cursor_events(true)（Windows）/ 空 touchableRegion（Android 33+）。
-   * 只在掩码通道上加盖一层，不删缓存的几何指纹，关闭后按原路径恢复。
-   */
-  private _sendFullClickThroughMask(geometry: string): void {
-    this._hitMaskSentMs = performance.now();
-    this._hitMaskGeometry = geometry;
-    const androidWrap = platform === 'android' && this._wrapWindow;
-    const cols = PetApp._hitMaskCols;
-    const region = androidWrap
-      ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
-      : (this._hitMaskRect && this._hitMaskRect.width > 0
-          ? this._hitMaskRect
-          : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
-    const rows = Math.max(1, Math.round((cols * region.height) / Math.max(1, region.width)));
-    this._hitMaskRows = rows;
-    if (androidWrap) {
-      androidShell()?.setHitMask(cols, rows, '0'.repeat(cols * rows));
-      return;
-    }
-    if (platform !== 'tauri' || !this._hitMaskSend) return;
-    this._hitMaskSend({
-      cols,
-      rows,
-      // 发全 0：不覆盖 _hitMaskData 缓存的真实剪影，关闭穿透后旧掩码可原样恢复。
-      data: new Array(cols * rows).fill(0),
-      interacting: false,
-      winX: this._winPhysX,
-      winY: this._winPhysY,
-      winW: Math.round(window.innerWidth * this._scaleFactor),
-      winH: Math.round(window.innerHeight * this._scaleFactor),
-      regionX: Math.round(region.left * this._scaleFactor),
-      regionY: Math.round(region.top * this._scaleFactor),
-      regionW: Math.round(region.width * this._scaleFactor),
-      regionH: Math.round(region.height * this._scaleFactor),
-    });
-  }
-
-  /**
    * 贴合模式原点是否未设置。
    * App 内全屏模式的拖动结束曾把 (0,0) 当窗口坐标写入 posX/posY，
    * 而合法原点（角色锚点）不可能是 (0,0)——视为未设置，走默认位。
@@ -1247,6 +1161,41 @@ export class PetApp {
       .catch(() => {});
   }
 
+  /** 合成层透明度不改变 WebGL 原始 alpha，命中采样及阈值保持原样。 */
+  private _applyPetDisplay(s: PetSettings): void {
+    const opacity = clampPetOpacity(s.petOpacity);
+    if (this._canvas) this._canvas.style.opacity = String(opacity / 100);
+    // Android 主界面包含聊天：绝不对 Activity 整窗禁用触摸。
+    const full = (platform !== 'android' || this._wrapWindow)
+      && (s.fullClickThrough === true || opacity === 0);
+    if (full && !this._fullClickThrough) {
+      this._fullClickThrough = true;
+      this._cancelInteraction();
+      this._resetDragState();
+      if (platform === 'android') androidShell()?.setInteracting(false);
+    }
+    const restoring = this._fullClickThrough && !full;
+    this._fullClickThrough = full;
+    // 即使暂停渲染，也立即重报保留的原始剪影；不发送全零或全一替代掩码。
+    if (restoring) this._publishHitMask();
+    const key = `${platform === 'android' ? opacity : full}:${s.fullClickThrough === true}`;
+    if (this._displayStateKey === key) return;
+    this._displayStateKey = key;
+    if (platform === 'android') {
+      androidShell()?.setPetDisplay?.(opacity, s.fullClickThrough === true);
+    } else if (platform === 'tauri') {
+      // 串行 IPC：快速开关不能让旧响应覆盖新状态；不修改或清空已有 Alpha 掩码。
+      this._displaySync = (this._displaySync ?? Promise.resolve()).then(async () => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_pet_click_through', { enabled: full });
+        await invoke('sync_click_through_menu', { checked: s.fullClickThrough === true });
+      }).catch(error => {
+        this._displayStateKey = '';
+        console.error('Failed to synchronize pet display state', error);
+      });
+    }
+  }
+
   /**
    * 壳动作入口（tray-action 形状）：Windows 托盘/设置窗口经 Tauri 事件，
    * Android 设置页经壳桥 notifyPetAction 转发（main.ts 暴露给
@@ -1281,9 +1230,6 @@ export class PetApp {
         case 'reset-position':
           this.resetPosition();
           break;
-        // 托盘/设置入口：完全穿透开关与恢复不透明度。
-        // 「设置完全穿透」由设置页滑杆/托盘复选框各自写入后广播，
-        // 这里只承接「切换」与「显式值」两种调用。
         case 'full-click-through':
           this.applySettings(
             { ...this._settings, fullClickThrough: p.value ?? !this._settings.fullClickThrough },
@@ -1766,7 +1712,7 @@ export class PetApp {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (!e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
+      if (this._fullClickThrough || !e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
@@ -1942,7 +1888,11 @@ export class PetApp {
    * 配对的 pointerup 可能永远不到达，需主动收尾，否则按下状态与 expand=96 卡死。
    */
   private _cancelInteraction(): void {
+    const pointerId = this._activePointerId;
     this._activePointerId = null;
+    if (pointerId != null && this._canvas?.hasPointerCapture(pointerId)) {
+      this._canvas.releasePointerCapture(pointerId);
+    }
     this._touchPetting = false;
     this._touchTapCandidate = false;
     this._interaction?.cancel();
@@ -2612,15 +2562,6 @@ export class PetApp {
     const interacting = this._isPointerInteracting();
     const geometry = this._hitMaskGeometryKey();
     const now = performance.now();
-
-    // 完全穿透生效中：壳只认最近一次掩码。周期性重发全 0 掩码既压住
-    // 1.5s TTL 回退，也让「开启后再改透明度/切动作」不会漏出真实剪影。
-    if (this._fullClickThrough) {
-      if (now - this._hitMaskSentMs < 500 && geometry === this._hitMaskGeometry) return;
-      this._sendFullClickThroughMask(geometry);
-      return;
-    }
-
     if (
       now - this._hitMaskLastMs < 120 &&
       interacting === this._hitMaskInteracting &&
@@ -2680,12 +2621,8 @@ export class PetApp {
     }
     const img = ctx.getImageData(0, 0, cols, rows).data;
     const data = new Uint8Array(cols * rows);
-    // 剪影判定按「显示 alpha ÷ 用户不透明度」归一：50% 不透明度时本体仍可点，
-    // 0% 时阈值降到 0，任何残影仍算剪影（但显示不可见 + 整窗已穿透兜底）。
-    const opacityNorm = Math.max(0, clampPetOpacity(this._settings.petOpacity)) / 100;
-    const threshold = PetApp._hitMaskAlphaThreshold * opacityNorm;
     for (let i = 0; i < data.length; i++) {
-      data[i] = img[i * 4 + 3] > threshold ? 1 : 0;
+      data[i] = img[i * 4 + 3] > PetApp._hitMaskAlphaThreshold ? 1 : 0;
     }
     if (
       interacting === this._hitMaskInteracting &&
@@ -2793,13 +2730,9 @@ export class PetApp {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this._frameBuffer);
     gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
     const r2 = radius * radius;
-    // 剪影判定按「显示 alpha ÷ 用户不透明度」归一，与 _maybeSendHitMask 同一公式：
-    // 用户不透明度只改变显示效果，不改变人物原始命中形状。
-    const opacityNorm = Math.max(0, clampPetOpacity(this._settings.petOpacity)) / 100;
-    const threshold = PetApp._hitMaskAlphaThreshold * opacityNorm;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const dx = x0 + x + 0.5 - bx, dy = y0 + y + 0.5 - by;
-      if (dx * dx + dy * dy <= r2 && px[(y * w + x) * 4 + 3] > threshold) return true;
+      if (dx * dx + dy * dy <= r2 && px[(y * w + x) * 4 + 3] > PetApp._hitMaskAlphaThreshold) return true;
     }
     return false;
   }

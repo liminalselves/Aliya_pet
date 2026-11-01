@@ -234,11 +234,11 @@ const refs: {
   autoStart?: HTMLInputElement;
   batterySaver?: HTMLInputElement;
   overlayOnExit?: HTMLInputElement;
-  scaleSlider?: HTMLInputElement;
-  scaleVal?: HTMLSpanElement;
   petOpacitySlider?: HTMLInputElement;
   petOpacityVal?: HTMLSpanElement;
   fullClickThrough?: HTMLInputElement;
+  scaleSlider?: HTMLInputElement;
+  scaleVal?: HTMLSpanElement;
 } = {};
 
 // 缩放显示域：设备允许的实际范围 [scaleRangeMin, scaleRangeMax] 线性映射到
@@ -266,6 +266,12 @@ function syncSpeechRow(): void {
 }
 
 function refreshControls(): void {
+  if (refs.petOpacitySlider) {
+    refs.petOpacitySlider.value = String(settings.petOpacity);
+    paintSliderFill(refs.petOpacitySlider);
+  }
+  if (refs.petOpacityVal) refs.petOpacityVal.textContent = `${settings.petOpacity}%`;
+  if (refs.fullClickThrough) refs.fullClickThrough.checked = settings.fullClickThrough;
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
   if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
@@ -283,14 +289,6 @@ function refreshControls(): void {
     refs.scaleVal.textContent = `${scalePercent(settings.scale)}%`;
   if (refs.batterySaver)
     refs.batterySaver.checked = settings.batterySaver === true;
-  if (refs.petOpacitySlider) {
-    refs.petOpacitySlider.value = String(settings.petOpacity);
-    paintSliderFill(refs.petOpacitySlider);
-  }
-  if (refs.petOpacityVal)
-    refs.petOpacityVal.textContent = `${settings.petOpacity}%`;
-  if (refs.fullClickThrough)
-    refs.fullClickThrough.checked = settings.fullClickThrough;
 }
 
 // ---- 互动 ----（动作试放经跨窗口事件；Android 经壳桥转发到桌宠页）
@@ -569,6 +567,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   opPlus.textContent = '+';
   const opSlider = document.createElement('input');
   opSlider.type = 'range';
+  opSlider.setAttribute('aria-label', '人物透明度');
   opSlider.min = '0';
   opSlider.max = '100';
   opSlider.step = '5';
@@ -614,7 +613,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refs.fullClickThrough = switchRow(
     box,
     '人物完全穿透',
-    '关闭：人物可以正常互动，透明区域仍然穿透。\n开启：整个人物都允许鼠标穿透，聊天窗口仍可正常使用。',
+    '关闭：人物可以正常互动，透明区域仍然穿透。开启：整个人物都允许鼠标穿透，聊天窗口仍可正常使用。0% 时自动穿透，请通过托盘或 App 设置恢复。' + (platform === 'android' ? 'Android 12+ 完全穿透会自动降低人物可见度；独立气泡覆盖处仍受系统触摸安全限制。' : ''),
     () => settings.fullClickThrough,
     (v) => update({ fullClickThrough: v })
   );

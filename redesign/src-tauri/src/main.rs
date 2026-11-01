@@ -26,6 +26,10 @@ struct HitMask {
     data: Vec<u8>,
     /// 指针按下期间（拖动/抚摸）强制可交互，防止穿透打断事件流。
     interacting: bool,
+    /// 持久覆盖仅供 pet；不受动态掩码更新、手势锁或 TTL 影响。
+    full_click_through: bool,
+    /// 关闭覆盖后若没有新鲜剪影，安全穿透直到下一份真实 Alpha 掩码到达。
+    awaiting_alpha: bool,
     /// 静态界面（chat）：掩码长期有效，不做陈旧回退；动态剪影（pet）陈旧即回退可交互。
     sticky: bool,
     win_x: i32,
@@ -45,6 +49,8 @@ impl Default for HitMask {
             rows: 0,
             data: Vec::new(),
             interacting: false,
+            full_click_through: false,
+            awaiting_alpha: false,
             sticky: false,
             win_x: 0,
             win_y: 0,
@@ -97,6 +103,30 @@ fn update_hit_mask(
             _ => None,
         };
         m.updated = std::time::Instant::now();
+        if m.cols > 0 && m.rows > 0 && m.data.len() == (m.cols as usize) * (m.rows as usize) {
+            m.awaiting_alpha = false;
+        }
+    }
+}
+
+/// 仅人物窗口的持久覆盖。关闭时不调用 set_ignore_cursor_events(false)：
+/// 由原来的 Alpha 命中线程决定光标处状态，绝不恢复为整个 Canvas 矩形命中。
+#[tauri::command]
+fn set_pet_click_through(state: tauri::State<HitMaskState>, enabled: bool) -> Result<(), String> {
+    let mut map = state.lock().map_err(|e| e.to_string())?;
+    let pet = map.entry("pet".to_string()).or_default();
+    pet.set_full_click_through(enabled);
+    Ok(())
+}
+
+impl HitMask {
+    fn set_full_click_through(&mut self, enabled: bool) {
+        if !enabled && self.full_click_through {
+            self.awaiting_alpha = self.cols == 0 || self.rows == 0
+                || self.updated.elapsed() > std::time::Duration::from_millis(1500);
+        }
+        self.full_click_through = enabled;
+        if enabled { self.interacting = false; }
     }
 }
 
@@ -104,6 +134,7 @@ fn update_hit_mask(
 #[cfg(windows)]
 fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32, i32, i32)>) -> Option<bool> {
     let m = mask?;
+    if m.full_click_through || m.awaiting_alpha { return Some(true); }
     let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
     // 指针按下期间整窗接收，拖动/抚摸的事件流不被穿透打断。
@@ -177,6 +208,36 @@ mod hit_mask_tests {
         assert_eq!(want_ignore_at(Some(&m), (60, 70), None), Some(false), "陈旧时区域内回退可交互");
         m.interacting = true;
         assert_eq!(want_ignore_at(Some(&m), (20, 30), None), Some(false), "按下期间整窗接收");
+    }
+
+    #[test]
+    fn full_override_survives_stale_gesture_and_restores_same_alpha() {
+        let mut pet = mask();
+        let chat = mask();
+        pet.updated -= std::time::Duration::from_secs(20);
+        pet.interacting = true;
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (-500, -500), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&chat), (70, 30), None), Some(false));
+        assert!(!pet.interacting);
+        pet.set_full_click_through(false);
+        pet.set_full_click_through(false);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true), "陈旧剪影不得恢复矩形拦截");
+        pet.updated = std::time::Instant::now();
+        pet.awaiting_alpha = false; // update_hit_mask 收到有效真实剪影后解除等待
+        assert_eq!(want_ignore_at(Some(&pet), (20, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(false));
+    }
+
+    #[test]
+    fn full_override_before_first_mask_stays_safe_on_restore() {
+        let mut pet = HitMask::default();
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
+        pet.set_full_click_through(false);
+        assert!(pet.awaiting_alpha);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
     }
 
     #[test]
@@ -386,7 +447,7 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
     show_settings_window(&app, target.as_deref())
 }
 
-/// pet 前端回写「人物完全穿透」勾选状态（设置页/0% 不透明度兜底都可能改状态）。
+/// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
 /// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
 #[tauri::command]
 fn sync_click_through_menu(
@@ -394,7 +455,7 @@ fn sync_click_through_menu(
     checked: bool,
 ) -> Result<(), String> {
     if let Some(item) = app.try_state::<tauri::menu::CheckMenuItem<tauri::Wry>>() {
-        let _ = item.inner().set_checked(checked);
+        item.inner().set_checked(checked).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -484,6 +545,7 @@ fn main() {
             get_auto_start,
             open_url,
             update_hit_mask,
+            set_pet_click_through,
             set_pet_bounds,
             show_settings,
             sync_click_through_menu,
@@ -541,7 +603,7 @@ fn main() {
             let top =
                 CheckMenuItem::with_id(app, "top", "置顶显示", true, true, None::<&str>)?;
             let reset = MenuItem::with_id(app, "reset_pos", "重置位置", true, None::<&str>)?;
-            // 完全穿透是人物不可点击时唯一的恢复入口：勾选状态由 pet 窗口回写。
+            // 托盘不依赖人物命中，可切换穿透、恢复可见度或打开设置。
             let click_through =
                 CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
             let reset_opacity =
@@ -604,10 +666,9 @@ fn main() {
                         );
                     }
                     "click_through" => {
-                        // 勾选状态前端是真相（pet 会广播 settings-changed 回写勾选）；
-                        // 这里只先翻转展示值并把目标值带给 pet，避免本地两份状态漂移。
-                        let new_val = !click_through_item.is_checked().unwrap_or(false);
-                        let _ = click_through_item.set_checked(new_val);
+                        // muda 在派发事件前已切换勾选；转发目标值给 pet 保存和应用，
+                        // 再由 pet 同步菜单。不能再次反转，否则每次点击都会被撤销。
+                        let new_val = click_through_item.is_checked().unwrap_or(false);
                         let _ = app.emit_to(
                             "pet",
                             "tray-action",

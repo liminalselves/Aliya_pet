@@ -31,9 +31,9 @@ export interface PetSettings {
   chatBackgroundDim: number;
   /** 自定义背景更新标记（换图时递增，主界面据此重新读取 IndexedDB）。 */
   chatBackgroundRev?: number;
-  /** 人物整体不透明度（百分比，0–100；只作用 Live2D 模型，不影响聊天/气泡/设置窗口）。 */
+  /** 人物 Canvas 的合成不透明度（0–100），不改变原始 Alpha 命中掩码。 */
   petOpacity: number;
-  /** 人物完全穿透：开启后人物本体也透传鼠标/触摸（透明区域本来就始终穿透）。 */
+  /** 只控制人物窗口；关闭时继续沿用智能穿透。 */
   fullClickThrough: boolean;
 }
 
@@ -144,11 +144,10 @@ export function scaleRangeFor(
   return { minS, maxS };
 }
 
-/** 人物不透明度归一：非法/缺失回退 100，范围钳制 0–100 并取整（UI 步进 5%）。 */
-export function clampPetOpacity(v: unknown): number {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 100;
-  return Math.min(100, Math.max(0, Math.round(n)));
+/** 兼容旧存档；非法值回到可见默认值，避免 null/空串意外变为 0%。 */
+export function clampPetOpacity(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 100;
+  return Math.min(100, Math.max(0, Math.round(value / 5) * 5));
 }
 
 export function loadSettings(): PetSettings {
@@ -160,6 +159,8 @@ export function loadSettings(): PetSettings {
       ...DEFAULT_SETTINGS,
       ...parsed,
       scale: clampScale(Number(parsed.scale ?? 1.0)),
+      petOpacity: clampPetOpacity(parsed.petOpacity),
+      fullClickThrough: parsed.fullClickThrough === true,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
         ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,
@@ -167,8 +168,6 @@ export function loadSettings(): PetSettings {
         Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
         120
       ),
-      petOpacity: clampPetOpacity(parsed.petOpacity),
-      fullClickThrough: parsed.fullClickThrough === true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
