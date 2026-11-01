@@ -734,6 +734,16 @@ export class PetModel
     model.update();
   }
 
+  /**
+   * 人物整体不透明度（0–1）：走 CubismRenderer.setModelColor，
+   * 预乘模式下 RGB 随 alpha 缩放，只改 uniform，不重建纹理/模型。
+   */
+  public setOpacity(alpha: number): void {
+    if (!this._ready) return;
+    const a = Math.min(1, Math.max(0, alpha));
+    this.getRenderer().setModelColor(1, 1, 1, a);
+  }
+
   public draw(matrix: CubismMatrix44): void {
     if (!this._ready) return;
     matrix.multiplyByMatrix(this._modelMatrix);

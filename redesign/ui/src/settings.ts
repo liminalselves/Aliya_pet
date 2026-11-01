@@ -31,6 +31,10 @@ export interface PetSettings {
   chatBackgroundDim: number;
   /** 自定义背景更新标记（换图时递增，主界面据此重新读取 IndexedDB）。 */
   chatBackgroundRev?: number;
+  /** 人物整体不透明度（百分比，0–100；只作用 Live2D 模型，不影响聊天/气泡/设置窗口）。 */
+  petOpacity: number;
+  /** 人物完全穿透：开启后人物本体也透传鼠标/触摸（透明区域本来就始终穿透）。 */
+  fullClickThrough: boolean;
 }
 
 const STORAGE_KEY = 'aliya_pet_settings_v1';
@@ -58,6 +62,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   batterySaver: false,
   chatBackground: 'none',
   chatBackgroundDim: 0.35,
+  petOpacity: 100,
+  fullClickThrough: false,
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -138,6 +144,13 @@ export function scaleRangeFor(
   return { minS, maxS };
 }
 
+/** 人物不透明度归一：非法/缺失回退 100，范围钳制 0–100 并取整（UI 步进 5%）。 */
+export function clampPetOpacity(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 100;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -154,6 +167,8 @@ export function loadSettings(): PetSettings {
         Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
         120
       ),
+      petOpacity: clampPetOpacity(parsed.petOpacity),
+      fullClickThrough: parsed.fullClickThrough === true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

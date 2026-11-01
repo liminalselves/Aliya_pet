@@ -482,10 +482,31 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             }
         }
         // 尚无掩码时人物也未完成渲染，空区域可避免加载期间出现隐形触摸墙。
-        web.rootSurfaceControl?.setTouchableRegion(region)
+        // 完全穿透开启：touchableRegion 直接清空，掩码变化不再意外放行触摸。
+        web.rootSurfaceControl?.setTouchableRegion(if (fullClickThrough) Region() else region)
     }
 
-    /** Android 12L 及以下兼容：收到透明 DOWN 后暂时切换整窗可触摸性。 */
+    /**
+     * 完全穿透设置（来自设置页 notifySettings JSON，与前端 fullClickThrough 同源）：
+     * 只翻本窗口的 FLAG_NOT_TOUCHABLE，主界面/其他窗口不受影响。
+     * 关闭时清回可触摸，触摸透传回落到既有的透明区掩码逻辑（智能穿透）。
+     */
+    @Volatile private var fullClickThrough = false
+
+    private fun applyFullClickThrough(on: Boolean) {
+        if (fullClickThrough == on) return
+        fullClickThrough = on
+        if (on) {
+            // 正在进行的原生拖动/触摸先结束，避免手势流残留在穿透窗口上。
+            nativeDragging = false
+            jsInteracting = false
+            tapCandidate = false
+        }
+        setTouchable(!on)
+        web.post { applyTouchableRegion() }
+    }
+
+    /** Android 12L 及以下兼容路径：收到透明 DOWN 后暂时切换整窗可触摸性。 */
     private fun setTouchable(touchable: Boolean) {
         if (!windowAttached) return
         val f = if (touchable) {
@@ -620,6 +641,27 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     override fun isAutoStart(): Boolean = ShellPrefs.getAutoStart(this)
     override fun setPref(key: String, value: String) = ShellPrefs.setPref(this, key, value)
     override fun getPref(key: String): String = ShellPrefs.getPref(this, key)
+
+    /**
+     * 设置页（Activity WebView）→ 悬浮窗 WebView 的设置转发。
+     * 先喂给前端同一套 applySettings（透明度/行为全生效），
+     * 再原生翻 FLAG_NOT_TOUCHABLE 兜底「完全穿透」——FLAG 比掩码更快、
+     * 不依赖 WebView 帧循环，且 API <33 无 touchableRegion 时也成立。
+     */
+    override fun notifySettings(json: String) {
+        try {
+            val obj = JSONObject(json)
+            if (obj.has("fullClickThrough")) {
+                applyFullClickThrough(obj.optBoolean("fullClickThrough", false))
+            }
+        } catch (_: Exception) {
+        }
+        evalJs("window.__applySettingsFromAndroid && window.__applySettingsFromAndroid($json);")
+    }
+
+    override fun notifyPetAction(json: String) {
+        evalJs("window.__pet && window.__pet.onShellAction && window.__pet.onShellAction($json);")
+    }
 
     override fun shellAction(action: String) {
         when (action) {

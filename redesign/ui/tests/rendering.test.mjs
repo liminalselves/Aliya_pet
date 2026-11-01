@@ -78,6 +78,36 @@ test('生成配图设置默认开启，兼容旧设置并持久化开关', () =>
   assert.equal(loadSettings().showGeneratedImages, true);
 });
 
+test('人物不透明度/完全穿透默认开启 100%+关闭，兼容旧设置并钳制非法值', () => {
+  let stored = JSON.stringify({ petOpacity: 45, fullClickThrough: true });
+  const { loadSettings, saveSettings, clampPetOpacity } = load('settings', {}, {
+    localStorage: {
+      getItem: () => stored,
+      setItem: (_key, value) => { stored = value; },
+    },
+  });
+  // 有存档时读取旧值
+  assert.equal(loadSettings().petOpacity, 45);
+  assert.equal(loadSettings().fullClickThrough, true);
+  // 旧版本无此字段 → 默认 100 + false
+  stored = JSON.stringify({ scale: 1.0 });
+  assert.equal(loadSettings().petOpacity, 100);
+  assert.equal(loadSettings().fullClickThrough, false);
+  // 非法值回退与钳制
+  assert.equal(clampPetOpacity('abc'), 100);
+  assert.equal(clampPetOpacity(-5), 0);
+  assert.equal(clampPetOpacity(150), 100);
+  assert.equal(clampPetOpacity(0), 0);
+  assert.equal(clampPetOpacity(100), 100);
+  // 持久化往返
+  saveSettings({ ...loadSettings(), petOpacity: 55, fullClickThrough: true });
+  assert.equal(loadSettings().petOpacity, 55);
+  assert.equal(loadSettings().fullClickThrough, true);
+  stored = null;
+  assert.equal(loadSettings().petOpacity, 100);
+  assert.equal(loadSettings().fullClickThrough, false);
+});
+
 test('隐藏生成配图剥离标记和独立配图页，保留正文、表演、贴纸与用户附图', () => {
   const options = { role: 'assistant', stickersEnabled: true, showGeneratedImages: false,
     resolveSticker: () => ({ url: 'https://files.example/wave.png', type: 'image/png' }),

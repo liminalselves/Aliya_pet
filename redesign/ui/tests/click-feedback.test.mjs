@@ -40,9 +40,11 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: name => { actions.push(name); return true; } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
+  const settings = load('settings');
   const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
     androidShell: () => ({ setInteracting: value => shellCalls.push(value),
-      setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) } }, { ...globals, window });
+      setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) },
+    './settings': settings }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
   const app = Object.create(PetApp.prototype);
   Object.assign(app, {

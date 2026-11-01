@@ -386,6 +386,19 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
     show_settings_window(&app, target.as_deref())
 }
 
+/// pet 前端回写「人物完全穿透」勾选状态（设置页/0% 不透明度兜底都可能改状态）。
+/// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
+#[tauri::command]
+fn sync_click_through_menu(
+    app: tauri::AppHandle,
+    checked: bool,
+) -> Result<(), String> {
+    if let Some(item) = app.try_state::<tauri::menu::CheckMenuItem<tauri::Wry>>() {
+        let _ = item.inner().set_checked(checked);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     let win = app
@@ -473,6 +486,7 @@ fn main() {
             update_hit_mask,
             set_pet_bounds,
             show_settings,
+            sync_click_through_menu,
             show_records,
             show_update,
             current_update_payload,
@@ -527,15 +541,22 @@ fn main() {
             let top =
                 CheckMenuItem::with_id(app, "top", "置顶显示", true, true, None::<&str>)?;
             let reset = MenuItem::with_id(app, "reset_pos", "重置位置", true, None::<&str>)?;
+            // 完全穿透是人物不可点击时唯一的恢复入口：勾选状态由 pet 窗口回写。
+            let click_through =
+                CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
+            let reset_opacity =
+                MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
             let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出桌宠", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
-                    &menu_main, &show, &sep1, &cycle, &top, &reset, &sep2, &about, &quit,
+                    &menu_main, &show, &sep1, &cycle, &top, &reset, &click_through,
+                    &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
+            app.manage(click_through.clone());
 
             let icon = app
                 .default_window_icon()
@@ -543,6 +564,7 @@ fn main() {
                 .clone();
 
             let top_item = top.clone();
+            let click_through_item = click_through.clone();
             TrayIconBuilder::new()
                 .icon(icon)
                 .tooltip("Aliya Pet")
@@ -579,6 +601,24 @@ fn main() {
                             "pet",
                             "tray-action",
                             json!({ "action": "reset-position" }),
+                        );
+                    }
+                    "click_through" => {
+                        // 勾选状态前端是真相（pet 会广播 settings-changed 回写勾选）；
+                        // 这里只先翻转展示值并把目标值带给 pet，避免本地两份状态漂移。
+                        let new_val = !click_through_item.is_checked().unwrap_or(false);
+                        let _ = click_through_item.set_checked(new_val);
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "full-click-through", "value": new_val }),
+                        );
+                    }
+                    "reset_opacity" => {
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "reset-opacity" }),
                         );
                     }
                     "about" => {

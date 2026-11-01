@@ -236,6 +236,9 @@ const refs: {
   overlayOnExit?: HTMLInputElement;
   scaleSlider?: HTMLInputElement;
   scaleVal?: HTMLSpanElement;
+  petOpacitySlider?: HTMLInputElement;
+  petOpacityVal?: HTMLSpanElement;
+  fullClickThrough?: HTMLInputElement;
 } = {};
 
 // 缩放显示域：设备允许的实际范围 [scaleRangeMin, scaleRangeMax] 线性映射到
@@ -280,6 +283,14 @@ function refreshControls(): void {
     refs.scaleVal.textContent = `${scalePercent(settings.scale)}%`;
   if (refs.batterySaver)
     refs.batterySaver.checked = settings.batterySaver === true;
+  if (refs.petOpacitySlider) {
+    refs.petOpacitySlider.value = String(settings.petOpacity);
+    paintSliderFill(refs.petOpacitySlider);
+  }
+  if (refs.petOpacityVal)
+    refs.petOpacityVal.textContent = `${settings.petOpacity}%`;
+  if (refs.fullClickThrough)
+    refs.fullClickThrough.checked = settings.fullClickThrough;
 }
 
 // ---- 互动 ----（动作试放经跨窗口事件；Android 经壳桥转发到桌宠页）
@@ -532,6 +543,81 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     (v) => update({ mirror: v })
   );
   refs.batterySaver = addBatterySaverSwitch(box);
+}
+
+// ---- 显示与穿透 ----
+{
+  const box = section('显示与穿透');
+
+  // 人物不透明度：滑杆 0–100%，步进 5，实时预览；0% 时人物不可见，
+  // 关闭完全穿透会形成不可见的鼠标拦截区，因此 pet 侧兜底按整窗穿透处理。
+  const opRow = document.createElement('div');
+  opRow.className = 'row';
+  const opLab = document.createElement('div');
+  opLab.className = 'label';
+  opLab.textContent = '人物透明度';
+  const opSub = document.createElement('span');
+  opSub.className = 'sub';
+  opSub.textContent = '只影响桌宠显示，不影响聊天与其他窗口';
+  opLab.appendChild(opSub);
+  const opWrap = document.createElement('div');
+  opWrap.className = 'slider-row';
+  opWrap.style.flex = '1';
+  const opMinus = document.createElement('button');
+  opMinus.textContent = '−';
+  const opPlus = document.createElement('button');
+  opPlus.textContent = '+';
+  const opSlider = document.createElement('input');
+  opSlider.type = 'range';
+  opSlider.min = '0';
+  opSlider.max = '100';
+  opSlider.step = '5';
+  opSlider.value = String(settings.petOpacity);
+  const opVal = document.createElement('span');
+  opVal.className = 'val';
+  opVal.textContent = `${settings.petOpacity}%`;
+  refs.petOpacitySlider = opSlider;
+  refs.petOpacityVal = opVal;
+  const commitOpacity = (v: number) => {
+    const n = Math.min(100, Math.max(0, Math.round(v / 5) * 5));
+    opSlider.value = String(n);
+    opVal.textContent = `${n}%`;
+    paintSliderFill(opSlider);
+    update({ petOpacity: n });
+  };
+  paintSliderFill(opSlider);
+  opMinus.addEventListener('click', () => commitOpacity(settings.petOpacity - 5));
+  opPlus.addEventListener('click', () => commitOpacity(settings.petOpacity + 5));
+  opSlider.addEventListener('input', () => commitOpacity(Number(opSlider.value)));
+  opWrap.appendChild(opMinus);
+  opWrap.appendChild(opSlider);
+  opWrap.appendChild(opPlus);
+  opWrap.appendChild(opVal);
+  opRow.appendChild(opLab);
+  opRow.appendChild(opWrap);
+  box.appendChild(opRow);
+
+  // 恢复默认行：与缩放/台词区同风格的小按钮，归位到 100% 且不碰完全穿透开关。
+  const opResetRow = document.createElement('div');
+  opResetRow.className = 'row';
+  const opResetLab = document.createElement('div');
+  opResetLab.className = 'label';
+  opResetLab.textContent = '';
+  const opReset = document.createElement('button');
+  opReset.className = 'act';
+  opReset.textContent = '恢复默认 100%';
+  opReset.addEventListener('click', () => commitOpacity(100));
+  opResetRow.appendChild(opResetLab);
+  opResetRow.appendChild(opReset);
+  box.appendChild(opResetRow);
+
+  refs.fullClickThrough = switchRow(
+    box,
+    '人物完全穿透',
+    '关闭：人物可以正常互动，透明区域仍然穿透。\n开启：整个人物都允许鼠标穿透，聊天窗口仍可正常使用。',
+    () => settings.fullClickThrough,
+    (v) => update({ fullClickThrough: v })
+  );
 }
 
 // ---- 聊天 ----（偏好开关与下方 Misskey 连接状态共用一张卡片）
