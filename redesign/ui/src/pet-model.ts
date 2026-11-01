@@ -193,6 +193,13 @@ export class PetModel
     );
     // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
     this.getRenderer().setIsPremultipliedAlpha(true);
+    // 提高裁剪遮罩缓冲区到 512：默认 256 对当前显示尺寸偏小，
+    // 遮罩贴图放大后边缘锯齿明显。需在 startUp 前设置，
+    // 使 FBO 首次创建即按目标尺寸分配，避免二次重建。
+    const renderer = this.getRenderer();
+    if (typeof renderer.setClippingMaskBufferSize === 'function') {
+      renderer.setClippingMaskBufferSize(512);
+    }
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
     for (let i = 0; i < textureCount; i++) {
@@ -765,6 +772,12 @@ export class PetModel
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
       gl.generateMipmap(gl.TEXTURE_2D);
+      // 显式设定采样参数：三线性过滤让 mipmap 层级切换连续，
+      // CLAMP_TO_EDGE 避免边缘混合到透明区污染色。
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.bindTexture(gl.TEXTURE_2D, null);
       return texture;
     } finally {
