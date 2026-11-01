@@ -26,10 +26,21 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   let decodePremultiplied = false, closed = false, bound = false;
   const stopAfterBinding = new Error('texture binding reached');
   const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
-    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
+    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, TEXTURE_2D: 3553,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243,
+    LINEAR_MIPMAP_LINEAR: 9987, LINEAR: 9729, CLAMP_TO_EDGE: 33071,
+    RGBA: 6408, UNSIGNED_BYTE: 5121,
+    createTexture: () => ({}), bindTexture() {},
     // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
     pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
     texImage2D() {}, generateMipmap() {},
+    texParameteri(target, pname, param) {
+      // 验证三线性过滤与边缘钳制已设置（修复纹理采样锯齿）。
+      if (pname === 10241) assert.equal(param, 9987, 'MIN_FILTER 应为 LINEAR_MIPMAP_LINEAR');
+      if (pname === 10240) assert.equal(param, 9729, 'MAG_FILTER 应为 LINEAR');
+      if (pname === 10242 || pname === 10243) assert.equal(param, 33071, 'WRAP 应为 CLAMP_TO_EDGE');
+    },
   };
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
