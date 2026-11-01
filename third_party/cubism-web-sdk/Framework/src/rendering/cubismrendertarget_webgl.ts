@@ -118,9 +118,17 @@ export class CubismRenderTarget_WebGL {
     displayBufferHeight: number,
     previousFramebuffer: WebGLFramebuffer
   ): boolean {
+    // 先用现有资源所属的上下文释放旧资源；失败后的新资源再绑定到当前上下文。
     this.destroyRenderTarget();
+    this._gl = gl;
 
     this._colorBuffer = gl.createTexture();
+    if (this._colorBuffer == null) {
+      CubismLogError('Failed to create color texture');
+      gl.bindFramebuffer(gl.FRAMEBUFFER, previousFramebuffer);
+      return false;
+    }
+
     gl.bindTexture(gl.TEXTURE_2D, this._colorBuffer);
     gl.texImage2D(
       gl.TEXTURE_2D,
@@ -144,8 +152,13 @@ export class CubismRenderTarget_WebGL {
     const ret = gl.createFramebuffer();
     if (ret == null) {
       CubismLogError('Failed to create framebuffer');
+      gl.bindFramebuffer(gl.FRAMEBUFFER, previousFramebuffer);
+      this.destroyRenderTarget();
       return false;
     }
+
+    // 破棄時にも一括で片付けられるよう、作成直後に保持する。
+    this._renderTexture = ret;
 
     // 作成したフレームバッファをバインド
     gl.bindFramebuffer(gl.FRAMEBUFFER, ret);
@@ -164,18 +177,12 @@ export class CubismRenderTarget_WebGL {
     if (status !== gl.FRAMEBUFFER_COMPLETE) {
       CubismLogError('Framebuffer is not complete');
       gl.bindFramebuffer(gl.FRAMEBUFFER, previousFramebuffer);
-      gl.deleteFramebuffer(ret);
-
       this.destroyRenderTarget();
-
       return false;
     }
 
-    this._renderTexture = ret;
     this._bufferWidth = displayBufferWidth;
     this._bufferHeight = displayBufferHeight;
-
-    this._gl = gl;
 
     return true;
   }
@@ -184,17 +191,26 @@ export class CubismRenderTarget_WebGL {
    * レンダーターゲットを破棄する。
    */
   public destroyRenderTarget(): void {
+    const gl = this._gl;
+
     if (this._colorBuffer) {
-      this._gl.bindTexture(this._gl.TEXTURE_2D, null);
-      this._gl.deleteTexture(this._colorBuffer);
+      if (gl) {
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteTexture(this._colorBuffer);
+      }
       this._colorBuffer = null;
     }
 
     if (this._renderTexture) {
-      this._gl.bindFramebuffer(this._gl.FRAMEBUFFER, null);
-      this._gl.deleteFramebuffer(this._renderTexture);
+      if (gl) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(this._renderTexture);
+      }
       this._renderTexture = null;
     }
+
+    this._bufferWidth = 0;
+    this._bufferHeight = 0;
   }
 
   /**

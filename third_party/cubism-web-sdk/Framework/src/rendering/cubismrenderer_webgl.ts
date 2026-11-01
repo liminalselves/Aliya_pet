@@ -1567,6 +1567,45 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   }
 
   /**
+   * Drawable 用のクリッピング蒙版バッファだけを再作成する。
+   * Renderer 全体の初期化や Blend Mode 用のオフスクリーン資源には触れない。
+   */
+  public rebuildClippingMaskBuffers(): void {
+    if (
+      this._model == null ||
+      !this._model.isUsingMasking() ||
+      this.gl == null ||
+      this._drawableClippingManager == null
+    ) {
+      return;
+    }
+
+    this._drawableClippingManager.setGL(this.gl);
+
+    for (const renderTarget of this._drawableMasks) {
+      renderTarget?.destroyRenderTarget();
+    }
+
+    const renderTextureCount =
+      this._drawableClippingManager.getRenderTextureCount();
+    const bufferSize = this._drawableClippingManager.getClippingMaskBufferSize();
+    this._drawableMasks.length = renderTextureCount;
+
+    for (let i = 0; i < renderTextureCount; ++i) {
+      const renderTarget = new CubismRenderTarget_WebGL();
+      renderTarget.createRenderTarget(
+        this.gl,
+        bufferSize,
+        bufferSize,
+        this._currentFbo
+      );
+      this._drawableMasks[i] = renderTarget;
+    }
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this._currentFbo);
+  }
+
+  /**
    * マスクテクスチャに描画するクリッピングコンテキストをセットする
    */
   public setClippingContextBufferForMask(clip: CubismClippingContext_WebGL) {
@@ -1654,20 +1693,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
       this.gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic') ||
       this.gl.getExtension('MOZ_EXT_texture_filter_anisotropic');
 
-    if (this._model.isUsingMasking()) {
-      this._drawableMasks.length =
-        this._drawableClippingManager.getRenderTextureCount();
-      for (let i = 0; i < this._drawableMasks.length; ++i) {
-        const renderTarget = new CubismRenderTarget_WebGL();
-        renderTarget.createRenderTarget(
-          this.gl,
-          this._drawableClippingManager.getClippingMaskBufferSize(),
-          this._drawableClippingManager.getClippingMaskBufferSize(),
-          this._currentFbo
-        );
-        this._drawableMasks[i] = renderTarget;
-      }
-    }
+    this.rebuildClippingMaskBuffers();
 
     if (this._model.isBlendModeEnabled()) {
       // オフスクリーンの作成

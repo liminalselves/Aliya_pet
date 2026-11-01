@@ -776,7 +776,7 @@ export class PetModel
 
   /**
    * 写入裁剪蒙版档位。必须在 startUp 之前：setClippingMaskBufferSize 会重建
-   * 裁剪管理器，gl 由随后的 startUp 注入新管理器。
+   * 裁剪管理器，随后由 startUp 创建对应的蒙版 FBO。
    */
   private _setupClippingMaskBuffer(): void {
     this.getRenderer().setClippingMaskBufferSize(
@@ -790,7 +790,7 @@ export class PetModel
 
   /**
    * 校验 startUp 创建的蒙版 FBO（SDK 不检查 createRenderTarget 的返回值）。
-   * 有缓冲不完整时按 1/2 逐档降到 SDK 默认 256 后重建；仍失败只告警，
+   * 有缓冲不完整时按 1/2 逐档降到 SDK 默认 256 后只重建蒙版；仍失败只告警，
    * 不让整个模型加载失败（无蒙版时遮挡部件仍会绘制，只是边界不准）。
    */
   private _ensureClippingMaskReady(): void {
@@ -800,17 +800,12 @@ export class PetModel
       size > MIN_CLIPPING_MASK_BUFFER_SIZE &&
       !this._clippingMaskBuffersValid()
     ) {
-      const count = renderer.getRenderTextureCount();
-      for (let i = 0; i < count; i++) {
-        // 失败的 render target 内部已释放 GL 资源，这里只清引用。
-        renderer.getDrawableMaskBuffer(i)?.destroyRenderTarget();
-      }
       size = Math.max(
         MIN_CLIPPING_MASK_BUFFER_SIZE,
         Math.floor(size / 2)
       );
       renderer.setClippingMaskBufferSize(size);
-      renderer.startUp(this._gl);
+      renderer.rebuildClippingMaskBuffers();
     }
     if (!this._clippingMaskBuffersValid()) {
       console.warn(

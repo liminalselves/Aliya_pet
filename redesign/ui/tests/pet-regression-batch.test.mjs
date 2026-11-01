@@ -17,6 +17,51 @@ function loadFile(url, imports = {}, globals = {}) {
 const load = (name, imports, globals) => loadFile(new URL(`../src/${name}.ts`, import.meta.url), imports, globals);
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
+test('RenderTarget 创建失败时恢复旧 FBO 并安全释放纹理', () => {
+  const { CubismRenderTarget_WebGL } = loadFile(
+    new URL('../../../third_party/cubism-web-sdk/Framework/src/rendering/cubismrendertarget_webgl.ts', import.meta.url),
+    { '../utils/cubismdebug': { CubismLogError() {} } }
+  );
+  const previousFramebuffer = { id: 'previous' };
+  const createHarness = ({ framebuffer, status }) => {
+    const calls = [];
+    let deletedTextures = 0;
+    let deletedFramebuffers = 0;
+    const gl = {
+      TEXTURE_2D: 3553, FRAMEBUFFER: 36160, COLOR_ATTACHMENT0: 36064,
+      RGBA: 6408, UNSIGNED_BYTE: 5121, CLAMP_TO_EDGE: 33071, LINEAR: 9729,
+      FRAMEBUFFER_COMPLETE: 36053,
+      createTexture: () => ({}),
+      bindTexture: (...args) => calls.push(['bindTexture', ...args]),
+      texImage2D() {}, texParameteri() {},
+      createFramebuffer: () => framebuffer,
+      bindFramebuffer: (...args) => calls.push(['bindFramebuffer', ...args]),
+      framebufferTexture2D() {}, checkFramebufferStatus: () => status,
+      deleteTexture: () => { deletedTextures++; },
+      deleteFramebuffer: () => { deletedFramebuffers++; },
+    };
+    return { gl, calls, get deletedTextures() { return deletedTextures; }, get deletedFramebuffers() { return deletedFramebuffers; } };
+  };
+
+  for (const failure of [
+    { name: 'createFramebuffer 返回 null', framebuffer: null, status: 0, expectedFramebuffers: 0 },
+    { name: 'Framebuffer 完整性检查失败', framebuffer: { id: 'failed' }, status: 0, expectedFramebuffers: 1 },
+  ]) {
+    const harness = createHarness(failure);
+    const target = new CubismRenderTarget_WebGL();
+    assert.equal(target.createRenderTarget(harness.gl, 4, 4, previousFramebuffer), false, failure.name);
+    assert.equal(harness.deletedTextures, 1, `${failure.name}：释放 color texture`);
+    assert.equal(harness.deletedFramebuffers, failure.expectedFramebuffers, `${failure.name}：释放临时 FBO`);
+    assert.equal(target.isValid(), false, `${failure.name}：target 保持无效`);
+    assert.ok(
+      harness.calls.some(call => call[0] === 'bindFramebuffer' && call[1] === harness.gl.FRAMEBUFFER && call[2] === previousFramebuffer),
+      `${failure.name}：恢复之前的 FBO`
+    );
+  }
+
+  assert.doesNotThrow(() => new CubismRenderTarget_WebGL().destroyRenderTarget());
+});
+
 test('真实纹理上传与渲染器预乘模式一致，图层透明度同时衰减 RGB', async () => {
   const { CubismRenderer } = loadFile(new URL('../../../third_party/cubism-web-sdk/Framework/src/rendering/cubismrenderer.ts', import.meta.url));
   const renderer = Object.create(CubismRenderer.prototype);
@@ -99,6 +144,7 @@ async function maskHarness({ platform: kind = 'tauri', width = 1200, height = 90
     destroyRenderTarget() {},
   });
   renderer.startUp = () => { events.push(`startUp:${maskSize}`); };
+  renderer.rebuildClippingMaskBuffers = () => { events.push(`rebuildMasks:${maskSize}`); };
   const stop = new Error('texture binding reached');
   renderer.bindTexture = () => { throw stop; };
   const setting = { getModelFileName: () => 'model.moc3', getPhysicsFileName: () => '',
@@ -144,11 +190,13 @@ test('裁剪蒙版按平台与实际绘制尺寸选档，并在 startUp 前写�
 test('蒙版 FBO 分配失败时逐档降级，最低回到 SDK 默认 256', async () => {
   const partial = await maskHarness({ platform: 'tauri', width: 1200, height: 900, validSizes: [512] });
   assert.equal(partial.maskSize, 512, '大档位分配失败后应落到可用档位');
-  assert.deepEqual(partial.events, ['mask:2048', 'startUp:2048', 'mask:1024', 'startUp:1024', 'mask:512', 'startUp:512']);
+  assert.deepEqual(partial.events, ['mask:2048', 'startUp:2048', 'mask:1024', 'rebuildMasks:1024', 'mask:512', 'rebuildMasks:512']);
+  assert.equal(partial.events.filter(event => event.startsWith('startUp')).length, 1, '降级不得重复初始化 Renderer');
 
   const none = await maskHarness({ platform: 'tauri', width: 1200, height: 900, validSizes: [] });
   assert.equal(none.maskSize, 256, '全部失败时退回 SDK 默认 256，而不是 0 或 undefined');
-  assert.equal(none.events.filter(event => event.startsWith('startUp')).length, 4);
+  assert.equal(none.events.filter(event => event.startsWith('startUp')).length, 1);
+  assert.equal(none.events.filter(event => event.startsWith('rebuildMasks')).length, 3);
   assert.match(String(none.warnings[0]?.[0]), /仍不可用/);
 });
 
