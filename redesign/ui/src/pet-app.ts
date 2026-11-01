@@ -7,7 +7,7 @@ import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
-import { DialogueStore, type ResolvedDialogue } from './dialogue/dialogue';
+import { DialogueStore, timeScene, type ResolvedDialogue } from './dialogue/dialogue';
 import { DialogueBubble } from './dialogue/bubble';
 import { bubbleFontFor, fitBubble } from './dialogue/bubble-fit';
 import { AndroidDialogueBubble } from './dialogue/android-bubble';
@@ -21,6 +21,7 @@ import { PetAI } from './pet-ai';
 import {
   PetSettings,
   DEFAULT_SCALE_PERCENT,
+  DEFAULT_SETTINGS,
   clampScale,
   hasSavedSettings,
   loadSettings,
@@ -34,6 +35,7 @@ import {
   androidShell,
   isAndroidOverlay,
 } from './platform';
+import { assetUrl, isEmbed, postToHost } from './embed';
 
 /** Tauri 窗口句柄（浏览器环境为 null，拖动退化为不可用）。 */
 type TauriWindow = import('@tauri-apps/api/window').Window;
@@ -191,7 +193,11 @@ export class PetApp {
   private _hitMaskInteracting = false;
 
   // 设置
-  private _settings: PetSettings = loadSettings();
+  // 嵌入网页固定用默认设置，不读写本机存档。
+  private _settings: PetSettings = isEmbed
+    ? { ...DEFAULT_SETTINGS, randomSpeech: true, randomSpeechMinutes: 1 } : loadSettings();
+  /** 嵌入网页：舞台滚出视口时暂停渲染（IntersectionObserver 以顶层视口为准）。 */
+  private _embedOffscreen = false;
 
   // 指针状态
   private _activePointerId: number | null = null;
@@ -294,7 +300,8 @@ export class PetApp {
     );
 
     // 触摸端：禁止浏览器把拖动识别为滚动手势（会 pointercancel 掉拖动/抚摸的事件流）
-    this._canvas.style.touchAction = 'none';
+    // 嵌入网页保留竖向滑动给页面滚动；横向往返抚摸照常识别。
+    this._canvas.style.touchAction = isEmbed ? 'pan-y' : 'none';
     this._canvas.style.userSelect = 'none';
     this._canvas.style.webkitUserSelect = 'none';
 
@@ -386,7 +393,7 @@ export class PetApp {
     await this._model.loadFromSetting(buffer, buffer.byteLength, homeDir, {
       gl: this._gl,
       frameBuffer: this._frameBuffer,
-      shaderPath: '/shaders/',
+      shaderPath: assetUrl('/shaders/'),
     });
 
     // 逻辑层装配
@@ -497,7 +504,8 @@ export class PetApp {
 
   /** The overlay only runs local interactions; all network conversation lives in the main page. */
   private _initializeChat(): void {
-    if (this._wrapWindow) return;
+    // 嵌入网页只展示本地互动；聊天需要登录，留在应用里。
+    if (this._wrapWindow || isEmbed) return;
     let storage: ChatStorage | undefined;
     try { storage = window.localStorage; } catch { /* 存储被禁用时使用内存。 */ }
     this._chat = new ChatController({ label: '未连接', async *reply(): AsyncGenerator<never> { throw new Error('请先连接 Misskey。'); } });
@@ -670,7 +678,7 @@ export class PetApp {
     const revision = ++this._windowSettingsRevision;
     const restoredPosition = restoreWindow && s.posX != null && s.posY != null
       ? { x: s.posX, y: s.posY } : null;
-    saveSettings(s);
+    if (!isEmbed) saveSettings(s);
 
     // 行为层
     if (this._behavior) {
@@ -1631,6 +1639,21 @@ export class PetApp {
   }
 
   private _wirePointerEvents(): void {
+    if (isEmbed) {
+      // 嵌入网页：鼠标在舞台内（含人物外的空白）移动时看过去；舞台外的位置由父页面转发
+      // （坐标已换算到本页 client 坐标），鼠标离开整个页面时回正。
+      document.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'mouse' && this._activePointerId == null) this._updatePointerLook(e);
+      });
+      window.addEventListener('message', (e) => {
+        if (e.source !== window.parent || e.data?.source !== 'aliya-pet-host' || this._activePointerId != null) return;
+        if (e.data.type === 'look' && Number.isFinite(e.data.x) && Number.isFinite(e.data.y)) {
+          this._updatePointerLook({ clientX: e.data.x, clientY: e.data.y, pointerType: 'mouse' } as PointerEvent);
+        } else if (e.data.type === 'leave') {
+          this._behavior?.clearLookTarget();
+        }
+      });
+    }
     const canvas = this._canvas;
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1657,13 +1680,15 @@ export class PetApp {
       const n0 = this._hitEventNorm(e);
       const isSecondary =
         e.button === 2 ||
+        // 嵌入网页：左键按住头部也是抚摸（网页上右键不直观，且整页没有窗口可拖）
+        (isEmbed && e.button === 0 && this._hitAreas.isInHeadPetZone(n0.nx, n0.ny)) ||
         // 触摸端没有右键：按下头部抚摸区视为抚摸手势起点，
         // 其余区域的单指按住保留给拖动窗口
         (e.pointerType === 'touch' &&
           e.button === 0 &&
           this._hitAreas.isInHeadPetZone(n0.nx, n0.ny));
       const ctx = this._ctx(e, isSecondary);
-      this._touchPetting = e.pointerType === 'touch' && isSecondary && e.button === 0;
+      this._touchPetting = (e.pointerType === 'touch' || isEmbed) && isSecondary && e.button === 0;
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
@@ -1684,8 +1709,9 @@ export class PetApp {
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
-        // 左键未被互动接管：进入拖动候选
+        // 左键未被互动接管：进入拖动候选（嵌入网页没有窗口可拖，按普通点击处理）
         this._dragCandidate = true;
+        if (isEmbed) return;
         this._dragging = false;
         this._downScreenX = this._lastScreenX = e.screenX;
         this._downScreenY = this._lastScreenY = e.screenY;
@@ -1702,7 +1728,7 @@ export class PetApp {
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
 
-      if (this._dragCandidate && this._leftDown && !handled) {
+      if (this._dragCandidate && this._leftDown && !handled && !isEmbed) {
         if (!this._dragging) {
           const dx = e.screenX - this._downScreenX;
           const dy = e.screenY - this._downScreenY;
@@ -1942,8 +1968,14 @@ export class PetApp {
     this._lastFrameTime = performance.now();
     this._scheduleFrame();
     // 后台/熄屏时停止渲染循环（Android 壳与浏览器通用）
+    if (isEmbed && typeof IntersectionObserver !== 'undefined') {
+      new IntersectionObserver((entries) => {
+        this._embedOffscreen = !entries.some(e => e.isIntersecting);
+        this.setPaused(document.hidden || this._embedOffscreen);
+      }).observe(this._canvas);
+    }
     document.addEventListener('visibilitychange', () => {
-      this.setPaused(document.hidden);
+      this.setPaused(document.hidden || this._embedOffscreen);
       // 后台期间 GL 上下文被回收过 → 回前台整页重建（否则画面永久冻结）
       if (!document.hidden) this._reloadAfterContextLoss();
     });
@@ -2118,6 +2150,15 @@ export class PetApp {
       // 角色已上屏：聊天 UI 与角色一起淡入，再开始恢复连接（桌宠显示不依赖会话数据）。
       document.body.classList.add('pet-ready');
       this._chatView?.start();
+      if (isEmbed) {
+        postToHost('ready');
+        // 网页访客看到的第一句：按当前时段问候并挥手，与应用启动时的问候同源。
+        setTimeout(() => {
+          this._model?.playAction('wave');
+          const greet = this._dialogue.resolveScene(timeScene(new Date()));
+          if (greet) this._speak(greet, 'manual');
+        }, 600);
+      }
       if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
     });
   }

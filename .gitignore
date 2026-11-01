@@ -58,6 +58,7 @@ third_party/*
 redesign/node_modules/
 redesign/ui/node_modules/
 redesign/ui/dist/
+redesign/ui/dist-embed/
 redesign/src-tauri/target/
 # Cargo 缓存备份及一次性构建目录
 redesign/src-tauri/target-*/
