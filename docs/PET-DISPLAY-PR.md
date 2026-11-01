@@ -10,7 +10,7 @@ Add pet opacity and native full click-through while preserving alpha hit testing
 
 ### 变更摘要
 
-- 设置页新增“显示与穿透”：人物透明度滑块 0–100%、5% 步进、实时预览、百分比、恢复 100%，以及默认关闭的“人物完全穿透”开关。
+- 设置页新增“显示与穿透”：人物透明度滑块 0–100%、5% 步进、实时预览、百分比，以及默认关闭的“人物完全穿透”开关。按最新要求移除设置页单独的“恢复默认 100%”按钮，保留托盘恢复入口。
 - 透明度仅在人物 Canvas 合成阶段应用，不修改模型、纹理或 WebGL 帧缓冲中的 Alpha，不影响聊天、设置及独立台词气泡。
 - Windows 使用现有 Rust/Tauri 命中线程的 pet 专属持久覆盖；关闭后回到原 Alpha Hit Mask，不发送整窗可交互命令。
 - Android 复用原 WindowManager/WebView 桥接，完全穿透和 0% 时仅人物悬浮窗添加 `FLAG_NOT_TOUCHABLE`，主 Activity 保持可触摸。
@@ -67,7 +67,7 @@ Add pet opacity and native full click-through while preserving alpha hit testing
 | 前端回归 | `cd redesign/ui && npm test` | 193/193 通过；含新增 6 项行为测试 |
 | TypeScript/Vite | `cd redesign/ui && npm run build` | 类型检查及生产构建通过 |
 | Rust | `cargo test --manifest-path redesign/src-tauri/Cargo.toml` | 29/29 通过；含聊天按钮胶囊命中、隐藏、DPI/负坐标、TTL/切换与隔离测试 |
-| 设置布局 | 使用现有 Edge 无头浏览器加载生产构建 | 桌面/Android 样式在 320/360/526/640 CSS px 均无该行溢出，滑块宽 112–452 px；50% 实时更新及恢复 100% 通过。这是网页布局检查，不是设备输入测试 |
+| 设置布局 | 使用现有 Edge 无头浏览器加载生产构建 | 桌面/Android 样式在 320/360/526/640 CSS px 均无该行溢出，滑块宽 112–452 px；50% 实时更新通过。该次检查后按要求移除设置页恢复默认按钮，保留托盘恢复。这是网页布局检查，不是设备输入测试 |
 | Android | `cd redesign/android && ./gradlew :app:compileDebugKotlin :app:testPetDisplayPolicy :app:lintDebug -x copyWebAssets --offline --console=plain` | Kotlin、独立 JVM 策略回归、lint 均通过；未打包 APK、未执行设备测试 |
 | 边界补充测试 | `cd redesign/ui && npm run test:bounds` | 失败：既有 VM 测试加载 `embed.ts` 时出现 `SyntaxError: Cannot use 'import.meta' outside a module` |
 | 差异检查 | `git diff --check` | 通过 |

@@ -596,20 +596,6 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   opRow.appendChild(opWrap);
   box.appendChild(opRow);
 
-  // 恢复默认行：与缩放/台词区同风格的小按钮，归位到 100% 且不碰完全穿透开关。
-  const opResetRow = document.createElement('div');
-  opResetRow.className = 'row';
-  const opResetLab = document.createElement('div');
-  opResetLab.className = 'label';
-  opResetLab.textContent = '';
-  const opReset = document.createElement('button');
-  opReset.className = 'act';
-  opReset.textContent = '恢复默认 100%';
-  opReset.addEventListener('click', () => commitOpacity(100));
-  opResetRow.appendChild(opResetLab);
-  opResetRow.appendChild(opReset);
-  box.appendChild(opResetRow);
-
   refs.fullClickThrough = switchRow(
     box,
     '人物完全穿透',
