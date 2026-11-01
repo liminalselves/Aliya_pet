@@ -4,7 +4,7 @@
 
 <!-- Badge Row 1: Core Info -->
 [![GitHub](https://img.shields.io/badge/GitHub-liminalselves%2FAliya__pet-181717?logo=github&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
-[![Version](https://img.shields.io/badge/version-0.1.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
 
 <!-- Badge Row 2: Platform -->
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
