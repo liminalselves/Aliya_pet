@@ -20,6 +20,7 @@ import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
 import { GazeController } from './gaze';
+import { platform } from './platform';
 import {
   OverlayLayer,
   InteractionOffsetChannel,
@@ -192,6 +193,10 @@ export class PetModel
     );
     // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
     this.getRenderer().setIsPremultipliedAlpha(true);
+    // SDK 默认裁剪蒙版 256×256，被遮挡部件（尾巴等）边缘会出现台阶状锯齿。
+    // 必须在 startUp 之前设置：它会重建裁剪管理器，startUp 才给新管理器注入 gl。
+    // Android 人物显示更小且分块 GPU 带宽紧，1024 足够；桌面用 2048。
+    this.getRenderer().setClippingMaskBufferSize(platform === 'android' ? 1024 : 2048);
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
     for (let i = 0; i < textureCount; i++) {
@@ -764,6 +769,10 @@ export class PetModel
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
       gl.generateMipmap(gl.TEXTURE_2D);
+      // WebGL 默认 MIN_FILTER 是 NEAREST_MIPMAP_LINEAR：层内取最近纹素，2048 贴图缩小显示时
+      // 线稿边缘呈锯齿。改为三线性过滤（与官方示例一致）。
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.bindTexture(gl.TEXTURE_2D, null);
       return texture;
     } finally {
