@@ -17,7 +17,7 @@ NSIS passive 模式安装。密钥与配置位置：
 | 内容 | 位置 |
 | --- | --- |
 | 公钥 | `redesign/src-tauri/tauri.conf.json` → `plugins.updater.pubkey` |
-| 更新器端点 | 同文件 `plugins.updater.endpoints`（`…/api/tauri/{{target}}/{{arch}}/{{current_version}}`） |
+| 更新器端点 | 同文件 `plugins.updater.endpoints`（`…/api/tauri/{{target}}/{{arch}}/{{current_version}}/{{bundle_type}}`） |
 | 私钥 | 仓库 Settings → Secrets → Actions：`TAURI_SIGNING_PRIVATE_KEY` |
 | 私钥密码 | 同上：`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（密钥未设密码时留空，CI 只强校验私钥本身） |
 
@@ -54,9 +54,11 @@ npm run build
   - 有更新：`{ updateAvailable: true, mandatory, current, latest, publishedAt, notes(markdown), downloadUrl(apk/页面), size, releasePage }`
   - 无更新：`{ updateAvailable: false, mandatory: false, current, latest }`
   - `mandatory` 由服务端按 CHANGELOG 的 `min-version` 标记推导。
-- `GET {base}/api/tauri/{{target}}/{{arch}}/{{current_version}}`
-  - 204（无更新）或 Tauri updater 动态 JSON：`{ version, pub_date, url, signature, notes }`，
-    `url` 指向带 `.sig` 的 NSIS/MSI 产物。
+- `GET {base}/api/tauri/{{target}}/{{arch}}/{{current_version}}/{{bundle_type}}`
+  - 204（无更新）或 Tauri updater 动态 JSON：`{ version, pub_date, url, signature, notes }`。
+  - `{{bundle_type}}` 是当前安装用的安装包类型（`nsis` / `msi`），服务端据此返回同类安装包；
+    用 MSI 装的会继续用 MSI 更新，不会被 NSIS 安装程序再装一份。
+  - 不带 `{{bundle_type}}` 的旧路径按 NSIS 处理。
 
 ## 客户端行为
 
