@@ -8,9 +8,9 @@ export type ControlPanel = keyof typeof CONTROL_PANELS;
 export interface ControlEvent { type: string; messageId?: string; url?: string; endpoint?: string; reason?: string; code?: string }
 
 export const CONTROL_APPEARANCE = {
-  colorScheme: 'dark', accent: '#e29ba3', background: '#1b1412', panel: '#2a201b',
-  foreground: '#f1e7db', muted: '#c6b5a5', divider: 'rgba(241,231,219,0.10)', radius: '10px',
-  fontFamily: '"Microsoft YaHei", system-ui, sans-serif', fontSize: '13px',
+  colorScheme: 'dark', accent: '#e29ba3', background: '#141312', panel: '#211f1e',
+  foreground: '#f2eeea', muted: '#bab3ac', divider: 'rgba(255,246,236,0.07)', radius: '12px',
+  fontFamily: '"Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif', fontSize: '13px',
   contentMaxWidth: '860px', spacing: '12px',
 };
 

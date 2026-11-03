@@ -8,11 +8,10 @@
 
 import {
   PetSettings,
-  BASE_WINDOW_W,
-  BASE_WINDOW_H,
   clampScale,
   scaleToPercent,
   percentToScale,
+  scaleRangeFor,
   loadSettings,
   saveSettings,
 } from './settings';
@@ -30,6 +29,7 @@ import { ACTION_LIBRARY } from './behavior';
 import { MOODS } from './emotion';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
+import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
 import './settings.css';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
@@ -137,6 +137,27 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
   notifyPetAction({ action, ...extra });
 }
 
+/**
+ * 表演类操作（动作/台词/表情/情绪）。桌面设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
+ * Android 设置页整屏盖住桌宠，发出后先让按钮确认一拍，再滑回主界面让用户看到表演。
+ * 桌宠页在设置页下面持续运行，动作在滑出过程中已开始播放。
+ */
+let returning = 0;
+function perform(button: HTMLElement, action: string, extra?: Record<string, unknown>): void {
+  trayAction(action, extra);
+  pulse(button);
+  if (platform !== 'android' || returning) return;
+  returning = window.setTimeout(() => { returning = 0; shellAction('open-main'); }, 160);
+}
+
+/** 触发类按钮的即时反馈：桌宠在另一个窗口执行，按钮本身短暂确认「已发出」。 */
+function pulse(button: HTMLElement): void {
+  button.classList.remove('sent');
+  void button.offsetWidth;
+  button.classList.add('sent');
+  window.setTimeout(() => button.classList.remove('sent'), 700);
+}
+
 // ---------- UI 构建 ----------
 
 const app = document.getElementById('app')!;
@@ -147,7 +168,6 @@ if (platform === 'android') {
   bar.className = 'mobile-topbar';
   const back = document.createElement('button');
   back.className = 'back';
-  back.textContent = '‹';
   back.setAttribute('aria-label', '返回');
   back.addEventListener('click', () => shellAction('back'));
   const title = document.createElement('span');
@@ -234,12 +254,20 @@ function paintSliderFill(slider: HTMLInputElement): void {
   slider.style.setProperty('--fill', `${pct}%`);
 }
 
+/** 台词间隔只在随机台词开启时有意义：关闭时整行降透明并禁止交互。 */
+let speechRow: HTMLElement | null = null;
+function syncSpeechRow(): void {
+  speechRow?.classList.toggle('inactive', !settings.randomSpeech);
+  speechRow?.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button').forEach(el => { el.tabIndex = settings.randomSpeech ? 0 : -1; });
+}
+
 function refreshControls(): void {
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
   if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
   if (refs.speechMinutes)
     refs.speechMinutes.value = String(settings.randomSpeechMinutes);
+  syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
@@ -262,14 +290,14 @@ function refreshControls(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = ACTION_LABELS[name] ?? name;
-    b.addEventListener('click', () => trayAction('play-action', { name }));
+    b.addEventListener('click', () => perform(b, 'play-action', { name }));
     grid.appendChild(b);
   }
   box.appendChild(grid);
   const speech = document.createElement('button');
   speech.className = 'act wide';
   speech.textContent = '随机说一句';
-  speech.addEventListener('click', () => trayAction('random-speech'));
+  speech.addEventListener('click', () => perform(speech, 'random-speech'));
   box.appendChild(speech);
 }
 
@@ -299,16 +327,14 @@ function refreshMoodHighlight(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = label;
-    b.addEventListener('click', () =>
-      trayAction('express', { name, duration: 8 })
-    );
+    b.addEventListener('click', () => perform(b, 'express', { name, duration: 8 }));
     exprGrid.appendChild(b);
   }
   box.appendChild(exprGrid);
   const clearExpr = document.createElement('button');
   clearExpr.className = 'act wide';
   clearExpr.textContent = '恢复默认表情';
-  clearExpr.addEventListener('click', () => trayAction('clear-expression'));
+  clearExpr.addEventListener('click', () => perform(clearExpr, 'clear-expression'));
   box.appendChild(clearExpr);
 
   // 情绪（持续心境）
@@ -323,7 +349,11 @@ function refreshMoodHighlight(): void {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = MOOD_LABELS[name] ?? name;
-    b.addEventListener('click', () => trayAction('set-mood', { name }));
+    b.addEventListener('click', () => {
+      currentMood = name;
+      refreshMoodHighlight();
+      perform(b, 'set-mood', { name });
+    });
     moodButtons.set(name, b);
     moodGrid.appendChild(b);
   }
@@ -357,27 +387,51 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '随机台词',
     '每隔一段时间主动说一句话',
     () => settings.randomSpeech,
-    (v) => update({ randomSpeech: v })
+    (v) => { update({ randomSpeech: v }); syncSpeechRow(); }
   );
   const row = document.createElement('div');
   row.className = 'row';
+  speechRow = row;
   const lab = document.createElement('div');
   lab.className = 'label';
-  lab.textContent = '台词间隔（分钟）';
+  lab.textContent = '台词间隔';
+  const labSub = document.createElement('span');
+  labSub.className = 'sub';
+  labSub.textContent = '单位：分钟，1–120';
+  lab.appendChild(labSub);
+  // 步进器：− 数值 +，避免裸数字框里输错被静默改回
+  const stepper = document.createElement('div');
+  stepper.className = 'stepper';
+  const dec = document.createElement('button');
+  dec.type = 'button'; dec.textContent = '−'; dec.setAttribute('aria-label', '减少间隔');
+  const inc = document.createElement('button');
+  inc.type = 'button'; inc.textContent = '+'; inc.setAttribute('aria-label', '增加间隔');
   const num = document.createElement('input');
   num.className = 'num';
   num.type = 'number';
+  num.inputMode = 'numeric';
   num.min = '1';
   num.max = '120';
   num.value = String(settings.randomSpeechMinutes);
-  num.addEventListener('change', () => {
-    const v = Math.min(Math.max(Number(num.value) || 5, 1), 120);
-    num.value = String(v);
-    update({ randomSpeechMinutes: v });
-  });
+  num.setAttribute('aria-label', '台词间隔（分钟）');
+  const commitMinutes = (v: number) => {
+    const clamped = Math.min(Math.max(Math.round(v) || settings.randomSpeechMinutes, 1), 120);
+    num.value = String(clamped);
+    dec.disabled = clamped <= 1;
+    inc.disabled = clamped >= 120;
+    if (clamped !== settings.randomSpeechMinutes) update({ randomSpeechMinutes: clamped });
+  };
+  num.addEventListener('change', () => commitMinutes(Number(num.value)));
+  num.addEventListener('keydown', (e) => { if (e.key === 'Enter') num.blur(); });
+  dec.addEventListener('click', () => commitMinutes(settings.randomSpeechMinutes - 1));
+  inc.addEventListener('click', () => commitMinutes(settings.randomSpeechMinutes + 1));
+  dec.disabled = settings.randomSpeechMinutes <= 1;
+  inc.disabled = settings.randomSpeechMinutes >= 120;
+  stepper.append(dec, num, inc);
   refs.speechMinutes = num;
   row.appendChild(lab);
-  row.appendChild(num);
+  row.appendChild(stepper);
+  syncSpeechRow();
   box.appendChild(row);
 }
 
@@ -392,7 +446,6 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   const wrap = document.createElement('div');
   wrap.className = 'slider-row';
   wrap.style.flex = '1';
-  wrap.style.marginLeft = '12px';
   const minus = document.createElement('button');
   minus.textContent = '−';
   const plus = document.createElement('button');
@@ -417,11 +470,10 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
         screenH: number;
       };
       if (m.screenW > 0 && m.screenH > 0) {
-        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
-        scaleRangeMax = Math.max(
-          scaleRangeMin,
-          Math.min(m.screenW / BASE_WINDOW_W, (m.screenH - 88) / BASE_WINDOW_H)
-        );
+        // 安卓底部系统栏占 88 逻辑像素，从可用高度里扣掉
+        const range = scaleRangeFor(m.screenW, m.screenH - 88);
+        scaleRangeMin = range.minS;
+        scaleRangeMax = range.maxS;
         refreshControls();
       }
     } catch {
@@ -439,8 +491,9 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
         if (!mon) return;
         const logW = mon.workArea.size.width / mon.scaleFactor;
         const logH = mon.workArea.size.height / mon.scaleFactor;
-        scaleRangeMin = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
-        scaleRangeMax = Math.min(logW / BASE_WINDOW_W, logH / BASE_WINDOW_H);
+        const range = scaleRangeFor(logW, logH);
+        scaleRangeMin = range.minS;
+        scaleRangeMax = range.maxS;
         refreshControls();
       })
       .catch(() => {});
@@ -480,9 +533,10 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   refs.batterySaver = addBatterySaverSwitch(box);
 }
 
-// ---- 聊天 ----
+// ---- 聊天 ----（偏好开关与下方 Misskey 连接状态共用一张卡片）
+const chatBox = section('聊天');
 {
-  const box = section('聊天');
+  const box = chatBox;
   refs.showGeneratedImages = switchRow(
     box,
     '显示生成配图',
@@ -491,6 +545,145 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     (v) => update({ showGeneratedImages: v })
   );
   refs.showGeneratedImages.setAttribute('aria-label', '显示生成配图');
+}
+
+// ---- 聊天背景（仅 Android 主界面）----
+if (platform === 'android') {
+  const box = section('聊天背景');
+  const grid = document.createElement('div');
+  grid.className = 'bg-grid';
+  grid.setAttribute('role', 'radiogroup');
+  grid.setAttribute('aria-label', '聊天背景');
+  box.appendChild(grid);
+  const status = document.createElement('p');
+  status.className = 'hint bg-status';
+  status.setAttribute('role', 'status');
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*';
+  picker.hidden = true;
+  box.appendChild(picker);
+  let customUrl: string | null = null;
+  let hasCustom = false;
+  const tiles = new Map<string, HTMLButtonElement>();
+  const tile = (id: string, name: string, preview: HTMLElement | null, extraClass = '') => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `bg-tile ${extraClass}`.trim();
+    b.setAttribute('role', 'radio');
+    const thumb = document.createElement('span');
+    thumb.className = 'bg-thumb';
+    // 缩略图就是缩小的真实场景（容器查询单位随缩略图尺寸排布），只在选中时播放动画。
+    if (preview) thumb.append(preview);
+    const label = document.createElement('span');
+    label.className = 'bg-name';
+    label.textContent = name;
+    b.append(thumb, label);
+    grid.appendChild(b);
+    tiles.set(id, b);
+    return b;
+  };
+  const sync = () => {
+    for (const [id, b] of tiles) {
+      const on = settings.chatBackground === id;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+      b.querySelector('.bg-scene')?.classList.toggle('still', !on);
+    }
+    const custom = tiles.get(CUSTOM_BACKGROUND)!;
+    const thumb = custom.querySelector<HTMLElement>('.bg-thumb')!;
+    thumb.style.backgroundImage = customUrl ? `url("${customUrl}")` : '';
+    custom.classList.toggle('empty', !hasCustom);
+    custom.querySelector('.bg-name')!.textContent = hasCustom ? '自定义' : '上传图片';
+    actions.hidden = !hasCustom;
+    dimRow.classList.toggle('inactive', settings.chatBackground === NO_BACKGROUND);
+  };
+  tile(NO_BACKGROUND, '无背景', null, 'plain').addEventListener('click', () => { update({ chatBackground: NO_BACKGROUND }); sync(); });
+  for (const p of CHAT_SCENES) {
+    tile(p.id, p.name, p.build()).addEventListener('click', () => { update({ chatBackground: p.id }); sync(); });
+  }
+  tile(CUSTOM_BACKGROUND, '上传图片', null, 'custom').addEventListener('click', () => {
+    if (hasCustom) { update({ chatBackground: CUSTOM_BACKGROUND }); sync(); }
+    else picker.click();
+  });
+  const actions = document.createElement('div');
+  actions.className = 'bg-actions';
+  const replace = document.createElement('button');
+  replace.type = 'button';
+  replace.className = 'act';
+  replace.textContent = '更换自定义图';
+  replace.addEventListener('click', () => picker.click());
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'act';
+  remove.textContent = '删除自定义图';
+  remove.addEventListener('click', async () => {
+    try { await deleteCustomBackground(); } catch { /* 已不存在 */ }
+    hasCustom = false;
+    if (customUrl) URL.revokeObjectURL(customUrl);
+    customUrl = null;
+    update({ chatBackground: settings.chatBackground === CUSTOM_BACKGROUND ? NO_BACKGROUND : settings.chatBackground,
+      chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1 });
+    status.textContent = '';
+    sync();
+  });
+  actions.append(replace, remove);
+  box.appendChild(actions);
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    picker.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { status.textContent = '请选择图片文件。'; box.appendChild(status); return; }
+    status.textContent = '正在处理图片…';
+    box.appendChild(status);
+    try {
+      const saved = await saveCustomBackground(file);
+      if (customUrl) URL.revokeObjectURL(customUrl);
+      customUrl = URL.createObjectURL(saved);
+      hasCustom = true;
+      update({ chatBackground: CUSTOM_BACKGROUND, chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1 });
+      status.textContent = '';
+      status.remove();
+    } catch (e) {
+      status.textContent = e instanceof Error && e.message ? e.message : '图片保存失败，请重试。';
+    }
+    sync();
+  });
+  // 遮罩：数值越大背景越暗，角色与对话框越清楚。
+  const dimRow = document.createElement('div');
+  dimRow.className = 'row';
+  const dimLabel = document.createElement('div');
+  dimLabel.className = 'label';
+  dimLabel.textContent = '背景暗化';
+  const dimWrap = document.createElement('div');
+  dimWrap.className = 'slider-row';
+  dimWrap.style.flex = '1';
+  const dim = document.createElement('input');
+  dim.type = 'range';
+  dim.min = '0';
+  dim.max = '80';
+  dim.step = '5';
+  dim.value = String(Math.round(settings.chatBackgroundDim * 100));
+  dim.setAttribute('aria-label', '背景暗化');
+  const dimVal = document.createElement('span');
+  dimVal.className = 'val';
+  dimVal.textContent = `${dim.value}%`;
+  dim.addEventListener('input', () => {
+    dimVal.textContent = `${dim.value}%`;
+    paintSliderFill(dim);
+    update({ chatBackgroundDim: Number(dim.value) / 100 });
+  });
+  paintSliderFill(dim);
+  dimWrap.append(dim, dimVal);
+  dimRow.append(dimLabel, dimWrap);
+  box.appendChild(dimRow);
+  sync();
+  void loadCustomBackground().then(blob => {
+    if (!blob) return;
+    hasCustom = true;
+    customUrl = URL.createObjectURL(blob);
+    sync();
+  });
 }
 
 // ---- 窗口 ----
@@ -546,7 +739,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '开机自启',
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
-       : desktopOS === 'macos' ? 'macOS 登录后自动启动' : 'Windows 登录后自动启动',
+      : desktopOS === 'macos' ? 'macOS 登录后自动启动' : 'Windows 登录后自动启动',
     () => settings.autoActions, // 占位，立即被真实值覆盖
     (v) => {
       setAutoStart(v);
@@ -601,7 +794,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
 
 // ---- 聊天（Misskey 连接状态；鉴权与会话选择仍在聊天窗口内完成）----
 {
-  const box = section('聊天');
+  const box = chatBox;
   const statusRow = document.createElement('div');
   statusRow.className = 'row';
   const statusLab = document.createElement('div');
@@ -708,6 +901,7 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
+
   const repo = document.createElement('button');
   repo.className = 'act wide';
   repo.textContent = '打开项目仓库';

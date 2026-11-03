@@ -25,6 +25,12 @@ export interface PetSettings {
   showGeneratedImages: boolean;
   /** 省电模式：帧率上限降为 15fps（移动端主要收益）。 */
   batterySaver?: boolean;
+  /** Android 主界面聊天背景：'none' / 预设 id / 'custom'（见 chat-background.ts）。 */
+  chatBackground: string;
+  /** 背景暗化遮罩 0–0.8：保证角色与文字可读。 */
+  chatBackgroundDim: number;
+  /** 自定义背景更新标记（换图时递增，主界面据此重新读取 IndexedDB）。 */
+  chatBackgroundRev?: number;
 }
 
 const STORAGE_KEY = 'aliya_pet_settings_v1';
@@ -49,6 +55,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   randomSpeechMinutes: 5,
   showGeneratedImages: true,
   batterySaver: false,
+  chatBackground: 'none',
+  chatBackgroundDim: 0.35,
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -63,6 +71,9 @@ export function clampScale(v: number): number {
  */
 export const SCALE_PERCENT_MIN = 10;
 export const SCALE_PERCENT_MAX = 100;
+
+/** 首次启动的默认缩放档（百分比域）：滑杆显示 40%。 */
+export const DEFAULT_SCALE_PERCENT = 40;
 
 /** 实际缩放 → 显示百分比（结果钳制在 [10, 100]）。 */
 export function scaleToPercent(
@@ -110,6 +121,22 @@ export function nextSizePreset(
   return percentToScale(next, minS, maxS);
 }
 
+/**
+ * 屏幕工作区（逻辑像素）→ 实际缩放范围：最小 56×72，最大不超出工作区。
+ * 设置页滑杆与首次启动的默认值共用，避免两处换算公式漂移。
+ */
+export function scaleRangeFor(
+  screenW: number,
+  screenH: number
+): { minS: number; maxS: number } {
+  const minS = Math.max(56 / BASE_WINDOW_W, 72 / BASE_WINDOW_H);
+  const maxS = Math.max(
+    minS,
+    Math.min(screenW / BASE_WINDOW_W, screenH / BASE_WINDOW_H)
+  );
+  return { minS, maxS };
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -119,6 +146,9 @@ export function loadSettings(): PetSettings {
       ...DEFAULT_SETTINGS,
       ...parsed,
       scale: clampScale(Number(parsed.scale ?? 1.0)),
+      chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
+      chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
+        ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,
       randomSpeechMinutes: Math.min(
         Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
         120
@@ -134,5 +164,14 @@ export function saveSettings(s: PetSettings): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   } catch {
     // 存储不可用时设置仅本次会话有效
+  }
+}
+
+/** 本地是否已有存档（首次启动为 false，据此换算默认缩放）。 */
+export function hasSavedSettings(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
   }
 }

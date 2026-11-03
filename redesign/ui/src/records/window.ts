@@ -205,6 +205,11 @@ class RecordsView {
         this.showEmpty('还没有聊天记录', '在聊天窗口和 Aliya 说点什么吧。');
         return;
       }
+      if (mode === 'manual' && signature === this.signature && this.hasContent) {
+        this.setStatus('已是最新', 'info', true);
+        if (stickToBottom) this.pinBottom();
+        return;
+      }
       if (mode !== 'manual' && signature === this.signature && this.hasContent) {
         // 数据未变：不重渲染，已有 DOM（含事件绑定）原样保留，只按触发原因归位滚动。
         if (stickToBottom) this.pinBottom();
@@ -230,12 +235,17 @@ class RecordsView {
     }
   }
 
-  /** 拉取角色渲染配置并重建渲染器；返回 false 表示已中止。仅在确定要渲染时调用。 */
+  /**
+   * 拉取角色渲染配置并重建渲染器；返回 false 表示已中止。仅在确定要渲染时调用。
+   * 已存会话带角色 id 时，会话详情与角色正则并行请求；缺失时仍先取详情里的角色 id。
+   */
   private async ensureRenderer(api: MskApiCaller, session: NonNullable<SavedContext['session']>, operation: AbortController): Promise<boolean> {
-    const detail = await api<{ characterStickers?: unknown; characterId?: string }>('agents/sessions/show', { sessionId: session.id }, operation.signal);
-    const character = await api<{ regexRules?: unknown }>('agents/characters/show', {
-      characterId: detail.characterId || session.characterId || ALIYA_CHARACTER_ID,
-    }, operation.signal).catch(() => ({ regexRules: [] as unknown[] }));
+    const showDetail = () => api<{ characterStickers?: unknown; characterId?: string }>('agents/sessions/show', { sessionId: session.id }, operation.signal);
+    const showCharacter = (characterId: string) => api<{ regexRules?: unknown }>('agents/characters/show', { characterId }, operation.signal)
+      .catch(() => ({ regexRules: [] as unknown[] }));
+    const [detail, character] = session.characterId
+      ? await Promise.all([showDetail(), showCharacter(session.characterId)])
+      : await showDetail().then(async d => [d, await showCharacter(d.characterId || ALIYA_CHARACTER_ID)] as const);
     if (operation.signal.aborted) return false;
     this.clearRendering();
     this.renderer = new MskMessageRenderer({
@@ -379,9 +389,11 @@ class RecordsView {
 
   private setStatus(text: string, kind: 'info' | 'error' = 'info', transient = false): void {
     window.clearTimeout(this.statusTimer);
+    // 收起时保留旧文字直到淡出结束：先清空会让胶囊在淡出帧里塌成空壳。
+    this.status.classList.toggle('show', text !== '');
+    if (!text) return;
     this.status.textContent = text;
     this.status.dataset.kind = kind;
-    this.status.classList.toggle('show', text !== '');
     if (transient && text) this.statusTimer = window.setTimeout(() => this.setStatus(''), 4200);
   }
 
@@ -399,7 +411,7 @@ class RecordsView {
 
   private async replayMessage(sessionId: string, messageId: string, button: HTMLButtonElement): Promise<void> {
     button.disabled = true;
-    this.setStatus('正在打开对话框……');
+    button.classList.add('busy');
     try {
       localStorage.setItem(CONTROL_REQUEST_KEY, JSON.stringify({ sessionId, messageId, action: 'replay', at: Date.now() }));
       if (platform === 'tauri') {
@@ -407,11 +419,14 @@ class RecordsView {
         await invoke('show_chat');
       }
       if (platform === 'android') shellAction('open-chat');
-      this.setStatus('已在对话框中重新播放。', 'info', true);
+      button.textContent = '已播放';
+      button.classList.add('done');
+      window.setTimeout(() => { button.textContent = '重新播放'; button.classList.remove('done'); }, 1600);
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : '重新播放失败，请重试。', 'error', true);
     } finally {
       button.disabled = false;
+      button.classList.remove('busy');
     }
   }
 
@@ -473,7 +488,7 @@ function playEnter(): void {
 if (platform === 'android') {
   document.body.classList.add('android-records');
   const back = document.createElement('button');
-  back.className = 'records-back'; back.textContent = '‹'; back.setAttribute('aria-label', '返回');
+  back.className = 'records-back'; back.setAttribute('aria-label', '返回');
   back.onclick = () => shellAction('back');
   document.querySelector('.records-header')?.prepend(back);
 }
