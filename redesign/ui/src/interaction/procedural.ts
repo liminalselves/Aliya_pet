@@ -236,6 +236,9 @@ function phase(
   return { durationMs, eyeOpen, headX, headY, headZ, earL, earR, cheek };
 }
 
+/** doubt 动作表演段约 3s；这段时间内再连点不重启动作。 */
+const DOUBT_REPLAY_GUARD_MS = 3000;
+
 /**
  * 相位动画反应服务。每帧由渲染循环驱动 tick()。
  * 抚摸模式期间不叠加程序化反应（apply 直接忽略）。
@@ -261,6 +264,7 @@ export class ProceduralReactionService {
   private _cheek = 0;
   private _eyeOverrideActive = false;
   private _eyeSide: 'both' | 'left' | 'right' = 'both';
+  private _doubtUntilMs = 0;
 
   constructor(deps: {
     getTarget: () => InteractionTarget | null;
@@ -331,14 +335,20 @@ export class ProceduralReactionService {
           phase(300, 1.0, 0, 0, 0, 0, 0),
         ]);
         break;
-      case 'doubt':
-        this._playCharacterAction('doubt');
+      case 'doubt': {
+        // 表演完全交给 doubt 动作（歪头、眨眼、思考、打量）；连点时不重启正在演的动作，
+        // 否则每点一下都从头「一愣」，永远演不到后半段。
+        const now = performance.now();
+        if (now >= this._doubtUntilMs && this._playCharacterAction('doubt')) {
+          this._doubtUntilMs = now + DOUBT_REPLAY_GUARD_MS;
+        }
+        // 这里只给点击的即时反馈：头轻轻一缩再放开，不接管眼睛、不叠加歪头。
         this._start([
-          phase(200, 0.4, -3, 0, 4, 0, 0),
-          phase(400, 0.45, -3, 0, 4, 0, 0),
-          phase(300, 1.0, 0, 0, 0, 0, 0),
+          phase(90, 1, 0, 1.5, 0, 0, 0),
+          phase(220, 1, 0, 0, 0, 0, 0),
         ]);
         break;
+      }
       case 'blush':
         this._start([
           phase(300, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
@@ -348,7 +358,7 @@ export class ProceduralReactionService {
         break;
     }
     this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'lookAtThenAway'
-      && reaction.type !== 'acknowledge';
+      && reaction.type !== 'acknowledge' && reaction.type !== 'doubt';
   }
 
   cancelAll(immediate = false): void {
@@ -360,6 +370,7 @@ export class ProceduralReactionService {
     }
     this._phases.length = 0;
     this._recovery = null;
+    this._doubtUntilMs = 0;
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
     this._eyeOpen = 1;

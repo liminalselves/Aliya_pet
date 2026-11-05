@@ -507,7 +507,16 @@ test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也
   if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),area);assert.equal(h.reactions.at(-1).type,'earBlink')}
   else assert.equal(h.lines.length,earBefore,'第八次普通点击后的耳朵也必须服从全局冷却');
  }
- assert.deepEqual(h.actions,Array(5).fill('doubt'));
+ assert.deepEqual(h.actions,['doubt'],'疑惑动作演出期间连点不从头重启');
+});
+
+test('疑惑只启动一次完整动作，不接管眼睛，演完后再连点可重新疑惑',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<3;i++){h.setTime(i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt']);assert.equal(h.lines.at(-1),'click_doubt');
+ for(let i=0;i<30;i++){h.advance(16);assert.notEqual(h.writes.eyes?.[0],true,'眨眼和眯眼交给动作曲线')}
+ for(let i=0;i<3;i++){h.setTime(4000+i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt','doubt']);
 });
 
 test('左右耳高频点击不重复台词或动作启动，节流结束仍保留另一侧单眼反馈',()=>{
@@ -634,6 +643,14 @@ test('拖动与点击独立：取消不回应，快速拖动只回应一次',()=
  assert.deepEqual(h.lines,['drag_fast']);
  s.dragReaction.beginDrag();s.dragReaction.onDragMove(500);s.cancel();s.onClick(h.ctx(),true);
  assert.deepEqual(h.lines,['drag_fast']);
+});
+
+test('平时的自动动作不会抽到生气，生气情绪下也不会',()=>{
+ const meta=JSON.parse(readFileSync(new URL('actions.json',modelBase),'utf8')).actions;
+ assert.equal(meta.find(a=>a.name==='angry').category,'reaction');
+ const {BehaviorService}=load('behavior');
+ const b=new BehaviorService(()=>null,()=>0);b.setActionMeta(meta);
+ for(const mood of ['neutral','angry'])for(let i=0;i<500;i++){b.setMood(mood);assert.notEqual(b.randomActionName(),'angry',mood)}
 });
 
 test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留安静间隔',()=>{
