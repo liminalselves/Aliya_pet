@@ -46,7 +46,6 @@ export class InteractionService {
 
   /** 系统取消与失焦统一释放所有手势，取消不产生台词。 */
   cancel(): void {
-    this._variants.clear();
     this.petting.exitPettingMode('gestureCanceled');
     this.procedural.cancelAll();
     this.dragReaction.cancel();
@@ -220,7 +219,7 @@ export class InteractionService {
     return true;
   }
 
-  /** 同一部位两种反馈轮流出现，首次总是原有反馈。 */
+  /** 同一部位两种反馈轮流出现，首次总是原有反馈；失焦/取消不重置（桌面点别处就会失焦）。 */
   private _nextVariant(key: string): number {
     const n = this._variants.get(key) ?? 0;
     this._variants.set(key, (n + 1) % 2);

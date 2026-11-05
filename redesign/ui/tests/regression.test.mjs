@@ -1170,7 +1170,8 @@ test('扩充互动：新部位有独立反馈与台词，头/脸两种反馈轮�
  assert.deepEqual(head,['headTiltAndEyes','nuzzle','headTiltAndEyes','nuzzle']);
  const face=[];for(let i=0;i<2;i++){h.setTime(200000+i*4000);face.push(...types('face'))}
  assert.deepEqual(face,['blush','flinch']);
- s.cancel();h.setTime(300000);assert.deepEqual(types('head'),['headTiltAndEyes'],'取消后轮换从头开始');
+ s.cancel();h.setTime(300000);assert.deepEqual(types('head'),['headTiltAndEyes'],'失焦取消不打乱轮换');
+ s.onModelReloaded();h.setTime(310000);assert.deepEqual(types('head'),['headTiltAndEyes'],'重载后从原有反馈开始');
 });
 
 test('扩充互动：概率追加动作受在播动作约束',()=>{
