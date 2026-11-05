@@ -212,6 +212,9 @@ export class PetApp {
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
   private _touchTapCandidate = false;
+  /** Android 触摸的左键手势：不走前端拖动，只判断是否为轻点。 */
+  private _touchClickCandidateActive = false;
+  private _touchClickCandidate = false;
   private _downScreenX = 0;
   private _downScreenY = 0;
   private _lastScreenX = 0;
@@ -223,6 +226,8 @@ export class PetApp {
 
   /** 拖动判定阈值（CSS px）。 */
   private static readonly _dragThresholdPx = 5;
+  /** 触屏轻点容差（CSS px）：快速点按时手指滚动/抬手偏移常超过 5px，仍应算点击。 */
+  private static readonly _touchTapTolerancePx = 16;
 
   /** 松手贴边感应带（CSS px）。 */
   private static readonly _snapZonePx = 48;
@@ -1787,6 +1792,8 @@ export class PetApp {
       if (!handled) {
         // 左键未被互动接管：进入拖动候选（嵌入网页没有窗口可拖，按普通点击处理）
         this._dragCandidate = true;
+        this._touchClickCandidateActive = platform === 'android' && e.pointerType === 'touch';
+        this._touchClickCandidate = this._touchClickCandidateActive;
         if (isEmbed) return;
         this._dragging = false;
         this._downScreenX = this._lastScreenX = e.screenX;
@@ -1797,14 +1804,18 @@ export class PetApp {
 
     canvas.addEventListener('pointermove', (e) => {
       if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
-      if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._dragThresholdPx) {
+      if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._touchTapTolerancePx) {
         this._touchTapCandidate = false;
+      }
+      if (this._touchClickCandidate && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._touchTapTolerancePx) {
+        this._touchClickCandidate = false;
       }
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
 
-      if (this._dragCandidate && this._leftDown && !handled && !isEmbed) {
+      // Android 的触摸拖动只由原生壳长按接管（主界面不可拖）；前端不把短促位移当拖动。
+      if (this._dragCandidate && this._leftDown && !handled && !isEmbed && !this._touchClickCandidateActive) {
         if (!this._dragging) {
           const dx = e.screenX - this._downScreenX;
           const dy = e.screenY - this._downScreenY;
@@ -1849,8 +1860,8 @@ export class PetApp {
           // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）
           this._interaction?.onClick(ctx, true);
           this._onDragFinished();
-        } else if (this._dragCandidate && !handled) {
-          // 普通单击
+        } else if (this._dragCandidate && !handled && (!this._touchClickCandidateActive || this._touchClickCandidate)) {
+          // 普通单击（Android 触摸：位移在轻点容差内才算）
           this._interaction?.onClick(ctx, false);
         }
         this._resetDragState();
@@ -1902,6 +1913,8 @@ export class PetApp {
   private _resetDragState(): void {
     this._leftDown = false;
     this._dragCandidate = false;
+    this._touchClickCandidateActive = false;
+    this._touchClickCandidate = false;
     this._interaction?.dragReaction.cancel();
     if (this._dragging && this._behavior) this._behavior.isDragging = false;
     this._dragging = false;

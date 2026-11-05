@@ -422,3 +422,28 @@ test('旧配置升级及非法透明度安全回退，显示与穿透持久化�
   assert.equal(restored.petOpacity, 25); assert.equal(restored.fullClickThrough, true);
   assert.equal(restored.mirror, true); assert.equal(restored.chatBackgroundDim, .2);
 });
+
+test('Android身体触摸：手指轻微滚动仍算点击且不触发前端拖动，长距离轻扫既不点击也不拖动', () => {
+  for (const wrap of [true, false]) {
+    const h = harness({ platform: 'android' }); h.app._wrapWindow = wrap; h.area('body');
+    const moved = [];
+    h.app._moveWindowBy = (...d) => moved.push(d);
+    h.canvasEvents.pointerdown(h.event({ pointerType: 'touch' }));
+    h.canvasEvents.pointermove(h.event({ pointerType: 'touch', clientX: 410, screenX: 410 }));
+    assert.equal(h.app._dragging, false, '10px 手指滚动不是拖动');
+    h.canvasEvents.pointerup(h.event({ pointerType: 'touch', buttons: 0, clientX: 410, screenX: 410 }));
+    h.advance(100);
+    assert.equal(h.service.procedural.isPlaying, true, '容差内仍是一次点击');
+    for (let i = 0; i < 80; i++) h.advance(16);
+    const lines = h.lines.length;
+    h.advance(4000);
+    h.canvasEvents.pointerdown(h.event({ pointerType: 'touch' }));
+    h.canvasEvents.pointermove(h.event({ pointerType: 'touch', clientX: 480, screenX: 480 }));
+    h.canvasEvents.pointerup(h.event({ pointerType: 'touch', buttons: 0, clientX: 480, screenX: 480 }));
+    h.advance(100);
+    assert.equal(h.app._dragging, false); assert.deepEqual(moved, []);
+    assert.equal(h.service.procedural.isPlaying, false, '轻扫不算点击');
+    assert.equal(h.lines.length, lines);
+    assert.equal(h.app._dragCandidate, false); assert.equal(h.app._touchClickCandidateActive, false);
+  }
+});
