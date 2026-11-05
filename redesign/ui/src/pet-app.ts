@@ -81,7 +81,7 @@ export class PetApp {
   private _behavior: BehaviorService = null;
   private _moodEngine: MoodEngine = null;
   private _ai: PetAI = null;
-  private _remoteChat = { open: false, busy: false, typing: false };
+  private _remoteChat = { open: false, busy: false, typing: false, replying: false };
   private _chatLauncher: HTMLElement | null = null;
   /** 聊天入口当前 bottom 缓存（CSS px）：逐帧校正，值不变不写 style。 */
   private _launcherBottomCss = 0;
@@ -103,12 +103,18 @@ export class PetApp {
   private _windowGeometryError: unknown = null;
   /** 保留原生窗口整数坐标舍去的亚像素，避免反复缩放累积漂移。 */
   private _windowResizeRemainder = { x: 0, y: 0 };
-  private _coordination = new InteractionCoordinator(() => ({
-    interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
-    speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
-      (this._chatView?.typing ?? false),
-    paused: this._paused || !this._running,
-  }));
+  private _coordination = new InteractionCoordinator(() => this._coordinationState());
+
+  private _coordinationState(): { interacting: boolean; speaking: boolean; paused: boolean } {
+    return {
+      interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
+      // 回复展示期间也算「说话」：待机动作的表情（如生气动作的黑脸与怒气符号）会盖掉聊天表演。
+      speaking: this._remoteChat.busy || this._remoteChat.typing || this._remoteChat.replying ||
+        (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
+        (this._chatView?.typing ?? false) || (this._chatView?.replying ?? false),
+      paused: this._paused || !this._running,
+    };
+  }
 
   // Tauri 窗口拖动
   private _tauriWindow: TauriWindow | null = null;

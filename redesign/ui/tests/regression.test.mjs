@@ -646,6 +646,24 @@ test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留
  now=2500;assert.equal(c.canIdle(),true);state.paused=true;assert.equal(c.canSpeak('interaction'),false);
 });
 
+test('聊天回复展示期间（含读完前）阻止待机动作，避免动作表情盖掉聊天表演',()=>{
+ const {PetApp}=load('pet-app');
+ const {InteractionCoordinator}=load('interaction/coordination');
+ // 构造器依赖 DOM/台词库；用原型实例跑真实的 _coordinationState 汇总逻辑。
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_running:true,_paused:false,_leftDown:false,_dragging:false,_nativeDragging:false,
+  _remoteChat:{open:false,busy:false,typing:false,replying:false}});
+ const c=new InteractionCoordinator(()=>app._coordinationState(),()=>1e9);
+ const idle=()=>c.canIdle();
+ assert.equal(idle(),true);
+ // 原生聊天窗：壳广播的 chat-state.replying
+ app._remoteChat={open:true,busy:false,typing:false,replying:true};assert.equal(idle(),false,'独立聊天窗回复中');
+ app._remoteChat={open:true,busy:false,typing:false,replying:false};assert.equal(idle(),true,'读完收起后恢复');
+ // 内嵌聊天（Android/网页）：ChatView.replying
+ app._chatView={typing:false,replying:true};assert.equal(idle(),false,'内嵌聊天回复中');
+ app._chatView={typing:false,replying:false};assert.equal(idle(),true);
+});
+
 function randomSpeechHarness() {
  const {PetApp}=load('pet-app');
  const {InteractionCoordinator}=load('interaction/coordination');

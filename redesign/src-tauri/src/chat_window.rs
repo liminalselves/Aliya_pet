@@ -73,6 +73,8 @@ pub type ChatAnchorState = Arc<Mutex<Option<LocalPetAnchor>>>;
 pub struct ChatRuntime {
     pub busy: bool,
     pub typing: bool,
+    /// 回复正在面板上展示；pet 据此让出待机动作，不盖掉聊天表演。
+    pub replying: bool,
     /// pet 隐藏前 chat 是否打开；pet 恢复时据此带回 chat。
     pub open_before_pet_hide: bool,
     /// 最近一次下发给页面的卡片布局，未变不重复广播。
@@ -307,29 +309,33 @@ pub fn sync_chat_anchor(
     Ok(())
 }
 
-/// chat 页面汇报运行态；全量广播 chat-state {busy, typing, open}。
+/// chat 页面汇报运行态；全量广播 chat-state {busy, typing, replying, open}。
 #[tauri::command]
 pub fn set_chat_state(
     app: AppHandle,
     runtime: State<ChatRuntimeState>,
     busy: Option<bool>,
     typing: Option<bool>,
+    replying: Option<bool>,
 ) -> Result<(), String> {
-    let (busy_now, typing_now) = if let Ok(mut r) = runtime.lock() {
+    let (busy_now, typing_now, replying_now) = if let Ok(mut r) = runtime.lock() {
         if let Some(b) = busy {
             r.busy = b;
         }
         if let Some(t) = typing {
             r.typing = t;
         }
-        (r.busy, r.typing)
+        if let Some(p) = replying {
+            r.replying = p;
+        }
+        (r.busy, r.typing, r.replying)
     } else {
-        (false, false)
+        (false, false, false)
     };
     let open = chat_is_open(&app);
     app.emit(
         "chat-state",
-        json!({ "busy": busy_now, "typing": typing_now, "open": open }),
+        json!({ "busy": busy_now, "typing": typing_now, "replying": replying_now, "open": open }),
     )
     .map_err(|e| e.to_string())
 }
@@ -466,21 +472,22 @@ fn read_window_rect(hwnd: windows_sys::Win32::Foundation::HWND) -> Result<PetAnc
 /// 广播开关状态：chat-state 全局广播（pet 与 chat 都监听）；
 /// chat-window-state 定向发给 pet（pet 据此清理表演状态）。
 fn broadcast_open(app: &AppHandle, runtime: &ChatRuntimeState, open: bool) {
-    let (busy, typing) = if open {
+    let (busy, typing, replying) = if open {
         runtime
             .lock()
-            .map(|r| (r.busy, r.typing))
-            .unwrap_or((false, false))
+            .map(|r| (r.busy, r.typing, r.replying))
+            .unwrap_or((false, false, false))
     } else {
         if let Ok(mut r) = runtime.lock() {
             r.busy = false;
             r.typing = false;
+            r.replying = false;
         }
-        (false, false)
+        (false, false, false)
     };
     let _ = app.emit(
         "chat-state",
-        json!({ "busy": busy, "typing": typing, "open": open }),
+        json!({ "busy": busy, "typing": typing, "replying": replying, "open": open }),
     );
     let _ = app.emit_to("pet", "chat-window-state", json!({ "open": open }));
 }

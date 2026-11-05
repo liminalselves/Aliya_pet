@@ -254,6 +254,8 @@ export class ChatView {
   private started = false;
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
+  /** 回复正在面板上展示（含读完末页前）：桌宠待机动作/随机台词须让位，否则会盖掉聊天表演。 */
+  get replying(): boolean { return this.replyActive; }
   /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
   get panelVisible(): boolean { return this.isOpen && !this.panel.hidden; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
@@ -362,7 +364,7 @@ export class ChatView {
   }
   private notify(): void {
     // 运行态经壳汇总后全局广播 chat-state {busy, typing, open}（open 由壳按窗口可见性裁定）。
-    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_state', { busy: this.controller.busy, typing: this.typing })).catch(() => {});
+    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_state', { busy: this.controller.busy, typing: this.typing, replying: this.replyActive })).catch(() => {});
   }
   private reset(): AbortSignal {
     this.operation?.abort(); this.operation = new AbortController(); ++this.sequence;
@@ -743,7 +745,7 @@ export class ChatView {
     this.historyVisible = false; this.clearPlayback(); this.clearRendering();
     this.clearContentAnimation();
     this.content.replaceChildren(); this.content.scrollTop = 0;
-    this.replyActive = true;
+    this.replyActive = true; this.notify();
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
     // 渲染器先构建整条回复；准备期间必须脱离布局，不能只设 visibility:hidden。
@@ -758,7 +760,7 @@ export class ChatView {
       if (!this.typewriter?.typing) this.reportLayout();
     });
     this.showPanel(''); this.updateHint();
-    if (!task) { this.replyActive = false; this.updateHint(); return; }
+    if (!task) { this.replyActive = false; this.notify(); this.updateHint(); return; }
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
       // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接；面板高度由 onPanelResize 补间。
@@ -922,8 +924,10 @@ export class ChatView {
   private clearPlayback(keepLock = false): void {
     if (!keepLock) this.unlockPanel();
     // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
-    if (this.replyActive) this.controller.onCancelPerformance();
+    const wasReplying = this.replyActive;
+    if (wasReplying) this.controller.onCancelPerformance();
     this.replyActive = false; this.replyToken = null; this.playing = false;
+    if (wasReplying) this.notify();
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;
     this.clearCueTimer();
