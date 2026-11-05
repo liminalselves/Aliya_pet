@@ -14,7 +14,9 @@ export interface PerformanceItem {
 export const PERFORMANCE_EXPRESSIONS: readonly PerformanceItem[] = [
   { name: 'neutral', hint: '平静' },
   { name: 'happy', hint: '开心' },
-  { name: 'angry', hint: '生气' },
+  { name: 'angry', hint: '生气（黑脸 + 怒气符号）' },
+  { name: 'annoyed', hint: '不爽：只冒怒气符号，轻微皱眉别开脸，不黑脸' },
+  { name: 'gloomy', hint: '阴沉：只有黑脸低头压眉，没有怒气符号' },
   { name: 'sad', hint: '难过' },
   { name: 'surprised', hint: '惊讶' },
   { name: 'shy', hint: '害羞' },

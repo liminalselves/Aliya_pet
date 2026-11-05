@@ -548,7 +548,7 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
-    const baseH = 675 * 1.18 * scale, contentScale = baseH / 1.30 / 1.1;
+    const baseH = 675 * 1.18 * scale, contentScale = baseH / PetApp._renderMarginRatio / 1.1;
     const app = Object.assign(Object.create(PetApp.prototype), {
       _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr,
       _originCssX: -120, _originCssY: 650, _contentScaleCss: contentScale,
@@ -593,7 +593,7 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
-    const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
+    const baseH = 675 * 1.18 * scale, s = baseH / PetApp._renderMarginRatio / 1.1;
     const sent = [];
     const app = Object.assign(Object.create(PetApp.prototype), {
       _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400, _screenH: 800,

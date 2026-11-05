@@ -114,6 +114,14 @@
         "File": "expressions/angry.exp3.json"
       },
       {
+        "Name": "annoyed",
+        "File": "expressions/annoyed.exp3.json"
+      },
+      {
+        "Name": "gloomy",
+        "File": "expressions/gloomy.exp3.json"
+      },
+      {
         "Name": "sad",
         "File": "expressions/sad.exp3.json"
       },

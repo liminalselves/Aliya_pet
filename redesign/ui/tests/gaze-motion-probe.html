@@ -12,9 +12,13 @@ const pet=app._model,model=pet._model,canvas=app.getCanvas();canvas.width=360;ca
 const px=new Uint8Array(360*500*4);
 for(let i=0;i<100;i++){pet.update(1/30);app._render();app._gl.readPixels(0,0,360,500,app._gl.RGBA,app._gl.UNSIGNED_BYTE,px);if(px.some((v,j)=>j%4===3&&v))break;await new Promise(r=>setTimeout(r,100))}
 function reset(){pet._motionManager.stopAllMotions();pet._expressionManager.stopAllMotions();pet._currentExpression=null;pet._gaze.setExpression(null);pet.clearLookTarget();for(let i=0;i<model.getParameterCount();i++)model.setParameterValueByIndex(i,model.getParameterDefaultValue(i));model.saveParameters();for(let i=0;i<30;i++)pet.update(1/30)}
-function capture(label){app._render();const c=document.createElement('canvas');c.width=300;c.height=230;c.getContext('2d').drawImage(canvas,30,20,300,230,0,0,300,230);const f=document.createElement('figure'),im=new Image();im.src=c.toDataURL();f.append(im,document.createTextNode(label));document.querySelector('#gallery').append(f)}
-const plan={look_around:[0.55,1.4,2.0,3.05,3.7],daydream:[1.4,3.4,4.5,4.72],notice:[0.1,0.42,0.95,1.5]};
-for(const expr of [null,'shy','sad'])for(const [name,times] of Object.entries(plan)){
+function capture(label){app._render();const full=new URLSearchParams(location.search).has('legacy');const c=document.createElement('canvas');const [sx,sy,w,h]=full?[0,0,360,500]:[30,20,300,230];c.width=w;c.height=h;c.getContext('2d').drawImage(canvas,sx,sy,w,h,0,0,w,h);const f=document.createElement('figure'),im=new Image();im.src=c.toDataURL();f.append(im,document.createTextNode(label));document.querySelector('#gallery').append(f)}
+const gazePlan={look_around:[0.55,1.4,2.0,3.05,3.7],daydream:[1.4,3.4,4.5,4.72],notice:[0.1,0.42,0.95,1.5]};
+// ?legacy：8 个原有动作的预备、过冲与手臂关键帧
+const legacyPlan={nod:[0.12,0.32,0.84],sway:[1.22,3.42],shake:[0.12,0.32,0.78],stretch:[0.25,0.8,2.2,3.1],wave:[0.4,1.4],doubt:[0.15,0.45,1.85],angry:[0.15,0.35,1.1],yawn:[0.6,1.2,3.2]};
+const legacy=new URLSearchParams(location.search).has('legacy');
+const plan=legacy?legacyPlan:gazePlan;
+for(const expr of legacy?[null]:[null,'shy','sad'])for(const [name,times] of Object.entries(plan)){
  reset();if(expr)pet.startExpression(expr);for(let i=0;i<20;i++)pet.update(1/30);pet.playAction(name);
  let t=0;for(const at of times){while(t<at){pet.update(1/60);t+=1/60}capture(`${name} ${at}s ${expr??''}`)}
 }

@@ -56,6 +56,8 @@ const ACTION_LABELS: Record<string, string> = {
 const EXPRESSION_LABELS: Record<string, string> = {
   happy: '开心',
   angry: '生气',
+  annoyed: '不爽',
+  gloomy: '阴沉',
   sad: '难过',
   surprised: '惊讶',
   shy: '害羞',

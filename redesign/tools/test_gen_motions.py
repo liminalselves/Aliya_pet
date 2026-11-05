@@ -244,6 +244,41 @@ class GazeMotionTests(unittest.TestCase):
             self.assertTrue(all(v == 0 for _, v in c[pid]))
 
 
+class LegacyRemakeTests(unittest.TestCase):
+    LEGACY = ('nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn')
+    DURATIONS = {'nod': 3.2, 'sway': 5.6, 'shake': 3.8, 'stretch': 5.0,
+                 'wave': 4.2, 'doubt': 4.4, 'angry': 4.2, 'yawn': 5.6}
+
+    def test_durations_unchanged_and_wave_leaves_arms_to_hand_channel(self):
+        for name in self.LEGACY:
+            motion = generator.GENERATORS[name]()
+            self.assertEqual(motion['Meta']['Duration'], self.DURATIONS[name], name)
+        wave = {c['Id']: endpoints(c['Segments'])[0] for c in generator.wave()['Curves']}
+        for pid in ('ParamArmL01', 'ParamArmL02', 'ParamArmR01', 'ParamArmR02'):
+            self.assertTrue(all(v == 0 for _, v in wave[pid]), pid)
+
+    def test_smile_gaze_rule_holds_at_every_key(self):
+        # Full smile (≥0.7) keeps eyes centered; light smile (≤0.4) keeps gaze ≤ 5.
+        for name in self.LEGACY:
+            c = {k['Id']: dict(endpoints(k['Segments'])[0]) for k in generator.GENERATORS[name]()['Curves']}
+            smile = c['ParamEyeLSmile']
+            for t, s in smile.items():
+                for pid in ('ParamEyeBallX', 'ParamEyeBallY'):
+                    if t in c[pid]:
+                        if s >= 0.7:
+                            self.assertEqual(c[pid][t], 0, (name, pid, t))
+                        elif s > 0:
+                            self.assertLessEqual(abs(c[pid][t]), 5, (name, pid, t))
+
+    def test_arm_gestures_stay_small_and_return(self):
+        for name in self.LEGACY:
+            for curve in generator.GENERATORS[name]()['Curves']:
+                if curve['Id'].startswith('ParamArm'):
+                    keys = endpoints(curve['Segments'])[0]
+                    self.assertLessEqual(max(abs(v) for _, v in keys), 6.5, (name, curve['Id']))
+                    self.assertEqual(keys[-1][1], 0)
+
+
 class CliTests(unittest.TestCase):
     def test_normal_generator_writes_only_registered_motions_and_preserves_other_recipes(self):
         with tempfile.TemporaryDirectory() as temp:

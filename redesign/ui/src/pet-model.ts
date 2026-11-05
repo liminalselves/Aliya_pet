@@ -27,7 +27,11 @@ import {
   EarChannel,
   CheekChannel,
   HandRaiseChannel,
+  AngerMarkSplit,
 } from './overlay';
+
+/** 只显示怒气符号 / 只显示黑脸的表情（都借用 Param32，见 AngerMarkSplit）。 */
+const ANGER_SPLIT_MODES: Record<string, 'mark' | 'shade'> = { annoyed: 'mark', gloomy: 'shade' };
 import { assetUrl } from './embed';
 
 /** 动作优先级（与官方 LAppDefine 一致）。 */
@@ -102,6 +106,8 @@ export class PetModel
   private _chEar: EarChannel = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  private _angerSplit: AngerMarkSplit | null = null;
+  private _idAngerShadow: CubismIdHandle = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
   private static readonly _lookReductionScale = 0.25;
 
@@ -316,6 +322,12 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
+    const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
+    const markIndex = this._model.getDrawableIndex(id('ArtMesh12'));
+    this._idAngerShadow = id('Param32');
+    this._angerSplit = shadeIndex >= 0 && markIndex >= 0
+      ? new AngerMarkSplit(shadeIndex, markIndex) : null;
 
     // 动作库（tools/gen-motions.py 为 Aliya 生成的自编动作）
     await this._preloadMotions();
@@ -388,6 +400,7 @@ export class PetModel
       }
       this._currentExpression = null;
       this._gaze.setExpression(null);
+      this._angerSplit?.setMode(null);
       return true;
     }
     const expr = this._expressions.get(name);
@@ -397,6 +410,7 @@ export class PetModel
     this._currentExpression = name;
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
     this._gaze.setExpression(name);
+    this._angerSplit?.setMode(ANGER_SPLIT_MODES[name] ?? (name === 'angry' ? 'both' : null));
     return true;
   }
 
@@ -732,6 +746,9 @@ export class PetModel
     applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
 
     model.update();
+    // 拆分只改已求值的网格不透明度，必须在 update 之后、绘制之前。
+    this._angerSplit?.apply(model.getModel().drawables.opacities, deltaTimeSeconds,
+      model.getParameterValueById(this._idAngerShadow));
   }
 
   public draw(matrix: CubismMatrix44): void {

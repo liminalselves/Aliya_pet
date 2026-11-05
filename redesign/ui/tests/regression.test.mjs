@@ -11,7 +11,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,13);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,13);assert.equal(refs.Expressions.length,14);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -72,7 +72,7 @@ test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；�
    assert.ok(s.every(Number.isFinite));
    const neutral=/^ParamEye[LR]Open$/.test(Id)?1:0;
    assert.equal(s[0],0);assert.equal(s[1],neutral,`${name}: ${Id} 起点`);
-   if(/^ParamArm/.test(Id)&&!['shy_sway','cheerful_bounce','notice'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
+   if(/^ParamArm/.test(Id)&&['wave','look_around','daydream'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 手臂只主动复位（挥手由专用通道驱动）`);
    let t=s[0],v=s[1],lastChangingTime=0;points++;
    const [min,max]=limits(Id);
    for(let i=2;i<s.length;){
