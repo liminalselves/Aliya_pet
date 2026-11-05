@@ -11,6 +11,9 @@
     { "id": "body", "type": "ellipse", "x": 0.50, "y": 0.70, "width": 0.60, "height": 0.42, "priority": 10 },
     { "id": "hand", "type": "ellipse", "x": 0.28, "y": 0.60, "width": 0.16, "height": 0.22, "priority": 20 },
     { "id": "tablet", "type": "ellipse", "x": 0.72, "y": 0.62, "width": 0.14, "height": 0.18, "priority": 20 },
+    { "id": "tie", "type": "ellipse", "x": 0.465, "y": 0.58, "width": 0.09, "height": 0.13, "priority": 25 },
+    { "id": "legs", "type": "ellipse", "x": 0.48, "y": 0.84, "width": 0.30, "height": 0.16, "priority": 15 },
+    { "id": "ponytail", "type": "ellipse", "x": 0.24, "y": 0.70, "width": 0.18, "height": 0.14, "priority": 12 },
     { "id": "head_pet_zone", "type": "ellipse", "x": 0.50, "y": 0.15, "width": 0.42, "height": 0.24, "priority": 30 }
   ]
 }

@@ -22,6 +22,8 @@ function load(filename) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 }, fileName: filename,
   }).outputText;
   const require = id => {
+    // embed.ts reads import.meta (Vite only); asset URLs are irrelevant here.
+    if (/(^|\/)embed$/.test(id)) return { isEmbed: false, assetUrl: p => String(p), postToHost() {} };
     if (id.startsWith('@framework/')) return load(resolve(frameworkRoot, `${id.slice(11)}.ts`));
     assert.ok(id.startsWith('.'), `unexpected import: ${id}`);
     return load(resolve(dirname(filename), `${id}.ts`));
@@ -78,11 +80,20 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
     p = await model();
     try {
       assert.equal(p.getExpressionNames().length, 12);
-      assert.equal(p.actionManifest.length, 10);
+      assert.equal(p.actionManifest.length, 19);
       for (const action of ['cheerful_bounce', 'shy_sway']) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
         for (let frame = 0; frame < fps * 8; frame++) {
+          p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
+        }
+      }
+      // 扩充动作：极端注视与最外扩的表情组合，各自自然播完。
+      const expanded = ['think', 'giggle', 'pout', 'surprised', 'look_around', 'doze', 'bow', 'hum', 'sigh'];
+      for (const action of expanded) for (const expression of ['surprised', 'happy', 'sad']) for (const gaze of gazes) {
+        summary.cases++;
+        p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
+        for (let frame = 0; frame < fps * 7; frame++) {
           p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
         }
       }

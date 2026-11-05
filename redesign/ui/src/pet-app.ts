@@ -422,7 +422,12 @@ export class PetApp {
           this._speak(resolved, 'interaction');
         },
       },
-      playCharacterAction: (action) => this._model?.playAction(action) ?? false,
+      playCharacterAction: (action) => {
+        const ok = this._model?.playAction(action) ?? false;
+        if (ok) this._behavior?.notifyManualAction();
+        return ok;
+      },
+      isActionPlaying: () => this._model?.isActionPlaying ?? false,
     });
     this._interaction.playClickDialogue = (tag) => this._playInteraction(tag);
     this._interaction.isDialogueActive = () => this._bubble?.isActive ?? false;
@@ -1787,8 +1792,8 @@ export class PetApp {
           const dy = e.screenY - this._downScreenY;
           if (Math.sqrt(dx * dx + dy * dy) >= PetApp._dragThresholdPx) {
             this._dragging = true;
-            this._interaction?.procedural.cancelAll();
             this._interaction?.dragReaction.beginDrag();
+            this._interaction?.beginHold();
             if (this._behavior) this._behavior.isDragging = true;
           }
         }
@@ -1796,6 +1801,7 @@ export class PetApp {
           const dx = e.screenX - this._lastScreenX;
           const dy = e.screenY - this._lastScreenY;
           this._interaction?.dragReaction.onDragMove(Math.hypot(dx, dy) * this._scaleFactor / ctx.dtSeconds);
+          this._interaction?.updateHoldVelocity(dx / ctx.dtSeconds);
           if (!this._wrapWindow) {
             // 贴合模式：拖动由壳侧原生接管（OnTouchListener 直移窗口）
             this._moveWindowBy(dx, dy);
@@ -2138,6 +2144,7 @@ export class PetApp {
     this._cancelInteraction();
     androidShell()?.setInteracting(false);
     this._interaction?.dragReaction.beginDrag();
+    this._interaction?.beginHold();
     if (this._behavior) this._behavior.isDragging = true;
   }
 
@@ -2171,8 +2178,10 @@ export class PetApp {
     this._appliedRectX += dxCss;
     this._appliedRectY += dyCss;
     if (this._behavior) this._behavior.isDragging = false;
-    if (cancelled) this._interaction?.dragReaction.cancel();
-    else {
+    if (cancelled) {
+      this._interaction?.dragReaction.cancel();
+      this._interaction?.procedural.cancelAll();
+    } else {
       this._interaction?.dragReaction.onDragMove(maxSpeedPxPerSec);
       this._interaction?.onClick({ normX: 0.5, normY: 0.5, pxX: 0, pxY: 0,
         dtSeconds: 0.016, leftPressed: false, isSecondary: false }, true);

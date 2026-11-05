@@ -91,7 +91,7 @@ speechless / worried / serious / hit
 生气阴影怒眉、认真低头抿嘴、惊讶张嘴、担忧歪头忧眉；难过使用原生流泪，
 受击使用挤眼，无语使用半垂方眼。表情数量仍为 12。
 
-## 动作库（10 个，motion3.json）
+## 动作库（19 个，motion3.json）
 
 `motions/` 下由 `tools/gen-motions.py` 生成（见 docs/ACTIONS.md）。
 元数据（情绪亲和/权重/分类）在 `actions.json`。
