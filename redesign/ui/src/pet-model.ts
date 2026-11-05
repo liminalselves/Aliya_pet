@@ -41,7 +41,7 @@ export const MotionPriority = {
 /** 动作清单元数据（assets/live2d/aliya/actions.json）。 */
 export interface ActionManifestEntry {
   name: string;
-  category?: 'idle' | 'emotion' | 'reaction';
+  category?: 'idle' | 'emotion' | 'reaction' | 'gaze';
   weight?: number;
   moods?: Record<string, number>;
 }

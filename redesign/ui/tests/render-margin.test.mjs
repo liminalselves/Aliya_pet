@@ -24,6 +24,8 @@ function load(filename) {
   const require = id => {
     if (id.startsWith('@framework/')) return load(resolve(frameworkRoot, `${id.slice(11)}.ts`));
     assert.ok(id.startsWith('.'), `unexpected import: ${id}`);
+    // embed.ts reads Vite's import.meta.env, which CommonJS vm code cannot parse.
+    if (/(^|\/)embed$/.test(id)) return { isEmbed: false, assetUrl: p => '/' + String(p).replace(/^\/+/, ''), postToHost() {} };
     return load(resolve(dirname(filename), `${id}.ts`));
   };
   vm.runInContext(`(function(require, module, exports) {\n${code}\n})`, context, { filename })(require, module, module.exports);
@@ -78,8 +80,8 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
     p = await model();
     try {
       assert.equal(p.getExpressionNames().length, 12);
-      assert.equal(p.actionManifest.length, 10);
-      for (const action of ['cheerful_bounce', 'shy_sway']) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
+      assert.equal(p.actionManifest.length, 13);
+      for (const action of ['cheerful_bounce', 'shy_sway', 'look_around', 'daydream', 'notice']) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
         for (let frame = 0; frame < fps * 8; frame++) {

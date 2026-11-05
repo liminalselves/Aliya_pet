@@ -11,7 +11,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,10);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,13);assert.equal(refs.Expressions.length,12);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -72,7 +72,7 @@ test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；�
    assert.ok(s.every(Number.isFinite));
    const neutral=/^ParamEye[LR]Open$/.test(Id)?1:0;
    assert.equal(s[0],0);assert.equal(s[1],neutral,`${name}: ${Id} 起点`);
-   if(/^ParamArm/.test(Id)&&!['shy_sway','cheerful_bounce'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
+   if(/^ParamArm/.test(Id)&&!['shy_sway','cheerful_bounce','notice'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
    let t=s[0],v=s[1],lastChangingTime=0;points++;
    const [min,max]=limits(Id);
    for(let i=2;i<s.length;){
@@ -281,6 +281,30 @@ test('动作中的特殊眼睛参数只允许零值复位，哈欠不再叠加�
    }
   }
  }
+});
+test('光标静止释放视线、视线类动作只在释放后抽取、久静再动先回神再跟随',()=>{
+ let now=0,target,played=[];
+ const host={playAction:n=>(played.push(n),true),setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null};
+ const {BehaviorService,GAZE_RELEASE_SECONDS,NOTICE_AFTER_SECONDS}=load('behavior',{},{performance:{now:()=>now}});
+ const b=new BehaviorService(()=>host,()=>now);b.autoActions=false;b.autoActions=true;
+ b.setActionMeta(asset('actions.json').actions);
+ const draw=()=>{const seen=new Set();for(let i=0;i<400;i++)seen.add(b.randomActionName());return seen};
+ b.updateLookTarget(.3,.4);assert.ok(target);
+ let seen=draw();assert.ok(!seen.has('look_around')&&!seen.has('daydream')&&!seen.has('notice'),'跟随中不抽视线类/反应类');
+ // 每帧重复上报同一坐标不算移动
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now=t;b.updateLookTarget(.3,.4)}
+ assert.equal(b.gazeReleased,true);assert.equal(target,null,'静止后交还视线');
+ seen=draw();assert.ok(seen.has('look_around')&&seen.has('daydream'));assert.ok(!seen.has('notice'));
+ // 未达久静阈值：只恢复跟随，不回神
+ now+=1000;b.updateLookTarget(.6,.4);assert.ok(target);assert.deepEqual(played,[]);
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.6,.4)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.6,.4);
+ now+=16;b.updateLookTarget(.9,.2);assert.deepEqual(played,['notice']);assert.ok(target,'回神同时恢复跟随');
+ // 冷却内再次久静不重复回神；拖动/互动中不回神
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.9,.2)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.9,.2);now+=16;b.updateLookTarget(.1,.1);
+ assert.deepEqual(played,['notice'],'冷却内不重复');
+ b.stop();
 });
 test('镜像坐标只翻转一次；拖动时回中，松手后恢复',()=>{
  let target;const {BehaviorService}=load('behavior');const b=new BehaviorService(()=>({setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null}));
