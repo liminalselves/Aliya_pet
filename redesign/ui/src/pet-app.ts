@@ -526,8 +526,10 @@ export class PetApp {
    */
   private _applyCatEars(visible: boolean, immediate: boolean): void {
     const changed = this._catEarsVisible !== visible;
+    // 首次应用一步落定；之后重复同步同一值不打断正在进行的淡变。
+    const snap = immediate || this._catEarsVisible === null;
     this._catEarsVisible = visible;
-    this._model?.setCatEarsVisible?.(visible, immediate || !changed);
+    this._model?.setCatEarsVisible?.(visible, snap);
     for (const id of ['ear_left', 'ear_right']) {
       if (visible) this._hitAreas?.disabled?.delete(id);
       else this._hitAreas?.disabled?.add(id);
@@ -2171,6 +2173,7 @@ export class PetApp {
     this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
+    if (this._dragging) this._canvas.style.cursor = '';
     this._dragging = false;
     // 壳在 MOVE 超阈值时抢走手势，DOWN 已透传给 WebView——
     // 壳侧会先补发 ACTION_CANCEL（触发 pointercancel 收尾），这里兜底再清一次：
