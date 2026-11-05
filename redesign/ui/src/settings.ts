@@ -19,6 +19,8 @@ export interface PetSettings {
   scale: number;
   autoActions: boolean;
   mirror: boolean;
+  /** 显示猫耳；关闭时隐藏猫耳部件，耳朵互动与提到猫耳的台词一并停用。 */
+  showCatEars: boolean;
   randomSpeech: boolean;
   randomSpeechMinutes: number;
   /** 回复与聊天记录中显示生成配图卡片（含待生成占位符）。 */
@@ -56,6 +58,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   scale: 0.4,
   autoActions: true,
   mirror: false,
+  showCatEars: true,
   randomSpeech: false,
   randomSpeechMinutes: 5,
   showGeneratedImages: true,
@@ -161,6 +164,7 @@ export function loadSettings(): PetSettings {
       scale: clampScale(Number(parsed.scale ?? 1.0)),
       petOpacity: clampPetOpacity(parsed.petOpacity),
       fullClickThrough: parsed.fullClickThrough === true,
+      showCatEars: parsed.showCatEars !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
         ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,

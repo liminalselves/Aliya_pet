@@ -255,9 +255,21 @@ export class DialogueStore {
     return this._files.get(scene);
   }
 
+  private _excludedTags = new Set<string>();
+
+  /** 停用带指定标签的台词（如隐藏猫耳时的 ears）；变化时清空洗牌袋立即生效。 */
+  setExcludedTags(tags: Iterable<string>): void {
+    const next = new Set(tags);
+    if (next.size === this._excludedTags.size && [...next].every((t) => this._excludedTags.has(t))) return;
+    this._excludedTags = next;
+    this._bags.clear();
+    this._tagBags.clear();
+  }
+
   private _candidates(scene: string): DialogueEntry[] {
     return (this._files.get(scene)?.entries ?? []).filter(
-      (e) => e.enabled !== false && !!e.text?.trim()
+      (e) => e.enabled !== false && !!e.text?.trim() &&
+        !(this._excludedTags.size > 0 && e.tags?.some((t) => this._excludedTags.has(t)))
     );
   }
 

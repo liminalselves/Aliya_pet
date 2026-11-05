@@ -86,7 +86,7 @@
     {
       "id": "interaction_ear_left_4",
       "text": "别对着耳朵说话呀。",
-      "tags": ["ear_left"],
+      "tags": ["ear_left", "ears"],
       "enabled": true
     },
     {

@@ -208,6 +208,7 @@ export class PetApp {
   private _leftDown = false;
   private _dragCandidate = false;
   private _dragging = false;
+  private _catEarsVisible: boolean | null = null;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
   private _touchTapCandidate = false;
@@ -513,6 +514,22 @@ export class PetApp {
     };
   }
 
+  /**
+   * 猫耳显隐：部件淡入淡出；隐藏时耳朵命中区让给头部、耳朵相关台词停用，
+   * 正在进行的耳朵反应平滑收回。启动恢复一步落定，不播放淡变。
+   */
+  private _applyCatEars(visible: boolean, immediate: boolean): void {
+    const changed = this._catEarsVisible !== visible;
+    this._catEarsVisible = visible;
+    this._model?.setCatEarsVisible?.(visible, immediate || !changed);
+    for (const id of ['ear_left', 'ear_right']) {
+      if (visible) this._hitAreas?.disabled?.delete(id);
+      else this._hitAreas?.disabled?.add(id);
+    }
+    this._dialogue?.setExcludedTags?.(visible ? [] : ['ears']);
+    if (changed && !visible) this._interaction?.procedural.cancelAll();
+  }
+
   /** The overlay only runs local interactions; all network conversation lives in the main page. */
   private _initializeChat(): void {
     // 嵌入网页只展示本地互动；聊天需要登录，留在应用里。
@@ -704,6 +721,7 @@ export class PetApp {
     this.setFpsCap(s.batterySaver ? 15 : this._baseFpsCap);
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
+    this._applyCatEars(s.showCatEars, restoreWindow);
 
     // 窗口层
     if (platform === 'android') {
