@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod chat_window;
+mod screen_capture;
 mod miauth;
 
 use serde_json::json;
@@ -604,7 +605,8 @@ fn main() {
             chat_window::chat_layout,
             chat_window::set_chat_layout,
             miauth::miauth_begin,
-            miauth::miauth_end
+            miauth::miauth_end,
+            screen_capture::capture_screen
         ])
         // pet 移动/缩放时让已打开的 chat 跟随；settings/records 关闭时隐藏复用。
         .on_window_event(|window, event| {

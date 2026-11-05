@@ -34,6 +34,7 @@
         "label": "chat",
         "title": "Aliya 聊天",
         "url": "chat.html",
+        "dragDropEnabled": false,
         "width": 480,
         "height": 400,
         "transparent": true,
