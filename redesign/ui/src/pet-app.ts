@@ -209,6 +209,7 @@ export class PetApp {
   private _dragCandidate = false;
   private _dragging = false;
   private _catEarsVisible: boolean | null = null;
+  private _boostUntil = 0;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
   private _touchTapCandidate = false;
@@ -1821,6 +1822,7 @@ export class PetApp {
           const dy = e.screenY - this._downScreenY;
           if (Math.sqrt(dx * dx + dy * dy) >= PetApp._dragThresholdPx) {
             this._dragging = true;
+            this._canvas.style.cursor = 'grabbing';
             this._interaction?.dragReaction.beginDrag();
             this._interaction?.beginHold();
             if (this._behavior) this._behavior.isDragging = true;
@@ -1917,6 +1919,7 @@ export class PetApp {
     this._touchClickCandidate = false;
     this._interaction?.dragReaction.cancel();
     if (this._dragging && this._behavior) this._behavior.isDragging = false;
+    if (this._dragging) this._canvas.style.cursor = '';
     this._dragging = false;
   }
 
@@ -2270,8 +2273,9 @@ export class PetApp {
   private _frame(t: number): void {
     if (!this._running || this._paused || this._covered) return;
 
-    // 画内缩放期间临时不限帧，缩放过程按显示器刷新率推进。
-    const minInterval = 1000 / (this._deskScale ? 60 : this._fpsCap);
+    // 画内缩放与互动（拖动/抚摸/点击反应）期间临时升到 60fps，跟手更顺；
+    // 结束后回到常规上限。省电模式下互动也不升帧。
+    const minInterval = 1000 / (this._deskScale || this._interactionBoost(t) ? 60 : this._fpsCap);
     if (t - this._lastFrameTime < minInterval - 1) {
       this._scheduleFrame();
       return;
@@ -2307,6 +2311,15 @@ export class PetApp {
     this._maybeSendHitMask();
 
     this._scheduleFrame();
+  }
+
+  /** 互动升帧：互动进行中或刚结束 400ms 内（让收尾补间同样顺滑）。 */
+  private _interactionBoost(now: number): boolean {
+    if (this._settings?.batterySaver || this._fpsCap >= 60) return false;
+    const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
+      (this._interaction?.isBusy ?? false);
+    if (active) this._boostUntil = now + 400;
+    return now < this._boostUntil;
   }
 
   /**
@@ -2680,9 +2693,7 @@ export class PetApp {
     this._hitMaskGeometry = geometry;
     if (androidWrap) {
       // Android 悬浮窗：API 33+ 在输入分发前按整窗掩码裁剪可触摸区域。
-      let csv = '';
-      for (let i = 0; i < data.length; i++) csv += data[i];
-      androidShell()?.setHitMask(cols, rows, csv);
+      androidShell()?.setHitMask(cols, rows, data.join(''));
       return;
     }
     this._publishHitMask();

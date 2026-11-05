@@ -28,7 +28,8 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 - **Framework**（TypeScript）+ **Core** 6.0.1（wasm，内嵌于
   `live2dcubismcore.js`），取自 `third_party/cubism-web-sdk/`。
 - Vite 别名 `@framework/*` 指向 `third_party/cubism-web-sdk/Framework/src`。
-- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调），
+- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调）；拖动、抚摸、点击反应期间及结束后 400ms
+  临时 60fps（省电模式不升），实测单帧 update≈1ms、render≈0.07ms（Chromium，126 网格），
   Windows `preserveDrawingBuffer: true` 消除窗口缩放闪烁（Android 关闭，见 `ANDROID.md`）。
 - 渲染暂停：后台/熄屏时停止渲染循环（`PetApp.setPaused`）。
 
