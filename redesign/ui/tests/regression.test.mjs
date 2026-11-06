@@ -921,7 +921,7 @@ test('触屏头部轻点有反馈，未识别的大幅移动不误报为轻点',
 test('自动行为计时器实际遵守调度且不截断现有动作',()=>{
  const timers=new Map();let next=0,actions=0,speech=0;let allowed=false;
  const {BehaviorService}=load('behavior',{}, {setTimeout:fn=>{timers.set(++next,fn);return next},clearTimeout:id=>timers.delete(id)});
- const host={playAction(){actions++;return true},isActionPlaying:false};
+ const host={playAction(){actions++;return true},isActionPlaying:false,setLookTarget(){},clearLookTarget(){}};
  const b=new BehaviorService(()=>host);b.canIdle=()=>allowed;b.randomSpeechEnabled=true;b.onRandomSpeech=()=>speech++;b.start();
  function round(){const pending=[...timers.values()];timers.clear();for(const fn of pending)fn()}
  round();assert.equal(actions,0);assert.equal(speech,0);

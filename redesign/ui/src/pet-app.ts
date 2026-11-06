@@ -441,6 +441,7 @@ export class PetApp {
     this._behavior.onRandomSpeech = () => this._playRandom();
     this._behavior.setActionMeta(this._model.actionManifest);
     this._behavior.start();
+    if (this._paused) this._behavior.stop();
 
     // 情绪引擎（心境 → 默认表情 + 动作选择加权）+ AI 对外 API
     this._moodEngine = new MoodEngine(this._model);
@@ -2085,6 +2086,8 @@ export class PetApp {
   public setPaused(paused: boolean): void {
     if (this._paused === paused) return;
     this._paused = paused;
+    if (paused) this._behavior?.stop();
+    else this._behavior?.start();
     this._syncBackgroundMotion();
     if (paused) {
       this._chat?.stop();
