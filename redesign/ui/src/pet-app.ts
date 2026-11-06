@@ -1685,7 +1685,7 @@ export class PetApp {
   private _updatePointerLook(e: PointerEvent): void {
     if (platform === 'tauri' && e.pointerType === 'mouse') return;
     const n = this._eventNorm(e);
-    this._behavior?.updateLookTarget(n.nx, n.ny);
+    this._behavior?.updateLookTarget(n.nx, n.ny, e.type === 'pointerdown' && e.pointerType === 'touch');
   }
 
   /** 构造互动上下文（模型参考坐标 + 物理像素 + 真实事件间隔）。 */
@@ -1733,13 +1733,11 @@ export class PetApp {
     canvas.addEventListener('pointerdown', (e) => {
       if (this._fullClickThrough || !e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
+      // 按下即设置一次目标：短触摸不依赖 move；透明区仍只更新视线、不接管互动。
+      this._updatePointerLook(e);
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
-      if (!this._isOnCharacter(e)) {
-        // 触屏点空白处仍让角色看过去（鼠标视线由全局光标驱动）。
-        this._updatePointerLook(e);
-        return;
-      }
+      if (!this._isOnCharacter(e)) return;
       this._cancelSnapAnimation();
       this._activePointerId = e.pointerId;
       // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
@@ -1764,9 +1762,6 @@ export class PetApp {
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
-      // 视线跟随：按下即更新目标（轻点不移动也要看向触点）
-      this._updatePointerLook(e);
-
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
         // 声明互动手势：悬浮窗壳不得把这次手势抢成拖动
@@ -1777,7 +1772,6 @@ export class PetApp {
       if (e.button !== 0) return;
 
       this._leftDown = true;
-      this._updatePointerLook(e);
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
@@ -1828,6 +1822,8 @@ export class PetApp {
     canvas.addEventListener('pointerup', (e) => {
       if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       this._coordination.activity();
+      // 保留 UP 携带的最终有效触点；拖动接管时不恢复跟随，静止仍由行为层五秒释放。
+      if (e.pointerType === 'touch' && !this._dragging && !this._nativeDragging) this._updatePointerLook(e);
       const viaPetting = e.button === 2 || this._touchPetting;
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
       const ctx = this._ctx(e, viaPetting);
@@ -1860,6 +1856,7 @@ export class PetApp {
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
+      this._behavior?.clearLookTarget();
       this._cancelInteraction();
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
@@ -1869,12 +1866,14 @@ export class PetApp {
       if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
+      this._behavior?.clearLookTarget();
       this._cancelInteraction();
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
     });
-    canvas.addEventListener('pointerleave', () => {
-      if (platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
+    canvas.addEventListener('pointerleave', (e) => {
+      // 触摸抬起也会产生 leave，并非鼠标移出；最后触点交给行为层定时平滑释放。
+      if (e.pointerType === 'mouse' && platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
     });
     window.addEventListener('blur', () => {
       if (this._dragging && !this._wrapWindow) this._onDragFinished();

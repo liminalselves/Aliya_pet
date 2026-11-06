@@ -267,8 +267,9 @@ export class BehaviorService {
    * 更新视线目标（指针移动时调用）。
    * @param pointerNormX 指针相对角色渲染区域的归一化 X（0..1）
    * @param pointerNormY 归一化 Y（0..1，向下为正）
+   * @param newContact 新的触摸按下：同点重触也恢复跟随，不改变 move 的抖动过滤。
    */
-  updateLookTarget(pointerNormX: number, pointerNormY: number): void {
+  updateLookTarget(pointerNormX: number, pointerNormY: number, newContact = false): void {
     const host = this._getHost();
     if (!host) return;
     if (!this.lookAtEnabled || !this.petRunning || this.isDragging) {
@@ -285,7 +286,7 @@ export class BehaviorService {
 
     // 静止检测：桌面端每帧都会重复上报同一坐标，只有真正移动才刷新计时。
     const now = this._now();
-    const moved = !(Math.abs(x01 - this._lastPointerX) <= POINTER_MOVE_EPSILON &&
+    const moved = newContact || !(Math.abs(x01 - this._lastPointerX) <= POINTER_MOVE_EPSILON &&
       Math.abs(y01 - this._lastPointerY) <= POINTER_MOVE_EPSILON);
     if (moved) {
       const stillSeconds = (now - this._lastPointerMoveMs) / 1000;
