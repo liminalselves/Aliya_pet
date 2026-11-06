@@ -30,6 +30,7 @@ import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
 import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
 import { checkForUpdate } from './update/check';
+import { OFFICIAL_SITE_URL } from './update/config';
 import { openUpdateModal } from './update/dialog';
 import './settings.css';
 
@@ -1027,13 +1028,13 @@ if (platform === 'android') {
   checkRow.append(checkLab, checkBtn);
   box.appendChild(checkRow);
 
-  const repo = document.createElement('button');
-  repo.className = 'act wide';
-  repo.textContent = '打开项目仓库';
-  repo.addEventListener('click', () => {
-    openUrl('https://github.com/liminalselves/Aliya_pet');
+  const site = document.createElement('button');
+  site.className = 'act wide';
+  site.textContent = '打开官网';
+  site.addEventListener('click', () => {
+    openUrl(OFFICIAL_SITE_URL);
   });
-  box.appendChild(repo);
+  box.appendChild(site);
 }
 
 // 托盘改动经 pet 窗口广播 → 刷新控件
