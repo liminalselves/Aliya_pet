@@ -17,17 +17,36 @@ spec = importlib.util.spec_from_file_location("gen_motions", GENERATOR_PATH)
 generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
 
-# Preserve all eight unrelated recipes, including the existing eye fixes.
-UNCHANGED_SHA256 = {
-    "nod": "95347b8c15e947d616959f36976d078092f8a72f49e560e08bd83570b88e677e",
-    "sway": "5fcc57e9ec7746dac662512d37a13bbf6bf501a4527d387ad646358bd691a768",
-    "shake": "c9f0a65a8ffd18324e8058a6e1196f003d28cfeb1ea52273b9d8cd1e727b83d8",
-    "stretch": "d7510d980f2b278743f5ed8323cdfb38290809b71fc18a875b2eeb016d734ea6",
-    "wave": "2c1225dddc11068c9576a06f91d0b9e13a1a90e5bcdd58603977f2de13291c92",
-    "doubt": "658c6df418cf6155a9e3bf5d711866cd6cc8c1a071d7011ae951e92f8a577afc",
-    "angry": "73c08f5ebf92c2e58f9e765640b160a936ff3f44cfe03a6ed4d5b75d6069475e",
-    "yawn": "7ed97cbad4c3e1c5eb367d3b3e7f9345f5c86d9b5c3cb1a7eace0e2f3180a52a",
-}
+ALL_ACTIONS = {"nod", "sway", "shake", "stretch", "wave", "doubt", "angry", "yawn",
+               "cheerful_bounce", "shy_sway", "look_around", "daydream", "notice"}
+
+# Exaggerated gaze motions go past the older recipes; these caps are the
+# amplitudes measured by `npm run test:bounds` against the 1.30 render margin.
+GAZE_LIMITS = {"ParamAngleX": 18, "ParamAngleY": 9, "ParamAngleZ": 8,
+               "ParamBodyAngleX": 5.5, "ParamBodyAngleY": 5.5, "ParamBodyAngleZ": 3}
+EYE_SAFE = 14  # GazeController.EYE_LIMIT is 20; leave room for expression offsets.
+ARM_LIMIT = 3.5  # only notice flinches; well inside shy_sway's measured -10.
+
+
+def velocities(segments):
+    """Yield (time, incoming, outgoing) velocity at every interior key."""
+    start = (segments[0], segments[1])
+    i, previous_out, result = 2, None, []
+    while i < len(segments):
+        if segments[i] == 0:
+            vin = vout = 0.0
+            end = (segments[i + 1], segments[i + 2])
+            i += 3
+        else:
+            t1, v1, t2, v2, t3, v3 = segments[i + 1:i + 7]
+            vin = (v1 - start[1]) / (t1 - start[0])
+            vout = (v3 - v2) / (t3 - t2)
+            end = (t3, v3)
+            i += 7
+        if previous_out is not None:
+            result.append((start[0], previous_out, vin))
+        previous_out, start = vout, end
+    return result
 
 
 def endpoints(segments):
@@ -93,14 +112,33 @@ class SmoothMotionTests(unittest.TestCase):
         self.assertIsNotNone(incoming)
         self.assertLess(incoming, -1)
         self.assertAlmostEqual(incoming, outgoing, delta=0.01)
-        for pid, value in {'ParamArmL01': -5.8, 'ParamArmR01': -5.2,
-                           'ParamArmL02': -9.8, 'ParamArmR02': -10}.items():
+        # Forearms keep the exact hidden-hand plateau.
+        for pid, value in {'ParamArmL02': -9.8, 'ParamArmR02': -10}.items():
             keys, _, _ = endpoints(curves[pid])
             held = [(time, v) for time, v in keys if 0.6 <= time <= 3.65]
             self.assertEqual(len(held), 2)
             self.assertTrue(all(v == value for _, v in held), pid)
             self.assertGreaterEqual(held[1][0] - held[0][0], 2.8)
             self.assertEqual(keys[-1], (4.2, 0))
+        # Upper arms follow the sway but may only squeeze tighter (≤0.6), never loosen.
+        for pid, value in {'ParamArmL01': -5.8, 'ParamArmR01': -5.2}.items():
+            keys, _, _ = endpoints(curves[pid])
+            main = [v for time, v in keys if 0.72 <= time <= 3.62]
+            self.assertTrue(main and all(value - 0.6 - 1e-9 <= v <= value + 1e-9 for v in main), pid)
+            self.assertEqual(keys[-1], (4.2, 0))
+
+    def test_shy_sway_peek_meets_viewer_then_glances_away_with_blink(self):
+        curves = {c['Id']: endpoints(c['Segments'])[0] for c in generator.shy_sway()['Curves']}
+        self.assertIn((2.18, 0), curves['ParamEyeBallX'])
+        self.assertIn((2.52, -3), curves['ParamEyeBallX'])
+        eye = dict(curves['ParamEyeLOpen'])
+        self.assertEqual(eye[2.2], 1)
+        self.assertEqual(eye[2.48], 0)
+        head = dict(curves['ParamAngleY'])
+        self.assertGreater(head[2.2], head[1.8])
+        self.assertLess(head[2.55], head[2.2])
+        # Small counter-lean before the first sway, opposite to the first peak.
+        self.assertLess(dict(curves['ParamBodyAngleZ'])[0.22], 0)
 
     def test_sway_is_stronger_but_head_counterturn_is_subordinate(self):
         curves = {c['Id']: endpoints(c['Segments'])[0] for c in generator.shy_sway()['Curves']}
@@ -135,6 +173,112 @@ class SmoothMotionTests(unittest.TestCase):
             self.assertEqual(curves[pid][-1], (2.9, 0))
 
 
+class AllMotionFluidityTests(unittest.TestCase):
+    def test_every_motion_is_c1_continuous_and_never_overshoots_its_keys(self):
+        for name, recipe in generator.GENERATORS.items():
+            for curve in recipe()['Curves']:
+                s = curve['Segments']
+                for time, vin, vout in velocities(s):
+                    # Rounding to 4 decimals bounds the mismatch; no stop-start kinks.
+                    self.assertAlmostEqual(vin, vout, delta=0.05, msg=f"{name}/{curve['Id']} @ {time}")
+                keys, _, _ = endpoints(s)
+                lo, hi = min(v for _, v in keys), max(v for _, v in keys)
+                i = 2
+                while i < len(s):
+                    size = 3 if s[i] == 0 else 7
+                    for v in s[i + 2:i + size:2]:
+                        self.assertTrue(lo - 1e-9 <= v <= hi + 1e-9, f"{name}/{curve['Id']} overshoot")
+                    i += size
+
+    def test_multi_key_head_motions_no_longer_stop_at_intermediate_keys(self):
+        # The old per-segment ease halted at every key; only reversals may stop now.
+        curves = {c['Id']: c['Segments'] for c in generator.yawn()['Curves']}
+        moving = [abs(vin) for _, vin, _ in velocities(curves['ParamMouthOpenY']) if abs(vin) > 0.05]
+        self.assertTrue(moving, 'yawn mouth should flow through monotone intermediate keys')
+
+
+class GazeMotionTests(unittest.TestCase):
+    def curves(self, name):
+        return {c['Id']: endpoints(c['Segments'])[0] for c in generator.GENERATORS[name]()['Curves']}
+
+    def test_gaze_motions_stay_inside_measured_range_and_eye_limit(self):
+        for name in ('look_around', 'daydream', 'notice'):
+            curves = self.curves(name)
+            for pid, limit in GAZE_LIMITS.items():
+                self.assertLessEqual(max(abs(v) for _, v in curves[pid]), limit, (name, pid))
+            for pid in ('ParamEyeBallX', 'ParamEyeBallY'):
+                self.assertLessEqual(max(abs(v) for _, v in curves[pid]), EYE_SAFE, (name, pid))
+            for pid in ('ParamArmL01', 'ParamArmL02', 'ParamArmR01', 'ParamArmR02'):
+                self.assertLessEqual(max(abs(v) for _, v in curves[pid]), ARM_LIMIT, (name, pid))
+            for pid in ('ParamEyeLSmile', 'ParamEyeRSmile'):
+                self.assertLessEqual(max(abs(v) for _, v in curves[pid]), 0.25, (name, pid))
+
+    def test_exaggerated_turns_overshoot_then_settle(self):
+        head = dict(self.curves('look_around')['ParamAngleX'])
+        self.assertGreater(head[0.2], 0, 'anticipation turns the other way first')
+        self.assertLess(head[0.55], head[0.8], 'left turn overshoots before settling')
+        self.assertGreater(head[2.0], head[2.25], 'right turn overshoots before settling')
+
+    def test_half_closed_eyes_keep_gaze_small(self):
+        # Gaze clamp shrinks with eye openness; keep travel ≤ 20×openness at every key.
+        for name in ('look_around', 'daydream', 'notice'):
+            curves = self.curves(name)
+            eye = dict(curves['ParamEyeLOpen'])
+            bx, by = dict(curves['ParamEyeBallX']), dict(curves['ParamEyeBallY'])
+            for t, openness in eye.items():
+                if t in bx and t in by:
+                    self.assertLessEqual((bx[t] ** 2 + by[t] ** 2) ** 0.5, 20 * openness + 1e-9, (name, t))
+
+    def test_look_around_leads_with_eyes_then_head_then_body(self):
+        c = self.curves('look_around')
+        first_peak = lambda pid: min(t for t, v in c[pid] if abs(v) > 0)
+        self.assertLess(first_peak('ParamEyeBallX'), first_peak('ParamAngleX'))
+        self.assertLess(first_peak('ParamAngleX'), first_peak('ParamBodyAngleX'))
+        self.assertIn((1.6, 0), c['ParamEyeLOpen'], 'blink hides the large saccade')
+
+    def test_notice_is_short_and_leaves_gaze_to_the_pointer(self):
+        motion = generator.notice()
+        self.assertLessEqual(motion['Meta']['Duration'], 2 + generator.TAIL_SECONDS)
+        c = self.curves('notice')
+        for pid in ('ParamEyeBallX', 'ParamEyeBallY'):
+            self.assertTrue(all(v == 0 for _, v in c[pid]))
+
+
+class LegacyRemakeTests(unittest.TestCase):
+    LEGACY = ('nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn')
+    DURATIONS = {'nod': 3.2, 'sway': 5.6, 'shake': 3.8, 'stretch': 5.0,
+                 'wave': 4.2, 'doubt': 4.4, 'angry': 4.2, 'yawn': 5.6}
+
+    def test_durations_unchanged_and_wave_leaves_arms_to_hand_channel(self):
+        for name in self.LEGACY:
+            motion = generator.GENERATORS[name]()
+            self.assertEqual(motion['Meta']['Duration'], self.DURATIONS[name], name)
+        wave = {c['Id']: endpoints(c['Segments'])[0] for c in generator.wave()['Curves']}
+        for pid in ('ParamArmL01', 'ParamArmL02', 'ParamArmR01', 'ParamArmR02'):
+            self.assertTrue(all(v == 0 for _, v in wave[pid]), pid)
+
+    def test_smile_gaze_rule_holds_at_every_key(self):
+        # Full smile (≥0.7) keeps eyes centered; light smile (≤0.4) keeps gaze ≤ 5.
+        for name in self.LEGACY:
+            c = {k['Id']: dict(endpoints(k['Segments'])[0]) for k in generator.GENERATORS[name]()['Curves']}
+            smile = c['ParamEyeLSmile']
+            for t, s in smile.items():
+                for pid in ('ParamEyeBallX', 'ParamEyeBallY'):
+                    if t in c[pid]:
+                        if s >= 0.7:
+                            self.assertEqual(c[pid][t], 0, (name, pid, t))
+                        elif s > 0:
+                            self.assertLessEqual(abs(c[pid][t]), 5, (name, pid, t))
+
+    def test_arm_gestures_stay_small_and_return(self):
+        for name in self.LEGACY:
+            for curve in generator.GENERATORS[name]()['Curves']:
+                if curve['Id'].startswith('ParamArm'):
+                    keys = endpoints(curve['Segments'])[0]
+                    self.assertLessEqual(max(abs(v) for _, v in keys), 6.5, (name, curve['Id']))
+                    self.assertEqual(keys[-1][1], 0)
+
+
 class CliTests(unittest.TestCase):
     def test_normal_generator_writes_only_registered_motions_and_preserves_other_recipes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -142,14 +286,12 @@ class CliTests(unittest.TestCase):
             output = io.StringIO()
             with mock.patch.multiple(generator, MOTIONS_DIR=str(motions), DIST_DIR=str(dist)), contextlib.redirect_stdout(output):
                 generator.main()
-            expected_names = set(UNCHANGED_SHA256) | {'shy_sway', 'cheerful_bounce'}
+            expected_names = ALL_ACTIONS
             self.assertEqual(set(generator.GENERATORS), expected_names)
             expected_stdout = ''
             for name, recipe in generator.GENERATORS.items():
                 payload = (motions / f'{name}.motion3.json').read_bytes()
                 self.assertEqual(payload, (dist / f'{name}.motion3.json').read_bytes())
-                if name in UNCHANGED_SHA256:
-                    self.assertEqual(hashlib.sha256(payload).hexdigest(), UNCHANGED_SHA256[name], name)
                 data = json.loads(payload)
                 self.assertEqual(data, recipe())
                 meta = data['Meta']

@@ -14,7 +14,9 @@ export interface PerformanceItem {
 export const PERFORMANCE_EXPRESSIONS: readonly PerformanceItem[] = [
   { name: 'neutral', hint: '平静' },
   { name: 'happy', hint: '开心' },
-  { name: 'angry', hint: '生气' },
+  { name: 'angry', hint: '生气（黑脸 + 怒气符号）' },
+  { name: 'annoyed', hint: '不爽：只冒怒气符号，轻微皱眉别开脸，不黑脸' },
+  { name: 'gloomy', hint: '阴沉：只有黑脸低头压眉，没有怒气符号' },
   { name: 'sad', hint: '难过' },
   { name: 'surprised', hint: '惊讶' },
   { name: 'shy', hint: '害羞' },
@@ -37,6 +39,9 @@ export const PERFORMANCE_ACTIONS: readonly PerformanceItem[] = [
   { name: 'yawn', hint: '打哈欠' },
   { name: 'cheerful_bounce', hint: '开心地轻弹上半身，笑着逐渐收住（不离地跳跃）' },
   { name: 'shy_sway', hint: '撒娇：小臂内折藏在外套后、低头轻晃，自动渐入脸红并随收尾淡出；不替换当前表情（非手指交握）' },
+  { name: 'look_around', hint: '左右张望，像在找东西或好奇四周' },
+  { name: 'daydream', hint: '发呆走神：视线飘向上方、眼皮半垂，最后眨眼回神' },
+  { name: 'notice', hint: '回过神来：轻微一惊、挑眉眨眼后转成微笑' },
 ];
 
 export interface PerformanceRequestPayload {

@@ -113,7 +113,7 @@ export class ChatView {
         <form class="chat-composer" hidden>
           <div class="composer-attachment" hidden><img alt="待发送的图片"><button type="button" class="remove-attachment" title="移除图片" aria-label="移除图片"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button><span class="attachment-state"></span></div>
           <div class="composer-row"><textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea><span class="composer-action"><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" disabled><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg></button><button type="submit" class="send" title="发送（Enter）" aria-label="发送"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
-          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="attach" title="发送图片" aria-label="发送图片"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7.2" cy="8.2" r="1.45" fill="currentColor"/><path d="M3.2 14.2l4.1-3.9 2.9 2.6 2.4-2.1 4.2 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></button><input type="file" class="attach-input" accept="image/*" hidden><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="attach" title="发送图片" aria-label="发送图片"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7.2" cy="8.2" r="1.45" fill="currentColor"/><path d="M3.2 14.2l4.1-3.9 2.9 2.6 2.4-2.1 4.2 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></button><input type="file" class="attach-input" accept="image/*" hidden><button type="button" class="attach capture-screen" title="截取当前屏幕（发送前可预览、移除）" aria-label="截取当前屏幕" hidden><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 16.5h6M10 13.5v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
         </form>
       </div>`;
     document.body.append(this.root);
@@ -143,13 +143,49 @@ export class ChatView {
     this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; this.reportLayout(); };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     const picker = this.get<HTMLInputElement>('.attach-input');
-    this.get('.attach').onclick = () => { if (!this.attachBlocked()) picker.click(); };
+    this.get('.attach').onclick = () => { if (!this.attachBlocked()) { this.invalidateCapture(); picker.click(); } };
     picker.onchange = () => {
       const file = picker.files?.[0];
       picker.value = '';
       if (file) this.setAttachment(file);
     };
     this.get('.remove-attachment').onclick = () => { if (!this.uploading) this.setAttachment(null); };
+    // 「看看我的屏幕」：仅 Windows 壳；截图只进入待发送预览，用户按发送才上传。
+    const capture = this.get<HTMLButtonElement>('.capture-screen');
+    capture.hidden = platform !== 'tauri';
+    capture.onclick = () => { void this.captureScreen(); };
+    // 拖入图片：落在输入框区域即作为附件（Tauri chat 窗口已关闭原生拖放接管）。
+    let dragDepth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const endDrag = () => { dragDepth = 0; this.composer.classList.remove('drop-target'); };
+    this.composer.addEventListener('dragenter', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth++;
+      this.composer.classList.toggle('drop-target', !this.attachBlocked());
+    });
+    this.composer.addEventListener('dragover', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = this.attachBlocked() ? 'none' : 'copy';
+    });
+    this.composer.addEventListener('dragleave', e => {
+      if (!hasFiles(e)) return;
+      if (--dragDepth <= 0) endDrag();
+    });
+    this.composer.addEventListener('drop', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      endDrag();
+      if (this.attachBlocked()) return;
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      const image = files.find(f => f.type.startsWith('image/'));
+      if (image) this.setAttachment(image);
+      else if (files.length) { this.status.textContent = '只能发送图片。'; this.reportLayout(); }
+    });
+    // 落在输入框外的文件不让 WebView 直接打开导航走。
+    window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+    window.addEventListener('drop', e => { if (hasFiles(e)) e.preventDefault(); });
     // 粘贴图片（截图后 Ctrl+V）直接作为附件。
     this.input.addEventListener('paste', e => {
       const item = Array.from(e.clipboardData?.items ?? []).find(i => i.kind === 'file' && i.type.startsWith('image/'));
@@ -218,6 +254,8 @@ export class ChatView {
   private started = false;
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
+  /** 回复正在面板上展示（含读完末页前）：桌宠待机动作/随机台词须让位，否则会盖掉聊天表演。 */
+  get replying(): boolean { return this.replyActive; }
   /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
   get panelVisible(): boolean { return this.isOpen && !this.panel.hidden; }
   hitRects(): DOMRect[] { return (this.isOpen ? [this.panel, this.composer] : [this.get('.chat-launcher')]).map(e => e.getBoundingClientRect()).filter(r => r.width && r.height); }
@@ -226,6 +264,7 @@ export class ChatView {
     if (open) this.cancelExit();
     const wasOpen = this.isOpen;
     if (!open) {
+      this.invalidateCapture();
       this.clearPlayback();
       this.clearRendering();
       this.replyActive = false;
@@ -282,6 +321,7 @@ export class ChatView {
    */
   private close(): void {
     if (this.exitTimer) return;
+    this.invalidateCapture();
     const shell = this.get('.chat-shell');
     if (this.isOpen && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.cancelShellEnter();
@@ -308,8 +348,9 @@ export class ChatView {
     const busy = this.controller.busy === true;
     const ready = this.screen === 'ready';
     this.composer.classList.toggle('empty', !this.input.value.trim() && !this.attachment);
-    const attach = this.composer.querySelector<HTMLButtonElement>('.attach');
-    if (attach) attach.disabled = this.attachBlocked();
+    this.composer.querySelectorAll<HTMLButtonElement>('.attach').forEach(b => {
+      b.disabled = this.attachBlocked() || (b.classList.contains('capture-screen') && this.capturing);
+    });
     const remove = this.composer.querySelector<HTMLButtonElement>('.remove-attachment');
     if (remove) remove.disabled = this.uploading || busy;
     this.composer.classList.toggle('busy', busy);
@@ -327,9 +368,10 @@ export class ChatView {
   }
   private notify(): void {
     // 运行态经壳汇总后全局广播 chat-state {busy, typing, open}（open 由壳按窗口可见性裁定）。
-    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_state', { busy: this.controller.busy, typing: this.typing })).catch(() => {});
+    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_state', { busy: this.controller.busy, typing: this.typing, replying: this.replyActive })).catch(() => {});
   }
   private reset(): AbortSignal {
+    this.invalidateCapture();
     this.operation?.abort(); this.operation = new AbortController(); ++this.sequence;
     if (this.uploading) {
       this.uploading = false;
@@ -560,8 +602,66 @@ export class ChatView {
   private attachBlocked(): boolean {
     return this.screen !== 'ready' || this.controller?.busy === true || this.uploading;
   }
+  private capturing = false;
+  /** 版本只属于截图；失效不阻塞用户继续选图、发送或发起新截图。 */
+  private captureVersion = 0;
+  private invalidateCapture(): void {
+    ++this.captureVersion;
+    if (!this.capturing) return;
+    this.capturing = false;
+    if (this.status.textContent === '截图中……') this.status.textContent = '';
+    this.syncComposerState();
+  }
+  /** 截取桌宠所在显示器（壳会把桌宠/聊天窗排除在画面外），缩到 1600px 内转 JPEG 作附件。 */
+  private async captureScreen(): Promise<void> {
+    if (this.capturing || this.attachBlocked() || !this.isOpen || this.exitTimer) return;
+    const version = ++this.captureVersion;
+    const session = this.activeSession;
+    const sequence = this.sequence;
+    const attachment = this.attachment;
+    const current = () => version === this.captureVersion && session === this.activeSession
+      && sequence === this.sequence && attachment === this.attachment
+      && this.isOpen && !this.exitTimer && !this.attachBlocked();
+    this.capturing = true;
+    this.status.textContent = '截图中……';
+    this.syncComposerState();
+    this.reportLayout();
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      if (!current()) return;
+      const raw = new Uint8Array(await invoke<ArrayBuffer>('capture_screen'));
+      if (!current()) return;
+      const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+      const w = view.getUint32(0, true), h = view.getUint32(4, true);
+      if (!w || !h || raw.byteLength !== 8 + w * h * 4) throw new Error('截图数据无效');
+      const full = document.createElement('canvas');
+      full.width = w; full.height = h;
+      full.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(raw.buffer, raw.byteOffset + 8, w * h * 4), w, h), 0, 0);
+      const k = Math.min(1, 1600 / Math.max(w, h));
+      const out = document.createElement('canvas');
+      out.width = Math.round(w * k); out.height = Math.round(h * k);
+      out.getContext('2d')!.drawImage(full, 0, 0, out.width, out.height);
+      const blob = await new Promise<Blob | null>(resolve => out.toBlob(resolve, 'image/jpeg', 0.85));
+      if (!current()) return;
+      if (!blob) throw new Error('图片编码失败');
+      this.status.textContent = '';
+      // 提交结果前结束本次请求；setAttachment 会递增版本，阻止任何旧结果复活。
+      this.capturing = false;
+      this.setAttachment(blob, 'screen');
+      if (!this.input.value.trim()) { this.input.value = '看看我现在在干什么？'; this.syncComposerState(); }
+    } catch (e) {
+      if (current()) this.status.textContent = `截图失败：${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      if (version === this.captureVersion) {
+        this.capturing = false;
+        this.syncComposerState();
+        this.reportLayout();
+      }
+    }
+  }
   /** 选中/替换/移除待发送图片（一条消息一张，与服务端一致）。 */
   private setAttachment(file: Blob | null, name = 'image'): void {
+    this.invalidateCapture();
     if (this.attachment) URL.revokeObjectURL(this.attachment.url);
     this.attachment = null;
     const box = this.get('.composer-attachment');
@@ -587,6 +687,7 @@ export class ChatView {
     const text = this.input.value.trim();
     const attachment = this.attachment;
     if (!text && !attachment) return;
+    this.invalidateCapture();
     if (!attachment) {
       this.input.value = ''; this.input.style.height = ''; this.syncComposerState();
       this.showPending(); void this.controller.send(text);
@@ -623,6 +724,7 @@ export class ChatView {
   }
   private changed(): void {
     const c = this.controller;
+    if (c.busy) this.invalidateCapture();
     this.get<HTMLButtonElement>('.send').disabled = c.busy || this.screen !== 'ready';
     this.get<HTMLButtonElement>('.stop').disabled = !c.busy;
     // 等待提示在输入框占位里显示（等待期间不可输入）；状态行只留停止/错误等需要留意的信息。
@@ -676,7 +778,7 @@ export class ChatView {
     this.historyVisible = false; this.clearPlayback(); this.clearRendering();
     this.clearContentAnimation();
     this.content.replaceChildren(); this.content.scrollTop = 0;
-    this.replyActive = true;
+    this.replyActive = true; this.notify();
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
     // 渲染器先构建整条回复；准备期间必须脱离布局，不能只设 visibility:hidden。
@@ -691,7 +793,7 @@ export class ChatView {
       if (!this.typewriter?.typing) this.reportLayout();
     });
     this.showPanel(''); this.updateHint();
-    if (!task) { this.replyActive = false; this.updateHint(); return; }
+    if (!task) { this.replyActive = false; this.notify(); this.updateHint(); return; }
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
       // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接；面板高度由 onPanelResize 补间。
@@ -855,8 +957,10 @@ export class ChatView {
   private clearPlayback(keepLock = false): void {
     if (!keepLock) this.unlockPanel();
     // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
-    if (this.replyActive) this.controller.onCancelPerformance();
+    const wasReplying = this.replyActive;
+    if (wasReplying) this.controller.onCancelPerformance();
     this.replyActive = false; this.replyToken = null; this.playing = false;
+    if (wasReplying) this.notify();
     this.segments = []; this.pageIndex = 0;
     this.typewriter?.cancel(); this.typewriter = null;
     this.clearCueTimer();
@@ -919,6 +1023,7 @@ export class ChatView {
     if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;
     const request = readControlRequest(this.storage);
     if (!request || request.sessionId !== this.activeSession?.id) return;
+    this.invalidateCapture();
     this.controlRequestActive = true;
     const seq = this.sequence;
     try {
