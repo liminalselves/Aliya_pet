@@ -724,6 +724,83 @@ test('Android 左下角贴边在松手时保存终点，进入 App 打断动画�
   assert.equal(animations.length, 1);
 });
 
+function androidRotationHarness({ origin = [375, 160], snapEdges = true, scale = 0.2 } = {}) {
+  const saved = [], prefs = [], rects = [];
+  const settings = load('settings');
+  let screen = { screenW: 400, screenH: 800 };
+  const shell = {
+    getMetrics: () => JSON.stringify(screen),
+    setPref: (key, value) => prefs.push([key, value]),
+    setWindowRect: (...rect) => rects.push(rect),
+    setDialogueBubble() {},
+  };
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => shell },
+    './settings': { ...settings, saveSettings: value => saved.push({ ...value }) },
+  }, {
+    window: { matchMedia: () => ({ matches: true }) },
+    document: { body: { classList: { remove() {} }, dataset: {} }, documentElement: {} },
+    getComputedStyle: () => ({ getPropertyValue: () => 'linear' }),
+  });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _wrapWindow: true, _settings: { ...settings.DEFAULT_SETTINGS, scale, snapEdges },
+    _originCssX: origin[0], _originCssY: origin[1],
+    _screenW: 400, _screenH: 800, _snapAnimToken: 0,
+    _contentScaleCss: 675 * PetApp._windowMarginRatio * scale / PetApp._renderMarginRatio / 1.1,
+    _rectInited: true, _rectDirty: false, _nativeSnapping: false, _scaleTween: null,
+    _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1, getStaticBounds: () => bounds },
+  });
+  const edges = () => [app._originCssX + bounds.minX * app._contentScaleCss,
+    screen.screenW - app._originCssX - bounds.maxX * app._contentScaleCss,
+    app._originCssY - bounds.maxY * app._contentScaleCss,
+    screen.screenH - app._originCssY + bounds.minY * app._contentScaleCss];
+  const rotate = (width, height) => {
+    screen = { screenW: width, screenH: height };
+    app.onShellEvent('display-changed');
+    app._syncWrapWindow();
+  };
+  return { app, rotate, edges, saved, prefs, rects };
+}
+
+for (const edge of [0, 1, 2, 3]) {
+  test(`Android 旋转前贴${['左', '右', '上', '下'][edge]}边，旋转后吸附最近边缘并保存位置`, () => {
+    const h = androidRotationHarness();
+    const gaps = h.edges();
+    // 从真实贴边位置开始；左右放在上半屏，保证旋转后不落入旧的 48px 感应带。
+    if (edge === 0) h.app._originCssX -= gaps[0];
+    if (edge === 1) h.app._originCssX += gaps[1];
+    if (edge === 2) h.app._originCssY -= gaps[2];
+    if (edge === 3) h.app._originCssY += gaps[3];
+    h.rotate(800, 400);
+    assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6, '已贴边的人物不能因旋转留在屏幕中间');
+    if (edge === 1) assert.ok(Math.abs(h.edges()[2]) < 1e-6, '原右边落在横屏内部后，应选择更近的上边而非继续强制靠右');
+    assert.deepEqual([h.saved.at(-1).posX, h.saved.at(-1).posY], [h.app._originCssX, h.app._originCssY]);
+    assert.deepEqual(h.prefs.slice(-2), [['petX', String(Math.round(h.app._originCssX))], ['petY', String(Math.round(h.app._originCssY))]]);
+    assert.equal(h.rects.length, 1, '新定位仍通过现有矩形同步发给原生壳');
+    h.rotate(400, 800);
+    assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6, '切回竖屏也保持贴边');
+  });
+}
+
+test('Android 旋转时先按新屏幕限制缩放，再把已贴边人物归位到可见区域', () => {
+  const h = androidRotationHarness({ scale: 0.9 });
+  h.app._originCssX += h.edges()[1];
+  h.app._originCssY += h.edges()[3];
+  h.rotate(800, 400);
+  assert.ok(h.app._settings.scale < 0.9, '横屏高度不足时仍执行现有缩放限制');
+  assert.ok(h.edges().every(gap => gap >= -1e-6), '人物可见边界不越出新屏幕');
+  assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6);
+});
+
+test('Android 未贴边人物旋转不强制吸附，关闭贴边时保留原位置', () => {
+  for (const options of [{ origin: [220, 200] }, { origin: [375, 160], snapEdges: false }]) {
+    const h = androidRotationHarness(options), before = [h.app._originCssX, h.app._originCssY];
+    h.rotate(800, 400);
+    assert.deepEqual([h.app._originCssX, h.app._originCssY], before);
+  }
+});
+
 for (const entry of ['resume', 'startup']) {
   test(`Android 主界面${entry}不把旧坐标写回悬浮窗存档`, () => {
     const storage = new Map();

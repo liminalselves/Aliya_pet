@@ -1048,9 +1048,17 @@ export class PetApp {
    * Android：App 内为全屏容器无窗口操作；悬浮窗走内容贴合模式，
    * 这里只钳制缩放范围（CSS px），窗口矩形由渲染帧逐帧跟随角色剪影。
    */
-  private _applyWindowSettingsAndroid(s: PetSettings, restoreWindow: boolean): void {
+  private _applyWindowSettingsAndroid(s: PetSettings, restoreWindow: boolean, displayChanged = false): void {
     const shell = androidShell();
     if (!shell) return;
+    // 必须在刷新屏幕尺寸与缩放前判断贴边；旋转后旧屏边可能落在新屏幕中央。
+    const b = displayChanged && s.snapEdges ? this._model?.getStaticBounds() : null;
+    const wasSnapped = !!b && this._screenW > 0 && this._screenH > 0 && Math.min(
+      Math.abs(this._originCssX + b.minX * this._contentScaleCss),
+      Math.abs(this._screenW - this._originCssX - b.maxX * this._contentScaleCss),
+      Math.abs(this._originCssY - b.maxY * this._contentScaleCss),
+      Math.abs(this._screenH - this._originCssY + b.minY * this._contentScaleCss),
+    ) <= 1; // 容忍原生窗口坐标取整。
     this._refreshShellMetrics();
     const baseH = 675 * PetApp._windowMarginRatio;
     const baseW =
@@ -1093,8 +1101,9 @@ export class PetApp {
           this._scaleTween = { from: shownScale, to: this._contentScaleCss, start: performance.now(), settled: true };
         } else this._scaleTween = null;
       }
+      if (displayChanged) this._cancelSnapAnimation();
       this._rectInited = false;
-      if (this._model?.isReady() && s.snapEdges) this._onDragFinishedAndroid();
+      if (this._model?.isReady() && s.snapEdges) this._onDragFinishedAndroid(wasSnapped);
       return;
     }
     // App 内全屏：无窗口操作（保留签名兼容旧逻辑）
@@ -1514,7 +1523,7 @@ export class PetApp {
    * 开启贴边时越界必归位（越界即近边的延伸）；关闭时可整个拖出屏幕
    * （找不回时走设置页「重置位置」）。
    */
-  private _onDragFinishedAndroid(): void {
+  private _onDragFinishedAndroid(forceNearestEdge = false): void {
     const shell = androidShell();
     if (!shell) return;
     // App 内全屏模式没有可移动的窗口：不吸附、不持久化
@@ -1526,18 +1535,20 @@ export class PetApp {
       const b = this._model?.getStaticBounds() ?? null;
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
-        const zone = PetApp._snapZonePx;
+        const zone = forceNearestEdge ? 0 : PetApp._snapZonePx;
         let tx = this._originCssX;
         let ty = this._originCssY;
         const charL = tx + b.minX * s;
         const charR = tx + b.maxX * s;
         const charT = ty - b.maxY * s;
         const charB = ty - b.minY * s;
-        // 统一规则：角色边越界或在感应带内 → 贴到对应屏边
-        if (charL <= zone) tx -= charL;
-        else if (charR >= m.screenW - zone) tx += m.screenW - charR;
-        if (charT <= zone) ty -= charT;
-        else if (charB >= m.screenH - zone) ty += m.screenH - charB;
+        // 旋转前已贴边：不受感应带限制，按新尺寸选择最近屏边；越界的另一轴仍归位。
+        const gaps = [charL, m.screenW - charR, charT, m.screenH - charB].map(Math.abs);
+        const nearest = forceNearestEdge ? gaps.indexOf(Math.min(...gaps)) : -1;
+        if (charL <= zone || nearest === 0) tx -= charL;
+        else if (charR >= m.screenW - zone || nearest === 1) tx += m.screenW - charR;
+        if (charT <= zone || nearest === 2) ty -= charT;
+        else if (charB >= m.screenH - zone || nearest === 3) ty += m.screenH - charB;
         if (tx !== this._originCssX || ty !== this._originCssY) {
           // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
           this._persistWrapOrigin(tx, ty);
@@ -2110,7 +2121,7 @@ export class PetApp {
       this.setPaused(false);
       this._reloadAfterContextLoss();
     } else if (event === 'display-changed' && this._wrapWindow) {
-      this._applyWindowSettingsAndroid(this._settings, false);
+      this._applyWindowSettingsAndroid(this._settings, false, true);
     }
   }
 
