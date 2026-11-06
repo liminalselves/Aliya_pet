@@ -94,6 +94,15 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragLastRawX = 0f
     private var dragLastRawY = 0f
     private var dragMaxSpeed = 0f
+    private var gesturePhase = OverlayGesturePolicy.Phase.VOID
+    private var gestureDownTime = 0L
+    /** 按住不动到系统长按时长即接管拖动（手指静止时没有 MOVE，需要定时触发）。 */
+    private val armDrag = Runnable {
+        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING || jsInteracting || displaySettings.ignoresTouch) return@Runnable
+        gesturePhase = OverlayGesturePolicy.Phase.ARMED
+        beginNativeDrag(android.os.SystemClock.uptimeMillis())
+        web.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+    }
     private var windowAttached = false
     /** 贴边归位动画（原生驱动，与 tokens.css --al-ease 同一条曲线）。 */
     private var snapAnimator: ValueAnimator? = null
@@ -242,6 +251,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
         if (::web.isInitialized) {
             web.removeCallbacks(restoreTouchable)
+            web.removeCallbacks(armDrag)
             web.destroy()
         }
         super.onDestroy()
@@ -351,6 +361,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         return@listener true
                     }
                     tapCandidate = true
+                    gesturePhase = OverlayGesturePolicy.Phase.PENDING
+                    gestureDownTime = ev.downTime
+                    web.removeCallbacks(armDrag)
+                    web.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout().toLong())
                     dragPointerId = ev.getPointerId(0)
                     dragStartRawX = ev.rawX
                     dragStartRawY = ev.rawY
@@ -369,32 +383,20 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     } else {
                         val dx = ev.rawX - dragStartRawX
                         val dy = ev.rawY - dragStartRawY
-                        if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                        val wasPending = gesturePhase == OverlayGesturePolicy.Phase.PENDING
+                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, ev.eventTime - ev.downTime,
+                            dx * dx + dy * dy, touchSlop, ViewConfiguration.getLongPressTimeout().toLong(), !jsInteracting)
+                        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING) web.removeCallbacks(armDrag)
+                        if (gesturePhase == OverlayGesturePolicy.Phase.VOID) {
+                            // 长按前滑开：既不算点击（不参与双击）也不搬窗口，事件照常交给 WebView。
                             tapCandidate = false
                             lastTapAt = 0L
                         }
-                        if (!nativeDragging &&
-                            !jsInteracting &&
-                            dx * dx + dy * dy > touchSlop * touchSlop
-                        ) {
-                            // 抢走手势前补发 CANCEL 给 WebView：DOWN 已透传给前端，
-                            // 若不补 CANCEL，JS 的 pointerdown（抚摸按下）永远收不到
-                            // 配对结束，petting/interacting 状态卡死。须在 nativeDragging
-                            // 置 true 之前发——否则后续分支返回 true 会把 CANCEL 也吞掉。
-                            val cancel = MotionEvent.obtain(ev)
-                            cancel.action = MotionEvent.ACTION_CANCEL
-                            web.dispatchTouchEvent(cancel)
-                            cancel.recycle()
-                            // 归位途中被抓起：停在当前位置，拖动从此刻的窗口与指针接着算，不跳。
-                            if (snapAnimator != null) {
-                                cancelSnapAnimation(notify = true)
-                                dragStartParamX = params.x
-                                dragStartParamY = params.y
-                                dragStartRawX = ev.rawX
-                                dragStartRawY = ev.rawY
-                            }
-                            nativeDragging = true
-                            evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
+                        // 定时器晚到时由 MOVE 补上接管；拖动从此刻的指针位置起算，不跳。
+                        if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) {
+                            dragLastRawX = ev.rawX
+                            dragLastRawY = ev.rawY
+                            beginNativeDrag(ev.eventTime)
                         }
                         val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
                         if (nativeDragging) dragMaxSpeed = maxOf(dragMaxSpeed,
@@ -420,13 +422,22 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                 MotionEvent.ACTION_POINTER_DOWN -> {
                     tapCandidate = false
                     lastTapAt = 0L
+                    // 多指不是拖动：未接管前作废本次手势，已在拖动的继续由首指驱动。
+                    if (gesturePhase == OverlayGesturePolicy.Phase.PENDING) {
+                        gesturePhase = OverlayGesturePolicy.Phase.VOID
+                        web.removeCallbacks(armDrag)
+                    }
                     false
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    web.removeCallbacks(armDrag)
+                    val upDx = ev.rawX - dragStartRawX
+                    val upDy = ev.rawY - dragStartRawY
                     val tap = ev.actionMasked == MotionEvent.ACTION_UP && tapCandidate && !nativeDragging &&
-                        ev.eventTime - ev.downTime < ViewConfiguration.getLongPressTimeout() &&
-                        kotlin.math.hypot(ev.rawX - dragStartRawX, ev.rawY - dragStartRawY) <= touchSlop
+                        OverlayGesturePolicy.isTap(gesturePhase, ev.eventTime - ev.downTime, upDx * upDx + upDy * upDy,
+                            touchSlop, ViewConfiguration.getLongPressTimeout().toLong())
                     tapCandidate = false
+                    gesturePhase = OverlayGesturePolicy.Phase.VOID
                     if (tap) {
                         val slop = ViewConfiguration.get(this).scaledDoubleTapSlop
                         if (lastTapAt > 0 && ev.eventTime - lastTapAt <= ViewConfiguration.getDoubleTapTimeout() &&
@@ -464,6 +475,26 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                 else -> false
             }
         }
+    }
+
+    /**
+     * 壳接管拖动：先补发 CANCEL 给 WebView——DOWN 已透传给前端，若不补 CANCEL，
+     * JS 的 pointerdown 永远收不到配对结束，按下/互动状态卡死。须在 nativeDragging
+     * 置 true 之前发，否则后续分支返回 true 会把 CANCEL 也吞掉。
+     */
+    private fun beginNativeDrag(eventTime: Long) {
+        val cancel = MotionEvent.obtain(gestureDownTime, eventTime, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+        web.dispatchTouchEvent(cancel)
+        cancel.recycle()
+        // 拖动从接管时的窗口与指针起算；归位途中被抓起则停在当前位置接着拖，不跳。
+        if (snapAnimator != null) cancelSnapAnimation(notify = true)
+        dragStartParamX = params.x
+        dragStartParamY = params.y
+        dragStartRawX = dragLastRawX
+        dragStartRawY = dragLastRawY
+        dragLastAt = eventTime
+        nativeDragging = true
+        evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
     }
 
     /** 事件坐标（窗口内物理 px）是否落在角色透明像素上。无掩码时保守视为不透明。 */
@@ -518,6 +549,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             nativeDragging = false
             jsInteracting = false
             tapCandidate = false
+            gesturePhase = OverlayGesturePolicy.Phase.VOID
+            web.removeCallbacks(armDrag)
             lastTapAt = 0L
             dragPointerId = -1
         }

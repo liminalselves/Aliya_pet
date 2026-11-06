@@ -103,6 +103,11 @@ export class PetModel
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
+  // 猫耳显隐：部件不透明度逐帧逼近目标（部件不进 saveParameters，每帧显式写入）。
+  private _earPartIndex = -1;
+  private _earsVisible = true;
+  private _earOpacity = 1;
+  private static readonly _earFadeSeconds = 0.18;
   private static readonly _lookReductionScale = 0.25;
 
   // 热路径参数句柄缓存（配置探测后填充）
@@ -283,6 +288,11 @@ export class PetModel
     this._idEyeBallX = id('ParamEyeBallX');
     this._idEyeBallY = id('ParamEyeBallY');
     this._unsafeFaceVariantIds = [id('Param33'), id('Param34'), id('Param35')];
+    // 猫耳父部件（cdi3「猫耳」）；缺失的模型不提供显隐开关。
+    {
+      const index = this._model.getPartIndex(id('Part21'));
+      this._earPartIndex = index >= 0 && index < this._model.getPartCount() ? index : -1;
+    }
     this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
 
     // 按真实参数探测新版挥手能力；缺少参数时保留旧模型的五段链。
@@ -460,6 +470,8 @@ export class PetModel
       minY = 1e9,
       maxY = -1e9;
     for (let i = 0; i < dc; i++) {
+      // 隐藏的网格（如关掉的猫耳）不算剪影，气泡贴着可见头顶。
+      if (this._model.getDrawableOpacity(i) < 0.01) continue;
       const v = this._model.getDrawableVertices(i);
       for (let j = 0; j < v.length; j += 2) {
         if (v[j] < minX) minX = v[j];
@@ -678,6 +690,17 @@ export class PetModel
     this._chCheek.value = value;
   }
 
+  /** 模型是否有可隐藏的猫耳部件。 */
+  public get hasCatEars(): boolean {
+    return this._earPartIndex >= 0;
+  }
+
+  /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
+  public setCatEarsVisible(visible: boolean, immediate = false): void {
+    this._earsVisible = visible;
+    if (immediate) this._earOpacity = visible ? 1 : 0;
+  }
+
   public setPettingLookAtReduction(enabled: boolean): void {
     this._lookAtReduction = enabled;
   }
@@ -730,6 +753,16 @@ export class PetModel
     // 在动作、表情淡化、物理和互动之后独占写入整套眼型。
     // 受击/无语保留原生表现，但不经历会产生重影的中间值。
     applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
+
+    if (this._earPartIndex >= 0) {
+      const target = this._earsVisible ? 1 : 0;
+      if (this._earOpacity !== target) {
+        const step = Math.max(0, deltaTimeSeconds) / PetModel._earFadeSeconds;
+        this._earOpacity = target > this._earOpacity
+          ? Math.min(target, this._earOpacity + step) : Math.max(target, this._earOpacity - step);
+      }
+      model.setPartOpacityByIndex(this._earPartIndex, this._earOpacity);
+    }
 
     model.update();
   }

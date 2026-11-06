@@ -239,6 +239,7 @@ const refs: {
   showGeneratedImages?: HTMLInputElement;
   speechMinutes?: HTMLInputElement;
   mirror?: HTMLInputElement;
+  showCatEars?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
   snapEdges?: HTMLInputElement;
   autoStart?: HTMLInputElement;
@@ -289,6 +290,7 @@ function refreshControls(): void {
     refs.speechMinutes.value = String(settings.randomSpeechMinutes);
   syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
+  if (refs.showCatEars) refs.showCatEars.checked = settings.showCatEars;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
   if (refs.scaleSlider) {
@@ -549,6 +551,13 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '左右翻转角色',
     () => settings.mirror,
     (v) => update({ mirror: v })
+  );
+  refs.showCatEars = switchRow(
+    box,
+    '显示猫耳',
+    '关闭后耳朵不再显示，也不会再被戳到',
+    () => settings.showCatEars,
+    (v) => update({ showCatEars: v })
   );
   refs.batterySaver = addBatterySaverSwitch(box);
 }

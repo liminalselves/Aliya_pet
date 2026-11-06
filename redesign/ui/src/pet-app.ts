@@ -208,9 +208,14 @@ export class PetApp {
   private _leftDown = false;
   private _dragCandidate = false;
   private _dragging = false;
+  private _catEarsVisible: boolean | null = null;
+  private _boostUntil = 0;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
   private _touchTapCandidate = false;
+  /** Android 触摸的左键手势：不走前端拖动，只判断是否为轻点。 */
+  private _touchClickCandidateActive = false;
+  private _touchClickCandidate = false;
   private _downScreenX = 0;
   private _downScreenY = 0;
   private _lastScreenX = 0;
@@ -222,6 +227,8 @@ export class PetApp {
 
   /** 拖动判定阈值（CSS px）。 */
   private static readonly _dragThresholdPx = 5;
+  /** 触屏轻点容差（CSS px）：快速点按时手指滚动/抬手偏移常超过 5px，仍应算点击。 */
+  private static readonly _touchTapTolerancePx = 16;
 
   /** 松手贴边感应带（CSS px）。 */
   private static readonly _snapZonePx = 48;
@@ -513,6 +520,24 @@ export class PetApp {
     };
   }
 
+  /**
+   * 猫耳显隐：部件淡入淡出；隐藏时耳朵命中区让给头部、耳朵相关台词停用，
+   * 正在进行的耳朵反应平滑收回。启动恢复一步落定，不播放淡变。
+   */
+  private _applyCatEars(visible: boolean, immediate: boolean): void {
+    const changed = this._catEarsVisible !== visible;
+    // 首次应用一步落定；之后重复同步同一值不打断正在进行的淡变。
+    const snap = immediate || this._catEarsVisible === null;
+    this._catEarsVisible = visible;
+    this._model?.setCatEarsVisible?.(visible, snap);
+    for (const id of ['ear_left', 'ear_right']) {
+      if (visible) this._hitAreas?.disabled?.delete(id);
+      else this._hitAreas?.disabled?.add(id);
+    }
+    this._dialogue?.setExcludedTags?.(visible ? [] : ['ears']);
+    if (changed && !visible) this._interaction?.procedural.cancelAll();
+  }
+
   /** The overlay only runs local interactions; all network conversation lives in the main page. */
   private _initializeChat(): void {
     // 嵌入网页只展示本地互动；聊天需要登录，留在应用里。
@@ -704,6 +729,7 @@ export class PetApp {
     this.setFpsCap(s.batterySaver ? 15 : this._baseFpsCap);
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
+    this._applyCatEars(s.showCatEars, restoreWindow);
 
     // 窗口层
     if (platform === 'android') {
@@ -1769,6 +1795,8 @@ export class PetApp {
       if (!handled) {
         // 左键未被互动接管：进入拖动候选（嵌入网页没有窗口可拖，按普通点击处理）
         this._dragCandidate = true;
+        this._touchClickCandidateActive = platform === 'android' && e.pointerType === 'touch';
+        this._touchClickCandidate = this._touchClickCandidateActive;
         if (isEmbed) return;
         this._dragging = false;
         this._downScreenX = this._lastScreenX = e.screenX;
@@ -1779,19 +1807,24 @@ export class PetApp {
 
     canvas.addEventListener('pointermove', (e) => {
       if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
-      if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._dragThresholdPx) {
+      if (this._touchPetting && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._touchTapTolerancePx) {
         this._touchTapCandidate = false;
+      }
+      if (this._touchClickCandidate && Math.hypot(e.screenX - this._downScreenX, e.screenY - this._downScreenY) >= PetApp._touchTapTolerancePx) {
+        this._touchClickCandidate = false;
       }
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
 
-      if (this._dragCandidate && this._leftDown && !handled && !isEmbed) {
+      // Android 的触摸拖动只由原生壳长按接管（主界面不可拖）；前端不把短促位移当拖动。
+      if (this._dragCandidate && this._leftDown && !handled && !isEmbed && !this._touchClickCandidateActive) {
         if (!this._dragging) {
           const dx = e.screenX - this._downScreenX;
           const dy = e.screenY - this._downScreenY;
           if (Math.sqrt(dx * dx + dy * dy) >= PetApp._dragThresholdPx) {
             this._dragging = true;
+            this._canvas.style.cursor = 'grabbing';
             this._interaction?.dragReaction.beginDrag();
             this._interaction?.beginHold();
             if (this._behavior) this._behavior.isDragging = true;
@@ -1831,8 +1864,8 @@ export class PetApp {
           // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）
           this._interaction?.onClick(ctx, true);
           this._onDragFinished();
-        } else if (this._dragCandidate && !handled) {
-          // 普通单击
+        } else if (this._dragCandidate && !handled && (!this._touchClickCandidateActive || this._touchClickCandidate)) {
+          // 普通单击（Android 触摸：位移在轻点容差内才算）
           this._interaction?.onClick(ctx, false);
         }
         this._resetDragState();
@@ -1884,8 +1917,11 @@ export class PetApp {
   private _resetDragState(): void {
     this._leftDown = false;
     this._dragCandidate = false;
+    this._touchClickCandidateActive = false;
+    this._touchClickCandidate = false;
     this._interaction?.dragReaction.cancel();
     if (this._dragging && this._behavior) this._behavior.isDragging = false;
+    if (this._dragging) this._canvas.style.cursor = '';
     this._dragging = false;
   }
 
@@ -2137,6 +2173,7 @@ export class PetApp {
     this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
+    if (this._dragging) this._canvas.style.cursor = '';
     this._dragging = false;
     // 壳在 MOVE 超阈值时抢走手势，DOWN 已透传给 WebView——
     // 壳侧会先补发 ACTION_CANCEL（触发 pointercancel 收尾），这里兜底再清一次：
@@ -2239,8 +2276,9 @@ export class PetApp {
   private _frame(t: number): void {
     if (!this._running || this._paused || this._covered) return;
 
-    // 画内缩放期间临时不限帧，缩放过程按显示器刷新率推进。
-    const minInterval = 1000 / (this._deskScale ? 60 : this._fpsCap);
+    // 画内缩放与互动（拖动/抚摸/点击反应）期间临时升到 60fps，跟手更顺；
+    // 结束后回到常规上限。省电模式下互动也不升帧。
+    const minInterval = 1000 / (this._deskScale || this._interactionBoost(t) ? 60 : this._fpsCap);
     if (t - this._lastFrameTime < minInterval - 1) {
       this._scheduleFrame();
       return;
@@ -2276,6 +2314,15 @@ export class PetApp {
     this._maybeSendHitMask();
 
     this._scheduleFrame();
+  }
+
+  /** 互动升帧：互动进行中或刚结束 400ms 内（让收尾补间同样顺滑）。 */
+  private _interactionBoost(now: number): boolean {
+    if (this._settings?.batterySaver || this._fpsCap >= 60) return false;
+    const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
+      (this._interaction?.isBusy ?? false);
+    if (active) this._boostUntil = now + 400;
+    return now < this._boostUntil;
   }
 
   /**
@@ -2649,9 +2696,7 @@ export class PetApp {
     this._hitMaskGeometry = geometry;
     if (androidWrap) {
       // Android 悬浮窗：API 33+ 在输入分发前按整窗掩码裁剪可触摸区域。
-      let csv = '';
-      for (let i = 0; i < data.length; i++) csv += data[i];
-      androidShell()?.setHitMask(cols, rows, csv);
+      androidShell()?.setHitMask(cols, rows, data.join(''));
       return;
     }
     this._publishHitMask();
