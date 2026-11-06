@@ -274,6 +274,102 @@
       "text": "这种搬家方式太粗暴啦。",
       "tags": ["drag_fast"],
       "enabled": true
+    },
+    {
+      "id": "interaction_tie_1",
+      "text": "别拽领带，会勒到啦。",
+      "tags": ["tie"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_tie_2",
+      "text": "领带歪了，帮我扶正？",
+      "tags": ["tie"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_tie_3",
+      "text": "这是正式场合才系的。",
+      "tags": ["tie"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_tie_4",
+      "text": "再拉我就要往前倒了。",
+      "tags": ["tie"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_legs_1",
+      "text": "腿……腿就不要碰了。",
+      "tags": ["legs"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_legs_2",
+      "text": "站累了也不许偷看。",
+      "tags": ["legs"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_legs_3",
+      "text": "哼，往哪里点呢。",
+      "tags": ["legs"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_legs_4",
+      "text": "袜子会被你弄皱的。",
+      "tags": ["legs"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ponytail_1",
+      "text": "马尾不是逗猫棒哦。",
+      "tags": ["ponytail"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ponytail_2",
+      "text": "嗯？谁在后面？",
+      "tags": ["ponytail"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ponytail_3",
+      "text": "发绳要被扯松了。",
+      "tags": ["ponytail"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_ponytail_4",
+      "text": "它自己会晃，不用帮忙。",
+      "tags": ["ponytail"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_slow_1",
+      "text": "好啦，放我下来吧。",
+      "tags": ["drag_slow"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_slow_2",
+      "text": "这里视野还不错。",
+      "tags": ["drag_slow"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_slow_3",
+      "text": "搬家也要提前说一声。",
+      "tags": ["drag_slow"],
+      "enabled": true
+    },
+    {
+      "id": "interaction_drag_slow_4",
+      "text": "落地，稳稳的。",
+      "tags": ["drag_slow"],
+      "enabled": true
     }
   ]
 }

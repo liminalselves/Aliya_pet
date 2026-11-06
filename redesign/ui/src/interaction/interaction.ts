@@ -29,6 +29,10 @@ export class InteractionService {
   readonly procedural: ProceduralReactionService;
   private _earClickUntilMs = 0;
   private _basicClickUntilMs = 0;
+  private readonly _playCharacterAction: (action: string) => boolean;
+  private readonly _isActionPlaying: () => boolean;
+  private readonly _random: () => number;
+  private readonly _variants = new Map<string, number>();
 
   /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
   playClickDialogue: ((tag: string) => void) | null = null;
@@ -57,8 +61,13 @@ export class InteractionService {
     pettingHost: PettingDialogueHost;
     dialogue: ConstructorParameters<typeof PettingController>[0]['dialogue'];
     playCharacterAction: (action: string) => boolean;
+    isActionPlaying?: () => boolean;
+    random?: () => number;
   }) {
     this.hitAreas = deps.hitAreas;
+    this._playCharacterAction = deps.playCharacterAction;
+    this._isActionPlaying = deps.isActionPlaying ?? (() => false);
+    this._random = deps.random ?? Math.random;
     this.petting = new PettingController({
       hitAreas: deps.hitAreas,
       getTarget: deps.getTarget,
@@ -118,12 +127,19 @@ export class InteractionService {
    */
   onClick(ctx: PointerContext, wasDrag: boolean): boolean {
     if (wasDrag) {
+      const wasDragging = this.dragReaction.isDragging;
       const wasFast = this.dragReaction.endDrag();
       if (wasFast) {
         this.procedural.apply(ProceduralReactions.eyesWiden(1.0));
         // 每次快速拖动触发一次台词
         if (this.isDialogueActive?.() !== true) {
           this.playClickDialogue?.('drag_fast');
+        }
+      } else if (wasDragging && this.procedural.isHolding) {
+        // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
+        this.procedural.apply(ProceduralReactions.landing(1.0));
+        if (this.isDialogueActive?.() !== true && this._random() < 0.35) {
+          this.playClickDialogue?.('drag_slow');
         }
       }
       return false;
@@ -157,24 +173,73 @@ export class InteractionService {
       return true;
     }
 
+    // 模型空间水平朝向：触点在角色哪一侧（镜像已还原），供蹭手/回头等朝向反应。
+    const side = ((this.hitAreas.mirrored ? 1 - ctx.normX : ctx.normX) >= 0.5) ? 1 : -1;
     switch (area) {
       case 'head':
       case 'head_pet_zone':
       case 'hair':
-        this.procedural.apply(ProceduralReactions.eyesAndTilt(0.8));
+        // 两种反馈轮流出现：闭眼歪头 / 把头蹭向手一侧。
+        this.procedural.apply(this._nextVariant('head') === 0
+          ? ProceduralReactions.eyesAndTilt(0.8)
+          : ProceduralReactions.nuzzle(0.8, side));
         break;
       case 'face':
         // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
-        this.procedural.apply(ProceduralReactions.blush(1.0));
+        this.procedural.apply(this._nextVariant('face') === 0
+          ? ProceduralReactions.blush(1.0)
+          : ProceduralReactions.flinch(0.9));
+        break;
+      case 'hand':
+        this.procedural.apply(ProceduralReactions.nuzzle(0.6, side));
+        this._maybeAct('shy_sway', 0.2);
+        break;
+      case 'tie':
+        this.procedural.apply(ProceduralReactions.tieTug(1.0));
+        this._maybeAct('pout', 0.3);
+        break;
+      case 'legs':
+        this.procedural.apply(ProceduralReactions.legPout(1.0));
+        this._maybeAct('pout', 0.25);
+        break;
+      case 'ponytail':
+        this.procedural.apply(ProceduralReactions.lookBack(1.0));
+        break;
+      case 'tablet':
+        this.procedural.apply(ProceduralReactions.acknowledge(0.8));
+        this._maybeAct('think', 0.3);
         break;
       default:
-        // 身体、手部、平板及未命名的可见区域也有独立反馈，不依赖台词成功播放。
+        // 身体及未命名的可见区域也有独立反馈，不依赖台词成功播放。
         this.procedural.apply(ProceduralReactions.acknowledge(0.8));
         break;
     }
 
     this.playClickDialogue?.(area === 'head_pet_zone' ? 'head' : area ?? 'body');
     return true;
+  }
+
+  /** 同一部位两种反馈轮流出现，首次总是原有反馈；失焦/取消不重置（桌面点别处就会失焦）。 */
+  private _nextVariant(key: string): number {
+    const n = this._variants.get(key) ?? 0;
+    this._variants.set(key, (n + 1) % 2);
+    return n;
+  }
+
+  /** 按概率追加一个完整动作；已有动作在播时不打断它。 */
+  private _maybeAct(action: string, chance: number): void {
+    if (this._isActionPlaying()) return;
+    if (this._random() < chance) this._playCharacterAction(action);
+  }
+
+  /** 拖动开始：进入「被拎起」姿态。 */
+  beginHold(): void {
+    this.procedural.hold();
+  }
+
+  /** 拖动中按画面水平速度做惯性摆头；mirrored 时换算到模型空间。 */
+  updateHoldVelocity(screenVxPxPerSec: number): void {
+    this.procedural.setHoldSway(this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec);
   }
 
   /** 冷却期间只允许低幅度点头；限频不延长台词冷却，也不触发角色动作。 */
@@ -191,6 +256,7 @@ export class InteractionService {
 
   /** 切换角色 / 重载模型时调用：退出抚摸并重置互动参数。 */
   onModelReloaded(): void {
+    this._variants.clear();
     this.petting.exitPettingMode('modelReload');
     this.petting.resetConfiguration();
     this.dragReaction.cancel();
@@ -202,6 +268,7 @@ export class InteractionService {
 
   /** 关闭窗口时调用：完整清理，不残留参数覆盖。 */
   onWindowClosed(): void {
+    this._variants.clear();
     this.petting.exitPettingMode('windowClosing');
     this.procedural.cancelAll(true);
     this.clickSequence.reset();

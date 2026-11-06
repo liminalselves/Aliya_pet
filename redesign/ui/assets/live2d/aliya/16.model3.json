@@ -77,6 +77,69 @@
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }
+      ],
+      "think": [
+        {
+          "File": "motions/think.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "giggle": [
+        {
+          "File": "motions/giggle.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "pout": [
+        {
+          "File": "motions/pout.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "surprised": [
+        {
+          "File": "motions/surprised.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "look_around": [
+        {
+          "File": "motions/look_around.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "doze": [
+        {
+          "File": "motions/doze.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "bow": [
+        {
+          "File": "motions/bow.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "hum": [
+        {
+          "File": "motions/hum.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "sigh": [
+        {
+          "File": "motions/sigh.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
       ]
     },
     "Expressions": [

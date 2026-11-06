@@ -11,7 +11,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,10);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,19);assert.equal(refs.Expressions.length,12);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -24,7 +24,9 @@ function load(name,imports={},globals={}){
  const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
-const newActionNames=['cheerful_bounce','shy_sway'];
+const newActionNames=['cheerful_bounce','shy_sway','think','giggle','pout','surprised','look_around','doze','bow','hum','sigh'];
+// 主动使用四臂的动作；其余动作手臂只做默认复位。
+const armActionNames=['cheerful_bounce','shy_sway','surprised','bow'];
 const modelBase=new URL('assets/live2d/aliya/',root);
 const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
@@ -72,7 +74,7 @@ test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；�
    assert.ok(s.every(Number.isFinite));
    const neutral=/^ParamEye[LR]Open$/.test(Id)?1:0;
    assert.equal(s[0],0);assert.equal(s[1],neutral,`${name}: ${Id} 起点`);
-   if(/^ParamArm/.test(Id)&&!['shy_sway','cheerful_bounce'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
+   if(/^ParamArm/.test(Id)&&!armActionNames.includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
    let t=s[0],v=s[1],lastChangingTime=0;points++;
    const [min,max]=limits(Id);
    for(let i=2;i<s.length;){
@@ -1154,4 +1156,55 @@ test('MSK 验权：手动 token 验证保存与登出清理，web 整页跳转�
  const resumed=await auth2.resumeCallback();
  assert.equal(resumed?.token,'tk2');assert.equal(auth2.token,'tk2');
  assert.equal(mem._m['aliya_miauth_pending'],undefined);
+});
+
+test('扩充互动：新部位有独立反馈与台词，头/脸两种反馈轮换，追加动作不打断在播动作',()=>{
+ const h=interactionHarness(),s=h.service;
+ const types=area=>{s.hitAreas.hitAreaAt=()=>area;const n=h.reactions.length;s.onClick(h.ctx(400,false),false);return h.reactions.slice(n).map(r=>r.type)};
+ for(const [area,type] of [['tie','tieTug'],['legs','legPout'],['ponytail','lookBack'],['hand','nuzzle']]){
+  h.setTime(h.reactions.length*5000);assert.deepEqual(types(area),[type],area);assert.equal(h.lines.at(-1),area);
+  for(let i=0;i<120;i++)h.advance(16);
+  assert.equal(s.procedural.isPlaying,false,`${area}反馈必须自然结束`);assert.deepEqual(h.writes.offsets,[0,0,0,0]);
+ }
+ const head=[];for(let i=0;i<4;i++){h.setTime(100000+i*4000);head.push(...types('head'))}
+ assert.deepEqual(head,['headTiltAndEyes','nuzzle','headTiltAndEyes','nuzzle']);
+ const face=[];for(let i=0;i<2;i++){h.setTime(200000+i*4000);face.push(...types('face'))}
+ assert.deepEqual(face,['blush','flinch']);
+ s.cancel();h.setTime(300000);assert.deepEqual(types('head'),['headTiltAndEyes'],'失焦取消不打乱轮换');
+ s.onModelReloaded();h.setTime(310000);assert.deepEqual(types('head'),['headTiltAndEyes'],'重载后从原有反馈开始');
+});
+
+test('扩充互动：概率追加动作受在播动作约束',()=>{
+ let now=0,playing=false;const globals={performance:{now:()=>now}};
+ const procedural=load('interaction/procedural',{},globals);
+ const petting=load('interaction/petting-controller',{'./petting-recognizer':load('interaction/petting-recognizer',{},globals)},globals);
+ const {InteractionService}=load('interaction/interaction',{'./petting-controller':petting,'./procedural':procedural},globals);
+ const actions=[];const target={getInteractionParamInfo:()=>null,setInteractionOffsets(){},setEyeOverride(){},setPettingLookAtReduction(){},setEarInteraction(){},setFaceCheek(){}};
+ const s=new InteractionService({hitAreas:{hitAreaAt:()=> 'tie',isInHeadPetZone:()=>false,mirrored:false},getTarget:()=>target,
+  dialogue:{resolveSceneTag:()=>null},pettingHost:{isDialogueActive:()=>false,playPettingDialogue(){}},
+  playCharacterAction:a=>{actions.push(a);return true},isActionPlaying:()=>playing,random:()=>0});
+ const ctx={normX:.5,normY:.6,pxX:0,pxY:0,dtSeconds:1/60,leftPressed:true,isSecondary:false};
+ s.onClick(ctx,false);assert.deepEqual(actions,['pout']);
+ playing=true;now=5000;s.onClick(ctx,false);assert.deepEqual(actions,['pout'],'已有动作在播时不追加');
+});
+
+test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快甩仍走睁眼台词，取消完整释放',()=>{
+ for(const ending of ['slow','fast','cancel']){
+  const h=interactionHarness(),s=h.service;
+  s.dragReaction.beginDrag();s.beginHold();
+  for(let i=0;i<40;i++)h.advance(16);
+  assert.equal(s.procedural.isPlaying,true,'拎起姿态在相位结束后仍保持');
+  assert.ok(h.writes.offsets[1]>2.5,'拎起时微抬头');assert.ok(h.writes.eyes[1]>1.05,'拎起时睁大眼');
+  s.updateHoldVelocity(1200);for(let i=0;i<10;i++)h.advance(16);
+  assert.ok(h.writes.offsets[2]<-2,'向右快移时头向左甩');
+  for(let i=0;i<120;i++)h.advance(16);
+  assert.ok(Math.abs(h.writes.offsets[2])<.5,'停手后摆动自然回正');
+  if(ending==='cancel'){s.cancel()}
+  else{s.dragReaction.onDragMove(ending==='fast'?600:100);s.onClick(h.ctx(),true);
+   assert.equal(h.reactions.at(-1).type,ending==='fast'?'eyesWiden':'landing');
+   if(ending==='fast')assert.deepEqual(h.lines,['drag_fast'])}
+  for(let i=0;i<120;i++)h.advance(16);
+  assert.equal(s.procedural.isPlaying,false,ending);assert.equal(s.isBusy,false);
+  assert.deepEqual(h.writes.offsets,[0,0,0,0]);assert.equal(h.writes.eyes[0],false);
+ }
 });
