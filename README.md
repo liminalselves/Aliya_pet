@@ -23,6 +23,7 @@
 - [快速开始](#快速开始)
 - [项目结构](#项目结构)
 - [技术栈与架构](#技术栈与架构)
+- [验证与测试](#验证与测试)
 - [文档](#文档)
 - [动作库与资源](#动作库与资源)
 - [许可与声明](#许可与声明)
@@ -51,12 +52,15 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 - **抚摸互动**：手势识别（水平往返、速度、方向反转），配合抚摸台词与闭眼反馈。
 - **点击互动**：按区域反应（头 / 脸 / 耳朵），连续点击触发疑惑，快速拖动触发反应。
 - **对话系统**：分页气泡、按时间段的问候、洗牌袋抽取与随机台词。
-- **自然表现**：视线跟随、自动随机动作、每日互动状态。
+- **渲染质量**：纹理使用线性 Mipmap 过滤与边缘钳制，Cubism 裁剪遮罩缓冲区提升至 512，改善缩放时发丝、眼睛和衣物轮廓的锯齿；不通过提高 DPR 或开启无验证收益的高精度遮罩来换取 GPU 开销。
+- **自然表现**：视线跟随、独立的约 5 秒静止释放、久静回神（`notice`）、张望 / 发呆动作、自动随机动作与每日互动状态。
+- **触摸与互动**：Android 短触摸按下即产生视线反馈，抬起后保留最后触点并平滑释放；持续移动、抚摸、点击、拖动和双击仍按原优先级仲裁。
 - **表情与情绪**：情绪引擎驱动默认表情与动作选择，经 `window.petAI` 暴露给 AI / 自动化（见[动作库与资源](#动作库与资源)）。
-- **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页。
-- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标。
-- **Android 桌面集成**：App 内全屏互动，退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。
-- **设置持久化**：缩放、位置、镜像、贴边、置顶、自启等在双端一致保存。
+- **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页；支持 Windows 截图预览、图片上传、粘贴与拖放附件。
+- **显示与穿透**：设置页支持人物透明度 0–100%、5% 步进和实时预览；独立的“人物完全穿透”开关仅作用于人物悬浮窗，不影响聊天、设置和独立台词气泡。0% 会安全降级为完全穿透，保留原始 Alpha 命中掩码。
+- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
+- **Android 桌面集成**：App 内全屏互动，退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
+- **设置持久化**：缩放、位置、镜像、贴边、置顶、自启、人物透明度和完全穿透状态等在双端一致保存。
 
 ## 快速开始
 
@@ -120,6 +124,20 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 > 国内网络：`android/settings.gradle.kts` 已内置阿里云镜像。仅改 Kotlin 壳只需 `assembleDebug`，但前端改动必须**先**在 `redesign/ui/` 运行 `npm run build`。正式签名包依赖 `android/keystore.properties`（不入库，见 `docs/BUILD.md`）。真机需在系统设置单独授予「USB 安装」与「悬浮窗权限」（MIUI / EMUI 等）。
 
+### 验证与测试
+
+```powershell
+cd redesign/ui
+npm test                 # 前端回归（包含 Android 触摸事件集成测试）
+npm run build            # TypeScript 检查与生产构建
+npm run test:bounds      # Live2D 动作 / 表情 / 渲染余量边界测试
+
+cd ../android
+.\gradlew.bat testPetDisplayPolicy  # 本地 JVM 显示与触摸安全策略检查
+```
+
+> Android 真机、Windows Tauri/WebView2 GUI、多屏/DPI/HDR 和不同 OEM 的透明区触摸策略仍需在目标设备上单独验收。悬浮窗窗外触摸受 Android `ACTION_OUTSIDE` 能力限制，不能承诺持续跟随其他 App 内的手指轨迹。
+
 ## 项目结构
 
 ```
@@ -135,6 +153,7 @@ redesign/                    # 重写版（当前主产品）
 │   │   ├── chat/            # Misskey 智能体聊天（GAL 式回复 / 会话管理）
 │   │   ├── behavior.ts      # 自动动作、随机台词、视线跟随
 │   │   └── settings.ts      # 设置存储（localStorage）
+│   ├── tests/               # 前端回归、渲染边界与触摸事件集成测试
 │   └── assets/live2d/aliya/ # 模型 + 自编动作 / 表情（tools 生成脚本产出）
 ├── src-tauri/               # Windows 壳（Rust）：窗口 / 托盘 / 自启 / 设置子窗口
 ├── android/                 # Android 壳（Kotlin）：Activity / 悬浮窗服务 / JS 桥
@@ -149,7 +168,8 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 - **渲染**：官方 Live2D Cubism Web SDK 5-r.5（Framework + Core 6.0.1 wasm），WebGL2，帧率上限 30fps（URL 参数 `?fps=N` 可调）。
 - **共享前端**：TypeScript + Vite；Pointer Events 统一桌面鼠标与触摸输入。
 - **Windows 壳**：Tauri 2 + WebView2，透明置顶窗、托盘、注册表自启；后台线程轮询光标位置实现透明区域鼠标穿透。
-- **Android 壳**：Kotlin + 系统 WebView（`WebViewAssetLoader` 提供同源资源），`MainActivity`（App 内）+ `PetOverlayService`（前台服务悬浮窗）+ `ShellBridge` JS 桥 + `BootReceiver` 自启。
+- **Android 壳**：Kotlin + 系统 WebView（`WebViewAssetLoader` 提供同源资源），`MainActivity`（App 内）+ `PetOverlayService`（前台服务悬浮窗）+ `ShellBridge` JS 桥 + `BootReceiver` 自启；悬浮窗复用 Alpha 命中掩码、`TouchableRegion` 和 Window alpha 安全策略。
+- **显示与穿透**：人物 Canvas 透明度只影响合成层，不修改模型、纹理或原始 WebGL Alpha；Windows 使用 pet 专属原生命中覆盖，Android 的完全穿透和 0% 仅使人物悬浮窗不可触摸，主 Activity 与聊天入口保持可用。
 - **布局适配**：按模型包围盒适配窗口；动作渲染余量与测量依据见 `docs/ACTIONS.md`。
 - **包名**：双端统一为 `top.liminalselves.aliyapet`。
 
@@ -175,8 +195,8 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 
 ## 动作库与资源
 
-- **动作库**：10 个动作（摇摆、点头、摇头、疑惑、挥手、伸展、生气、打哈欠、开心雀跃、撒娇）是为当前 Aliya 模型自编的 motion3.json，由 `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。
-- **表情与情绪**：12 个 exp3.json 表情（`gen-expressions.py` 生成）+ 情绪引擎（心境 → 默认表情、动作选择加权、自然衰减），经 `window.petAI` 语义 API 暴露给 AI / 自动化（见 `docs/AI-API.md`）；设置窗口有对应的「表情与情绪」控制面板（表情预览 / 情绪切换，与 AI 共享状态源）。
+- **动作库**：13 个动作（包含普通待机、情绪、视线张望 / 发呆与事件反应）是为当前 Aliya 模型自编的 motion3.json，由 `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。视线类动作只在释放跟随后进入对应随机池，事件反应不会进入普通待机池。
+- **表情与情绪**：14 个 exp3.json 表情（`gen-expressions.py` 生成）+ 情绪引擎（心境 → 默认表情、动作选择加权、自然衰减），经 `window.petAI` 语义 API 暴露给 AI / 自动化（见 `docs/AI-API.md`）；设置窗口有对应的「表情与情绪」控制面板（表情预览 / 情绪切换，与 AI 共享状态源）。
 
 ## 许可与声明
 
@@ -208,6 +228,7 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Tech Stack & Architecture](#tech-stack--architecture)
+- [Verification & Tests](#verification--tests)
 - [Documentation](#documentation)
 - [Motion Library & Assets](#motion-library--assets)
 - [License & Notices](#license--notices)
@@ -236,12 +257,15 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 - **Petting**: gesture recognition (horizontal back-and-forth, speed, direction reversal) with petting lines and eye-closing feedback.
 - **Click interactions**: region-based reactions (head / face / ears); repeated clicks trigger doubt, fast drags trigger reactions.
 - **Dialogue system**: paged bubbles, time-of-day greetings, shuffle-bag drawing and random lines.
-- **Natural behavior**: gaze following, automatic random motions, daily interaction state.
+- **Rendering quality**: linear Mipmap filtering with edge clamping and a 512×512 Cubism clipping-mask buffer reduce scaled edge aliasing around hair, eyes and clothing; the project does not trade GPU cost for unverified higher DPR or high-precision masks.
+- **Natural behavior**: gaze following, an independent ~5-second idle release, long-idle wake-up (`notice`), look-around / daydream motions, automatic random motions and daily interaction state.
+- **Touch & interaction**: Android touch-down produces immediate gaze feedback; the last touch point is retained after release and fades back through the existing timer. Continuous movement, petting, clicks, dragging and double-tap arbitration remain intact.
 - **Expressions & emotion**: an emotion engine drives the default expression and motion selection, exposed to AI/automation via `window.petAI` (see [Motion Library & Assets](#motion-library--assets)).
-- **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android.
-- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start; click-through over transparent areas — only opaque character pixels capture the mouse.
-- **Android desktop integration**: full-screen interaction inside the app; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen.
-- **Persistent settings**: scale, position, mirroring, snapping, always-on-top and auto-start are stored consistently on both platforms.
+- **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android; Windows screen-capture preview and image attachments support paste and drag-and-drop.
+- **Display & click-through**: the settings page provides 0–100% character opacity in 5% steps with live preview, plus a separate full click-through switch that only affects the character overlay, not chat, settings or the standalone dialogue bubble. At 0%, the character safely falls back to full click-through while preserving the original alpha hit mask.
+- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start; click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
+- **Android desktop integration**: full-screen interaction inside the app; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
+- **Persistent settings**: scale, position, mirroring, snapping, always-on-top, auto-start, character opacity and full click-through are stored consistently on both platforms.
 
 ### Quick Start
 
@@ -304,6 +328,20 @@ In **Bash (Linux / macOS / Git Bash)**, the frontend build and installation comm
 
 > In mainland China, an Aliyun mirror is already configured in `android/settings.gradle.kts`. Kotlin-only changes just need `assembleDebug`, but frontend changes **must** run `npm run build` in `redesign/ui/` first. Signed release builds require `android/keystore.properties` (not committed; see `docs/BUILD.md`). On real devices, grant "USB install" and "overlay" permissions in system settings separately (MIUI / EMUI, etc.).
 
+#### Verification & Tests
+
+```powershell
+cd redesign/ui
+npm test                 # Frontend regression suite, including Android touch integration tests
+npm run build            # TypeScript check and production build
+npm run test:bounds      # Live2D motion / expression / render-margin boundary checks
+
+cd ../android
+.\gradlew.bat testPetDisplayPolicy  # Local JVM display and touch-safety policy checks
+```
+
+> Android hardware, Windows Tauri/WebView2 GUI, multi-monitor/DPI/HDR and OEM-specific transparent-touch behavior still require target-device smoke testing. Overlay `ACTION_OUTSIDE` events are platform-limited and cannot provide continuous tracking of fingers inside other apps.
+
 ### Project Structure
 
 ```
@@ -319,6 +357,7 @@ redesign/                    # The rewrite (current main product)
 │   │   ├── chat/            # Misskey agent chat (GAL-style replies / session management)
 │   │   ├── behavior.ts      # Auto motions, random lines, gaze following
 │   │   └── settings.ts      # Settings storage (localStorage)
+│   ├── tests/               # Frontend regression, render-boundary and touch-integration tests
 │   └── assets/live2d/aliya/ # Model + self-authored motions / expressions (from tools generators)
 ├── src-tauri/               # Windows shell (Rust): window / tray / auto-start / settings window
 ├── android/                 # Android shell (Kotlin): Activity / overlay service / JS bridge
@@ -330,10 +369,11 @@ docs/                        # Architecture, build, Android, chat and motion-int
 
 ### Tech Stack & Architecture
 
-- **Rendering**: official Live2D Cubism Web SDK 5-r.5 (Framework + Core 6.0.1 wasm), WebGL2, 30fps cap (tunable via the `?fps=N` URL parameter).
+- **Rendering**: official Live2D Cubism Web SDK 5-r.5 (Framework + Core 6.0.1 wasm), WebGL2, 30fps cap (tunable via the `?fps=N` URL parameter); textures use linear Mipmap filtering and edge clamping, with a 512×512 clipping-mask buffer for cleaner scaled silhouettes.
 - **Shared frontend**: TypeScript + Vite; Pointer Events unify desktop mouse and touch input.
 - **Windows shell**: Tauri 2 + WebView2 — transparent always-on-top window, tray, registry auto-start; a background thread polls the cursor position for click-through over transparent areas.
-- **Android shell**: Kotlin + system WebView (`WebViewAssetLoader` serves same-origin assets), `MainActivity` (in-app) + `PetOverlayService` (foreground-service overlay) + `ShellBridge` JS bridge + `BootReceiver` auto-start.
+- **Android shell**: Kotlin + system WebView (`WebViewAssetLoader` serves same-origin assets), `MainActivity` (in-app) + `PetOverlayService` (foreground-service overlay) + `ShellBridge` JS bridge + `BootReceiver` auto-start; the overlay reuses the alpha hit mask, `TouchableRegion` and Window alpha safety policy.
+- **Display & click-through**: character opacity affects only the Canvas compositing layer, not model, texture or raw WebGL alpha; Windows uses a pet-specific native hit-test override, while Android full click-through and 0% opacity make only the character overlay untouchable, keeping the main Activity and chat entry usable.
 - **Layout adaptation**: fits the model's bounding box to the window. See `docs/ACTIONS.md` for motion render margins and measurement evidence.
 - **Package name**: unified as `top.liminalselves.aliyapet` on both platforms.
 
@@ -359,8 +399,8 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 
 ### Motion Library & Assets
 
-- **Motions**: the 10 motions under `redesign/ui/assets/live2d/aliya/motions/` (sway, nod, shake, doubt, wave, stretch, angry, yawn, cheerful bounce, shy sway) are motion3.json files authored for the current Aliya model, generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`).
-- **Expressions & emotion**: 12 exp3.json expressions (generated by `gen-expressions.py`) plus an emotion engine (mood → default expression, weighted motion selection, natural decay), exposed to AI/automation via the `window.petAI` semantic API (see `docs/AI-API.md`); the settings window has a matching "Expressions & Emotion" panel.
+- **Motions**: the 13 motions under `redesign/ui/assets/live2d/aliya/motions/` cover idle, emotion, gaze look-around / daydream and event reactions. They are motion3.json files authored for the current Aliya model and generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`). Gaze motions enter the corresponding random pool only after gaze release; event reactions never enter the ordinary idle pool.
+- **Expressions & emotion**: 14 exp3.json expressions (generated by `gen-expressions.py`) plus an emotion engine (mood → default expression, weighted motion selection, natural decay), exposed to AI/automation via the `window.petAI` semantic API (see `docs/AI-API.md`); the settings window has a matching "Expressions & Emotion" panel.
 
 ### License & Notices
 
