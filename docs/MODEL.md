@@ -30,7 +30,7 @@ moc3 格式版本 4，126 参数、39 Parts、126 Drawables，2048 纹理一张�
 | 左右腕 | ParamArmL01/02、R01/02 | ±10 | PET 版已绑定变形器，可驱动双臂 |
 | 挥手 | Param30 | 0..1 | 手臂图层开关，运行时只写 0 或 1 |
 | 挥手 | Param31 / Param36 | ±1 | 小臂 / 手部挥手，物理后写入 |
-| 表情 | Param37 / Param39 | 0..1 | 鼓嘴L / 嘴努子；当前表情库尚不使用 |
+| 表情 | Param37 / Param39 | 0..1 | 鼓嘴 / 嘟嘴替换网格，只能 0/1；由动作脸部时间轴驱动（见 `ACTIONS.md`） |
 | 呼吸 | ParamBreath | 0..1 | 呼吸系统占用 |
 
 ## 腿脚能力边界
@@ -101,7 +101,7 @@ speechless / worried / serious / hit
 生气阴影怒眉、认真低头抿嘴、惊讶张嘴、担忧歪头忧眉；难过使用原生流泪，
 受击使用挤眼，无语使用半垂方眼。表情数量仍为 12。
 
-## 动作库（19 个，motion3.json）
+## 动作库（14 个，motion3.json）
 
 `motions/` 下由 `tools/gen-motions.py` 生成（见 docs/ACTIONS.md）。
 元数据（情绪亲和/权重/分类）在 `actions.json`。

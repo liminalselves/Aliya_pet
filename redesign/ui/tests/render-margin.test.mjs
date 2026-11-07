@@ -80,20 +80,19 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
     p = await model();
     try {
       assert.equal(p.getExpressionNames().length, 12);
-      assert.equal(p.actionManifest.length, 19);
+      assert.equal(p.actionManifest.length, 14);
+      // 替换脸动作：极端注视与外扩表情组合，各自自然播完。
+      for (const action of ['puff', 'kiss', 'sob', 'deadpan']) for (const expression of ['surprised', 'happy', 'sad']) for (const gaze of gazes) {
+        summary.cases++;
+        p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
+        for (let frame = 0; frame < fps * 6; frame++) {
+          p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
+        }
+      }
       for (const action of ['cheerful_bounce', 'shy_sway']) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
         for (let frame = 0; frame < fps * 8; frame++) {
-          p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
-        }
-      }
-      // 扩充动作：极端注视与最外扩的表情组合，各自自然播完。
-      const expanded = ['think', 'giggle', 'pout', 'surprised', 'look_around', 'doze', 'bow', 'hum', 'sigh'];
-      for (const action of expanded) for (const expression of ['surprised', 'happy', 'sad']) for (const gaze of gazes) {
-        summary.cases++;
-        p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
-        for (let frame = 0; frame < fps * 7; frame++) {
           p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
         }
       }

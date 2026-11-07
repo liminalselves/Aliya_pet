@@ -11,14 +11,13 @@
     { "name": "yawn",    "category": "idle",    "weight": 0.7, "moods": { "sleepy": 3.5 } },
     { "name": "cheerful_bounce", "category": "emotion", "weight": 0.45, "moods": { "happy": 3.0, "smug": 1.5, "sad": 0.2, "sleepy": 0.2, "angry": 0.2 } },
     { "name": "shy_sway", "category": "emotion", "weight": 0.4, "moods": { "shy": 4.0, "happy": 2.0, "angry": 0.2, "sad": 0.4, "sleepy": 0.4 } },
-    { "name": "think", "category": "idle", "weight": 0.7, "moods": { "curious": 3.0, "speechless": 1.5 } },
-    { "name": "giggle", "category": "emotion", "weight": 0.5, "moods": { "happy": 2.5, "smug": 3.0, "cheerful": 2.0, "sad": 0.2, "angry": 0.2 } },
-    { "name": "pout", "category": "emotion", "weight": 0.35, "moods": { "angry": 3.0, "shy": 1.5, "speechless": 1.5, "happy": 0.4 } },
-    { "name": "surprised", "category": "reaction", "weight": 0.3, "moods": { "curious": 2.0, "sleepy": 0.3 } },
-    { "name": "look_around", "category": "idle", "weight": 0.9, "moods": { "curious": 2.5, "sleepy": 0.4 } },
-    { "name": "doze", "category": "idle", "weight": 0.35, "moods": { "sleepy": 4.0, "happy": 0.3, "angry": 0.2 } },
-    { "name": "bow", "category": "emotion", "weight": 0.25, "moods": { "shy": 1.5, "happy": 1.2 } },
-    { "name": "hum", "category": "idle", "weight": 0.6, "moods": { "happy": 2.5, "cheerful": 2.5, "smug": 1.5, "sad": 0.2, "angry": 0.2 } },
-    { "name": "sigh", "category": "emotion", "weight": 0.35, "moods": { "sad": 3.5, "speechless": 2.0, "sleepy": 1.5, "happy": 0.2 } }
+    { "name": "puff", "category": "emotion", "weight": 0.35, "moods": { "angry": 3.0, "shy": 1.5, "speechless": 1.5, "happy": 0.4, "sleepy": 0.4 },
+      "face": [{ "from": 0.32, "to": 2.55, "mouth": "puff" }] },
+    { "name": "kiss", "category": "emotion", "weight": 0.25, "moods": { "happy": 2.5, "shy": 2.0, "smug": 2.0, "sad": 0.2, "angry": 0.2 },
+      "face": [{ "from": 0.42, "to": 1.45, "mouth": "pucker" }] },
+    { "name": "sob", "category": "emotion", "weight": 0.2, "moods": { "sad": 4.0, "speechless": 1.2, "happy": 0.1, "smug": 0.1 },
+      "face": [{ "from": 0.62, "to": 2.75, "eye": "sad" }] },
+    { "name": "deadpan", "category": "emotion", "weight": 0.3, "moods": { "speechless": 4.0, "angry": 1.2, "happy": 0.3 },
+      "face": [{ "from": 0.38, "to": 2.6, "eye": "speechless" }] }
   ]
 }

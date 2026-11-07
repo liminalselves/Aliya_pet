@@ -27,15 +27,10 @@ export const ACTION_LIBRARY = [
   'yawn',
   'cheerful_bounce',
   'shy_sway',
-  'think',
-  'giggle',
-  'pout',
-  'surprised',
-  'look_around',
-  'doze',
-  'bow',
-  'hum',
-  'sigh',
+  'puff',
+  'kiss',
+  'sob',
+  'deadpan',
 ];
 
 /** 动作清单元数据条目（pet-model 从 actions.json 载入后注入）。 */

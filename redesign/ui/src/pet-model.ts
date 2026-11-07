@@ -16,7 +16,8 @@ import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
-import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
 import { GazeController } from './gaze';
@@ -44,6 +45,8 @@ export interface ActionManifestEntry {
   category?: 'idle' | 'emotion' | 'reaction';
   weight?: number;
   moods?: Record<string, number>;
+  /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
+  face?: unknown;
 }
 
 const INVALID_MOTION_HANDLE = -1;
@@ -123,6 +126,11 @@ export class PetModel
   /** 会切换整套特殊眼睛、无法安全交叉淡化的模型参数。 */
   private _unsafeFaceVariantIds: CubismIdHandle[] = [];
   private _faceVariantIds: CubismIdHandle[] = [];
+  private _faceMouthIds: CubismIdHandle[] = [];
+  /** 动作名 → 脸部提示时间轴（actions.json face 字段）。 */
+  private readonly _faceCues = new Map<string, FaceCueSpan[]>();
+  private readonly _faceTrack = new FaceCueTrack();
+  private _face: FaceState = { eye: null, mouth: null };
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -294,6 +302,7 @@ export class PetModel
       this._earPartIndex = index >= 0 && index < this._model.getPartCount() ? index : -1;
     }
     this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
+    this._faceMouthIds = FACE_MOUTH_PARAMETERS.map(id);
 
     // 按真实参数探测新版挥手能力；缺少参数时保留旧模型的五段链。
     // 不向 SDK 创建的虚拟参数写入，两个版本均在物理后统一控制。
@@ -336,6 +345,10 @@ export class PetModel
       const parsed = JSON.parse(new TextDecoder().decode(buf));
       if (Array.isArray(parsed.actions)) {
         this._actionManifest = parsed.actions;
+        for (const entry of parsed.actions as ActionManifestEntry[]) {
+          const spans = parseFaceCues(entry.face);
+          if (spans.length > 0) this._faceCues.set(entry.name, spans);
+        }
       }
     } catch {
       // 可选文件，缺失不阻塞
@@ -548,8 +561,21 @@ export class PetModel
       else this._chHand.release();
       if (group === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
       else this._chCheek.releaseAction();
+      this._startFaceCue(group);
     }
     return handle;
+  }
+
+  /** 新动作接管脸部时间轴；没有提示的动作会清掉被打断动作的眼型/嘴型。 */
+  private _startFaceCue(name: string): void {
+    const spans = this._faceCues?.get(name);
+    if (spans) this._faceTrack.start(spans);
+    else this._faceTrack?.stop();
+  }
+
+  /** 当前动作脸部提示（调试/测试用）。 */
+  public get faceCue(): FaceState {
+    return this._face;
   }
 
   get isActionPlaying(): boolean {
@@ -581,6 +607,7 @@ export class PetModel
     // 只附加脸红包络，不调用 startExpression，原表情继续按自己的生命周期求值。
     if (name === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
     else this._chCheek.releaseAction();
+    this._startFaceCue(name);
     return true;
   }
 
@@ -730,9 +757,12 @@ export class PetModel
     for (const id of this._unsafeFaceVariantIds) {
       model.setParameterValueById(id, 0);
     }
+    // 动作脸部提示优先于表情眼型：动作结束后回到表情自己的眼睛。
+    this._face = this._faceTrack.advance(deltaTimeSeconds);
+    const eye = this._face.eye ?? expressionEye(this._currentExpression);
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
     this._chEye.apply(model, deltaTimeSeconds);
-    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
+    applyFaceVariant(model, this._faceVariantIds, eye);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
@@ -750,9 +780,10 @@ export class PetModel
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
 
-    // 在动作、表情淡化、物理和互动之后独占写入整套眼型。
+    // 在动作、表情淡化、物理和互动之后独占写入整套眼型与替换嘴型。
     // 受击/无语保留原生表现，但不经历会产生重影的中间值。
-    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
+    applyFaceVariant(model, this._faceVariantIds, eye);
+    applyFaceMouth(model, this._faceMouthIds, this._face.mouth, eye);
 
     if (this._earPartIndex >= 0) {
       const target = this._earsVisible ? 1 : 0;
