@@ -1208,3 +1208,15 @@ test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快�
   assert.deepEqual(h.writes.offsets,[0,0,0,0]);assert.equal(h.writes.eyes[0],false);
  }
 });
+
+test('每种心境的动作偏向名必须存在于动作库且权重为正',()=>{
+ const {MOODS}=load('emotion');
+ const {ACTION_LIBRARY}=load('behavior');
+ const valid=new Set(ACTION_LIBRARY);
+ for(const [mood,def] of Object.entries(MOODS)){
+  for(const [name,bias] of Object.entries(def.actionBias)){
+   assert.ok(valid.has(name),`${mood} 偏向了不存在的动作 ${name}`);
+   assert.ok(Number.isFinite(bias)&&bias>0,`${mood}.${name} 权重 ${bias} 无效`);
+  }
+ }
+});
