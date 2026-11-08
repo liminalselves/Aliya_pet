@@ -562,6 +562,7 @@ export class PetApp {
       launcher.setAttribute('aria-pressed', 'false');
       document.body.append(launcher);
       this._chatLauncher = launcher;
+      this._syncChatLauncherVisible();
       launcher.onclick = () => {
         // 开关式：再点一次收起输入框
         import('@tauri-apps/api/core')
@@ -582,7 +583,7 @@ export class PetApp {
             this._chatLauncher.classList.toggle('open', e.payload.open);
             this._chatLauncher.setAttribute('aria-pressed', String(e.payload.open));
             // chat 已打开时从模型脚下移除入口，避免窗口与按钮隔出一层「外挂」感。
-            this._chatLauncher.hidden = e.payload.open;
+            this._syncChatLauncherVisible();
           }
           // 记忆开关状态（chat-state 由壳按窗口可见性广播），下次启动据此恢复。
           try { storage?.setItem('aliya_chat_open', e.payload.open ? '1' : '0'); } catch { /* 存储不可用则跳过 */ }
@@ -730,6 +731,7 @@ export class PetApp {
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
     this._applyCatEars(s.showCatEars, restoreWindow);
+    this._syncChatLauncherVisible();
 
     // 窗口层
     if (platform === 'android') {
@@ -1430,7 +1432,7 @@ export class PetApp {
           if (!current()) return;
           if (mon) {
             // 贴边按可见舞台算，透明外窗可以越出工作区。
-            const r = this._physStageRect(size);
+            const r = this._physVisibleRect(size);
             const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
             const left = mon.workArea.position.x - Math.round(r.left);
             const top = mon.workArea.position.y - Math.round(r.top);
@@ -1471,6 +1473,34 @@ export class PetApp {
     const H = size?.height ?? Math.round(window.innerHeight * this._scaleFactor);
     if (!this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
+  }
+
+  /**
+   * 角色静态包围盒在外窗内的物理矩形（贴边基准）。舞台矩形含按比例放大的透明边距，
+   * 直接贴舞台边会让缝隙随缩放变大；这里按实际渲染比例还原可见轮廓。
+   */
+  private _physVisibleRect(size?: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
+    const stage = this._physStageRect(size);
+    const bounds = this._model?.isReady() ? this._model.getStaticBounds() : null;
+    if (!bounds) return stage;
+    const k = stage.height / PetApp._renderMarginRatio / this._model.boundsH;
+    const sign = this._settings.mirror ? -1 : 1;
+    const cx = stage.left + stage.width / 2;
+    const cy = stage.top + stage.height / 2;
+    const xa = cx + bounds.minX * k * sign;
+    const xb = cx + bounds.maxX * k * sign;
+    return {
+      left: Math.min(xa, xb),
+      width: Math.abs(xb - xa),
+      top: cy - bounds.maxY * k,
+      height: (bounds.maxY - bounds.minY) * k,
+    };
+  }
+
+  /** 入口按钮：聊天打开或设置关闭时隐藏（hidden 同时让命中区与穿透放行区一并撤掉）。 */
+  private _syncChatLauncherVisible(): void {
+    if (!this._chatLauncher) return;
+    this._chatLauncher.hidden = this._remoteChat.open || !this._settings.showChatButton;
   }
 
   private _cancelSnapAnimation(): void {

@@ -641,6 +641,8 @@ fn main() {
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）
             let menu_main = MenuItem::with_id(app, "menu", "主菜单", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "显示 / 隐藏桌宠", true, None::<&str>)?;
+            // 聊天按钮可在设置中隐藏，托盘保留固定入口。
+            let chat = MenuItem::with_id(app, "chat", "打开聊天", true, None::<&str>)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
             let cycle = MenuItem::with_id(app, "cycle_size", "切换尺寸", true, None::<&str>)?;
             // 默认勾选（与 tauri.conf.json alwaysOnTop:true 一致）
@@ -658,7 +660,7 @@ fn main() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &menu_main, &show, &sep1, &cycle, &top, &reset, &click_through,
+                    &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
                     &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
@@ -682,6 +684,9 @@ fn main() {
                         let _ = show_settings_window(app, None);
                     },
                     "show" => toggle_pet_visibility(app),
+                    "chat" => {
+                        let _ = chat_window::show_chat(app.clone(), app.state(), app.state());
+                    }
                     "cycle_size" => {
                         let _ = app.emit_to(
                             "pet",
