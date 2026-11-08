@@ -196,18 +196,18 @@ export class InteractionService {
         break;
       case 'tie':
         this.procedural.apply(ProceduralReactions.tieTug(1.0));
-        this._maybeAct('pout', 0.3);
+        this._maybeAct('puff', 0.3);
         break;
       case 'legs':
         this.procedural.apply(ProceduralReactions.legPout(1.0));
-        this._maybeAct('pout', 0.25);
+        this._maybeAct('puff', 0.25);
         break;
       case 'ponytail':
         this.procedural.apply(ProceduralReactions.lookBack(1.0));
         break;
       case 'tablet':
         this.procedural.apply(ProceduralReactions.acknowledge(0.8));
-        this._maybeAct('think', 0.3);
+        this._maybeAct('doubt', 0.3);
         break;
       default:
         // 身体及未命名的可见区域也有独立反馈，不依赖台词成功播放。

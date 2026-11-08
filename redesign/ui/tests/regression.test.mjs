@@ -11,7 +11,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,19);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,14);assert.equal(refs.Expressions.length,12);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -24,9 +24,9 @@ function load(name,imports={},globals={}){
  const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
-const newActionNames=['cheerful_bounce','shy_sway','think','giggle','pout','surprised','look_around','doze','bow','hum','sigh'];
+const newActionNames=['cheerful_bounce','shy_sway','puff','kiss','sob','deadpan'];
 // 主动使用四臂的动作；其余动作手臂只做默认复位。
-const armActionNames=['cheerful_bounce','shy_sway','surprised','bow'];
+const armActionNames=['cheerful_bounce','shy_sway'];
 const modelBase=new URL('assets/live2d/aliya/',root);
 const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
@@ -234,12 +234,12 @@ test('按优先级播放及随机播放同样触发挥手，被拒绝的动作�
  assert.equal(m.startMotion('missing',0,2),-1);assert.equal(released,1);
 });
 test('受击和无语恢复专用眼型，切换与清除始终互斥且无中间值',()=>{
- const {applyFaceVariant,FACE_VARIANT_PARAMETERS}=load('face-variant');
+ const {applyFaceVariant,expressionEye,FACE_VARIANT_PARAMETERS}=load('face-variant');
  const values=new Map();
  const model={setParameterValueById:(id,value)=>values.set(id,value)};
  for(const [expression,want] of [['hit',[1,0,0]],['speechless',[0,0,1]],['sad',[0,1,0]],['hit',[1,0,0]],['hit',[1,0,0]],[null,[0,0,0]],['worried',[0,0,0]],['speechless',[0,0,1]],['neutral',[0,0,0]]]){
   for(const name of FACE_VARIANT_PARAMETERS) values.set(name,.6);
-  applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expression);
+  applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expressionEye(expression));
   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(0,3).map(id=>values.get(id)),want);
   if(['hit','speechless','sad'].includes(expression)) {
    assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(3,7).map(id=>values.get(id)),[1,1,0,0]);
@@ -1184,8 +1184,8 @@ test('扩充互动：概率追加动作受在播动作约束',()=>{
   dialogue:{resolveSceneTag:()=>null},pettingHost:{isDialogueActive:()=>false,playPettingDialogue(){}},
   playCharacterAction:a=>{actions.push(a);return true},isActionPlaying:()=>playing,random:()=>0});
  const ctx={normX:.5,normY:.6,pxX:0,pxY:0,dtSeconds:1/60,leftPressed:true,isSecondary:false};
- s.onClick(ctx,false);assert.deepEqual(actions,['pout']);
- playing=true;now=5000;s.onClick(ctx,false);assert.deepEqual(actions,['pout'],'已有动作在播时不追加');
+ s.onClick(ctx,false);assert.deepEqual(actions,['puff']);
+ playing=true;now=5000;s.onClick(ctx,false);assert.deepEqual(actions,['puff'],'已有动作在播时不追加');
 });
 
 test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快甩仍走睁眼台词，取消完整释放',()=>{
@@ -1206,5 +1206,17 @@ test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快�
   for(let i=0;i<120;i++)h.advance(16);
   assert.equal(s.procedural.isPlaying,false,ending);assert.equal(s.isBusy,false);
   assert.deepEqual(h.writes.offsets,[0,0,0,0]);assert.equal(h.writes.eyes[0],false);
+ }
+});
+
+test('每种心境的动作偏向名必须存在于动作库且权重为正',()=>{
+ const {MOODS}=load('emotion');
+ const {ACTION_LIBRARY}=load('behavior');
+ const valid=new Set(ACTION_LIBRARY);
+ for(const [mood,def] of Object.entries(MOODS)){
+  for(const [name,bias] of Object.entries(def.actionBias)){
+   assert.ok(valid.has(name),`${mood} 偏向了不存在的动作 ${name}`);
+   assert.ok(Number.isFinite(bias)&&bias>0,`${mood}.${name} 权重 ${bias} 无效`);
+  }
  }
 });

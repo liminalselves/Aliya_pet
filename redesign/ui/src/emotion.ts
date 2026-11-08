@@ -31,7 +31,7 @@ export const MOODS: Record<string, MoodDefinition> = {
   happy: {
     expression: 'happy',
     durationSeconds: 10 * 60,
-    actionBias: { wave: 3, sway: 2, stretch: 1.5 },
+    actionBias: { wave: 3, sway: 2, stretch: 1.5, kiss: 2 },
   },
   cheerful: {
     // 高兴的弱档：不换表情，只影响动作选择（供 AI 表达「还不错」）
@@ -42,17 +42,17 @@ export const MOODS: Record<string, MoodDefinition> = {
   angry: {
     expression: 'angry',
     durationSeconds: 4 * 60,
-    actionBias: { angry: 3.5, shake: 2 },
+    actionBias: { angry: 3.5, shake: 2, puff: 2.5 },
   },
   sad: {
     expression: 'sad',
     durationSeconds: 8 * 60,
-    actionBias: { sway: 2.5 },
+    actionBias: { sway: 2.5, sob: 3 },
   },
   shy: {
     expression: 'shy',
     durationSeconds: 5 * 60,
-    actionBias: { nod: 2.5, wave: 1.2 },
+    actionBias: { nod: 2.5, wave: 1.2, kiss: 1.5 },
   },
   sleepy: {
     expression: 'sleepy',
@@ -62,7 +62,7 @@ export const MOODS: Record<string, MoodDefinition> = {
   smug: {
     expression: 'smug',
     durationSeconds: 5 * 60,
-    actionBias: { sway: 2, nod: 1.5 },
+    actionBias: { sway: 2, nod: 1.5, kiss: 1.5 },
   },
   curious: {
     expression: null,
@@ -72,7 +72,7 @@ export const MOODS: Record<string, MoodDefinition> = {
   speechless: {
     expression: 'speechless',
     durationSeconds: 3 * 60,
-    actionBias: { doubt: 2 },
+    actionBias: { doubt: 2, deadpan: 3 },
   },
 };
 

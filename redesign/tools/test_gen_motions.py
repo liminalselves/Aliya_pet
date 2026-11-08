@@ -29,9 +29,6 @@ UNCHANGED_SHA256 = {
     "yawn": "7ed97cbad4c3e1c5eb367d3b3e7f9345f5c86d9b5c3cb1a7eace0e2f3180a52a",
 }
 
-# Expanded library (smooth curves); recipes may still be tuned, so no hash pin.
-EXPANDED_MOTIONS = ("think", "giggle", "pout", "surprised", "look_around", "doze", "bow", "hum", "sigh")
-
 
 def endpoints(segments):
     """Decode endpoints independently and count Cubism segments/points."""
@@ -145,7 +142,7 @@ class CliTests(unittest.TestCase):
             output = io.StringIO()
             with mock.patch.multiple(generator, MOTIONS_DIR=str(motions), DIST_DIR=str(dist)), contextlib.redirect_stdout(output):
                 generator.main()
-            expected_names = set(UNCHANGED_SHA256) | {'shy_sway', 'cheerful_bounce'} | set(EXPANDED_MOTIONS)
+            expected_names = set(UNCHANGED_SHA256) | {'shy_sway', 'cheerful_bounce', 'puff', 'kiss', 'sob', 'deadpan'}
             self.assertEqual(set(generator.GENERATORS), expected_names)
             expected_stdout = ''
             for name, recipe in generator.GENERATORS.items():

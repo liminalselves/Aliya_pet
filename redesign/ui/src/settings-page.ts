@@ -48,15 +48,10 @@ const ACTION_LABELS: Record<string, string> = {
   yawn: '哈欠',
   cheerful_bounce: '开心雀跃',
   shy_sway: '撒娇',
-  think: '思考',
-  giggle: '偷笑',
-  pout: '赌气',
-  surprised: '吓一跳',
-  look_around: '张望',
-  doze: '打瞌睡',
-  bow: '行礼',
-  hum: '哼歌',
-  sigh: '叹气',
+  puff: '鼓腮',
+  kiss: '飞吻',
+  sob: '委屈',
+  deadpan: '无语',
 };
 
 /** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */

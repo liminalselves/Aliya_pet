@@ -213,7 +213,7 @@ const motionAssets = new Map(Object.entries(motionSetting.FileReferences.Motions
   const bytes = new TextEncoder().encode(readFileSync(resolve(motionRoot, entry.File), 'utf8'));
   return [name, { entry, bytes, duration: JSON.parse(new TextDecoder().decode(bytes)).Meta.Duration }];
 }));
-const newActions = ['shy_sway', 'cheerful_bounce'];
+const newActions = ['shy_sway', 'cheerful_bounce', 'puff', 'kiss', 'sob', 'deadpan'];
 const oldActions = [...motionAssets.keys()].filter(name => !newActions.includes(name));
 // This is an independent ownership contract, not a list inferred from the motion
 // under test: a missing reset curve must leave a dirty snapshot and fail the test.
@@ -477,7 +477,7 @@ for (const fps of [15, 30, 60]) {
     }
   });
   test(`shy_sway entry / main / exit handoffs retain fades and reset all 30 parameters at ${fps} FPS`, () => {
-    assert.equal(motionAssets.size, 19, 'the handoff matrix must include shy_sway and all 18 other actions');
+    assert.equal(motionAssets.size, 14, 'the handoff matrix must include shy_sway and all 13 other actions');
     assert.equal(motionAssets.get('shy_sway').duration, 5.4, 'shy_sway must include its 1.2 s neutral tail');
     for (const other of ['nod', 'wave']) {
       for (const interruptAt of [0.35, 1.4, 3.4, 4.05]) checkMotionHandoff('shy_sway', other, fps, interruptAt);

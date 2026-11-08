@@ -45,7 +45,9 @@ petAI.setMood('happy')                 // 切心境：默认表情 + 动作加�
 petAI.setMood('angry', 120)            // 指定 120 秒后回 neutral
 petAI.mood()                           // { name, elapsedSeconds }
 
-// 动作（9 个：nod/sway/shake/stretch/wave/doubt/angry/yawn/walk）
+// 动作（14 个，唯一清单见 src/chat/performance-manifest.ts 的
+//        PERFORMANCE_ACTIONS：nod/sway/shake/stretch/wave/doubt/angry/yawn/
+//        cheerful_bounce/shy_sway/puff/kiss/sob/deadpan）
 petAI.play('wave')                     // 播动作（挥手自动联动抬手）
 petAI.state().actions                  // 可用动作名
 
@@ -95,7 +97,8 @@ petAI.gaze(0.3, 0.5);
   在 `16.model3.json` 的 Expressions 里登记 → `emotion.ts` 的 MOODS 可选挂接 →
   `chat/performance-manifest.ts` 的 `PERFORMANCE_EXPRESSIONS` 补条目。
 - **加动作**：改 `redesign/tools/gen-motions.py` → 重新生成 → model3.json
-  Motions 登记 → `behavior.ts` ACTION_LIBRARY + `actions.json` 加亲和 →
+  Motions 登记 → `behavior.ts` ACTION_LIBRARY + `actions.json` 加亲和
+  （用替换脸时在 `actions.json` 条目里写 `face` 时间轴，见 ACTIONS.md）→
   `performance-manifest.ts` 的 `PERFORMANCE_ACTIONS` 补条目。
 - **加情绪**：`emotion.ts` 的 MOODS 加定义（表情 + 持续时间 + 动作亲和）。
 - **Tauri 壳**：`window.__TAURI__` 下可 evaluate 脚本调用 petAI；如需
