@@ -235,6 +235,7 @@ const refs: {
   speechMinutes?: HTMLInputElement;
   mirror?: HTMLInputElement;
   showCatEars?: HTMLInputElement;
+  showChatButton?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
   snapEdges?: HTMLInputElement;
   autoStart?: HTMLInputElement;
@@ -286,6 +287,7 @@ function refreshControls(): void {
   syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.showCatEars) refs.showCatEars.checked = settings.showCatEars;
+  if (refs.showChatButton) refs.showChatButton.checked = settings.showChatButton;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
   if (refs.scaleSlider) {
@@ -553,6 +555,15 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     '关闭后耳朵不再显示，也不会再被戳到',
     () => settings.showCatEars,
     (v) => update({ showCatEars: v })
+  );
+  refs.showChatButton = switchRow(
+    box,
+    '显示聊天按钮',
+    platform === 'android'
+      ? '关闭后收起聊天框时不再显示聊天按钮，可从主界面菜单「聊天」重新打开'
+      : '关闭后人物脚下不再显示聊天入口，仍可从托盘菜单「打开聊天」进入',
+    () => settings.showChatButton,
+    (v) => update({ showChatButton: v })
   );
   refs.batterySaver = addBatterySaverSwitch(box);
 }
@@ -826,9 +837,12 @@ if (platform === 'android') {
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
       : 'Windows 登录后自动启动',
-    () => settings.autoActions, // 占位，立即被真实值覆盖
+    () => false, // 占位，立即被真实值覆盖
     (v) => {
-      setAutoStart(v);
+      // 设置失败时回读系统真实状态，避免开关停在未生效的位置。
+      void setAutoStart(v).then(async (ok) => {
+        if (!ok && refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+      });
     }
   );
   isAutoStart().then((v) => {

@@ -134,17 +134,17 @@ async function checkOnce(
 ): Promise<UpdateCheckResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
   try {
-    res = await fetchImpl(
+    const res = await fetchImpl(
       `${base}/api/check?platform=${encodeURIComponent(platform)}&version=${encodeURIComponent(version)}`,
       { signal: controller.signal }
     );
+    if (!res.ok) throw new UpdateCheckError(`HTTP ${res.status}`);
+    // 超时同时覆盖响应体读取，避免响应头到了而正文停滞时永久挂起。
+    return coerceResult(await res.json());
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new UpdateCheckError(`HTTP ${res.status}`);
-  return coerceResult(await res.json());
 }
 
 /** 依次尝试 base 列表；网络错误 / 非 2xx / 超时落到下一个，全部失败抛 UpdateCheckError。 */

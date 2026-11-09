@@ -21,6 +21,8 @@ export interface PetSettings {
   mirror: boolean;
   /** 显示猫耳；关闭时隐藏猫耳部件，耳朵互动与提到猫耳的台词一并停用。 */
   showCatEars: boolean;
+  /** 桌面端人物脚下的「聊天」入口按钮；关闭后仍可从托盘打开聊天。 */
+  showChatButton: boolean;
   randomSpeech: boolean;
   randomSpeechMinutes: number;
   /** 回复与聊天记录中显示生成配图卡片（含待生成占位符）。 */
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   autoActions: true,
   mirror: false,
   showCatEars: true,
+  showChatButton: true,
   randomSpeech: false,
   randomSpeechMinutes: 5,
   showGeneratedImages: true,
@@ -165,13 +168,13 @@ export function loadSettings(): PetSettings {
       petOpacity: clampPetOpacity(parsed.petOpacity),
       fullClickThrough: parsed.fullClickThrough === true,
       showCatEars: parsed.showCatEars !== false,
+      showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
         ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,
-      randomSpeechMinutes: Math.min(
-        Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
-        120
-      ),
+      randomSpeechMinutes: Number.isFinite(Number(parsed.randomSpeechMinutes ?? 5))
+        ? Math.min(Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1), 120)
+        : DEFAULT_SETTINGS.randomSpeechMinutes,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

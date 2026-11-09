@@ -216,6 +216,12 @@ export class ChatView {
     void this.bootstrap();
   }
   private started = false;
+  private launcherEnabled = true;
+  /** 设置「显示聊天按钮」：关闭后收起聊天框不再露出入口（仍可经菜单/托盘打开）。 */
+  setLauncherEnabled(enabled: boolean): void {
+    this.launcherEnabled = enabled;
+    this.get('.chat-launcher').hidden = this.isOpen || !enabled;
+  }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
   /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
@@ -234,7 +240,7 @@ export class ChatView {
       (document.activeElement as HTMLElement | null)?.blur();
     }
     this.isOpen = open;
-    this.get('.chat-launcher').hidden = open;
+    this.get('.chat-launcher').hidden = open || !this.launcherEnabled;
     // 输入框是常驻锚点：切屏（连接/会话）只禁用不隐藏——显隐切换会让卡片
     // 在过渡帧撕裂（面板方角底边悬空），是用户视频的闪烁源之一。
     this.composer.hidden = !open;
@@ -291,12 +297,12 @@ export class ChatView {
         this.exitTimer = null;
         shell.classList.remove('shell-exit');
         this.setOpen(false);
-        if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
+        if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat')).catch(() => {});
       }, 150);
       return;
     }
     this.setOpen(false);
-    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
+    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat')).catch(() => {});
   }
   /**
    * 输入区状态：empty 灰化发送键；busy 让停止键原位替换发送键（chat.css .composer-action）；
@@ -315,7 +321,7 @@ export class ChatView {
     this.composer.classList.toggle('busy', busy);
     this.composer.classList.toggle('errored', !busy && !!this.controller.error);
     this.input.disabled = !ready;
-    this.input.readOnly = ready && busy;
+    this.input.readOnly = ready && (busy || this.uploading);
     const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
     if (this.input.placeholder === hint) return;
     this.input.placeholder = hint;
@@ -913,7 +919,7 @@ export class ChatView {
       this.historyMayHaveMore = list.length >= HISTORY_FETCH_LIMIT;
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
-    } catch (e) { this.status.textContent = this.error(e); }
+    } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
   }
   private async applyControlRequest(): Promise<void> {
     if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;

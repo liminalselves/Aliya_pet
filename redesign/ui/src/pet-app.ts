@@ -562,6 +562,7 @@ export class PetApp {
       launcher.setAttribute('aria-pressed', 'false');
       document.body.append(launcher);
       this._chatLauncher = launcher;
+      this._syncChatLauncherVisible();
       launcher.onclick = () => {
         // 开关式：再点一次收起输入框
         import('@tauri-apps/api/core')
@@ -582,7 +583,7 @@ export class PetApp {
             this._chatLauncher.classList.toggle('open', e.payload.open);
             this._chatLauncher.setAttribute('aria-pressed', String(e.payload.open));
             // chat 已打开时从模型脚下移除入口，避免窗口与按钮隔出一层「外挂」感。
-            this._chatLauncher.hidden = e.payload.open;
+            this._syncChatLauncherVisible();
           }
           // 记忆开关状态（chat-state 由壳按窗口可见性广播），下次启动据此恢复。
           try { storage?.setItem('aliya_chat_open', e.payload.open ? '1' : '0'); } catch { /* 存储不可用则跳过 */ }
@@ -613,6 +614,7 @@ export class PetApp {
     this._chat.onCancelPerformance = () => this._chatPerformance?.cancel();
     const mobile = platform === 'android' || (platform === 'web' && matchMedia('(max-width: 560px)').matches);
     document.body.classList.toggle('chat-mobile', mobile);
+    this._chatView.setLauncherEnabled(this._settings.showChatButton);
     if (platform === 'android') this._chatView.setOpen(true);
   }
 
@@ -730,6 +732,8 @@ export class PetApp {
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
     this._applyCatEars(s.showCatEars, restoreWindow);
+    this._syncChatLauncherVisible();
+    this._chatView?.setLauncherEnabled(s.showChatButton);
 
     // 窗口层
     if (platform === 'android') {
@@ -748,6 +752,10 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
+      // 设置页改置顶后托盘勾选要跟上（托盘自己点击时值本就一致，重复写入无副作用）。
+      void import('@tauri-apps/api/core')
+        .then(m => m.invoke('sync_top_menu', { checked: s.alwaysOnTop }))
+        .catch(() => {});
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -1319,12 +1327,12 @@ export class PetApp {
       const shell = androidShell();
       if (!shell) return;
       this._refreshShellMetrics();
-      const m = JSON.parse(shell.getMetrics()) as {
-        screenW: number;
-        screenH: number;
-        winW: number;
-        winH: number;
-      };
+      let m: { screenW: number; screenH: number; winW: number; winH: number };
+      try {
+        m = JSON.parse(shell.getMetrics());
+      } catch {
+        return; // 壳没返回可用尺寸：保持当前位置，不抛错中断调用方
+      }
       if (this._wrapWindow) {
         // 贴合模式：原点居中即可，窗口矩形下帧自动跟随
         const x = m.screenW / 2;
@@ -1473,6 +1481,12 @@ export class PetApp {
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
   }
 
+  /** 入口按钮：聊天打开或设置关闭时隐藏（hidden 同时让命中区与穿透放行区一并撤掉）。 */
+  private _syncChatLauncherVisible(): void {
+    if (!this._chatLauncher) return;
+    this._chatLauncher.hidden = this._remoteChat.open || !this._settings.showChatButton;
+  }
+
   private _cancelSnapAnimation(): void {
     this._snapAnimToken++;
     if (this._nativeSnapping) {
@@ -1604,8 +1618,9 @@ export class PetApp {
       this._originCssX = sx + (tx - sx) * progress;
       this._originCssY = sy + (ty - sy) * progress;
       this._rectDirty = true;
-    }, durMs).then(completed => {
-      if (completed) this._persistWrapOrigin();
+    }, durMs).then(() => {
+      // 被打断时 _originCssX/Y 停在中途值，同样以实际位置落盘（贴边开始时存的是终点）。
+      this._persistWrapOrigin();
     }).catch(() => {});
   }
 
@@ -2204,6 +2219,8 @@ export class PetApp {
     this._originCssY += yCss - this._appliedRectY;
     this._appliedRectX = xCss;
     this._appliedRectY = yCss;
+    // 贴边开始时存的是终点，被抓起后以实际停下的位置为准，否则息屏恢复会跳回终点。
+    this._persistWrapOrigin();
   }
 
   public onNativeDragEnd(dxCss: number, dyCss: number, maxSpeedPxPerSec: number, cancelled: boolean): void {

@@ -186,7 +186,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
     const moved = drag.moved; drag = null;
     nav.classList.remove('dragging');
     // 拖动结束时松手位置的页签会收到 click，拦下避免误切。
-    if (moved) nav.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
+    if (moved && e.type === 'pointerup') nav.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
   };
   nav.addEventListener('pointerup', endDrag);
   nav.addEventListener('pointercancel', endDrag);

@@ -67,6 +67,9 @@ impl Default for HitMask {
 }
 
 /// 按窗口标签区分的命中掩码表（pet / chat）。
+/// 托盘「置顶显示」勾选项；与穿透项同为 CheckMenuItem，需包一层才能分别注册为 managed state。
+struct TopMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
 type HitMaskState = Arc<Mutex<std::collections::HashMap<String, HitMask>>>;
 
 #[tauri::command]
@@ -493,6 +496,15 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
 
 /// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
 /// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
+/// pet 前端回写置顶设置（设置页改动时同步托盘勾选）；窗口置顶由前端自行应用。
+#[tauri::command]
+fn sync_top_menu(app: tauri::AppHandle, checked: bool) -> Result<(), String> {
+    if let Some(item) = app.try_state::<TopMenuItem>() {
+        item.0.set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn sync_click_through_menu(
     app: tauri::AppHandle,
@@ -593,6 +605,7 @@ fn main() {
             set_pet_bounds,
             show_settings,
             sync_click_through_menu,
+            sync_top_menu,
             show_records,
             show_update,
             current_update_payload,
@@ -641,6 +654,8 @@ fn main() {
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）
             let menu_main = MenuItem::with_id(app, "menu", "主菜单", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "显示 / 隐藏桌宠", true, None::<&str>)?;
+            // 聊天按钮可在设置中隐藏，托盘保留固定入口。
+            let chat = MenuItem::with_id(app, "chat", "打开聊天", true, None::<&str>)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
             let cycle = MenuItem::with_id(app, "cycle_size", "切换尺寸", true, None::<&str>)?;
             // 默认勾选（与 tauri.conf.json alwaysOnTop:true 一致）
@@ -658,11 +673,12 @@ fn main() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &menu_main, &show, &sep1, &cycle, &top, &reset, &click_through,
+                    &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
                     &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
             app.manage(click_through.clone());
+            app.manage(TopMenuItem(top.clone()));
 
             let icon = app
                 .default_window_icon()
@@ -682,6 +698,9 @@ fn main() {
                         let _ = show_settings_window(app, None);
                     },
                     "show" => toggle_pet_visibility(app),
+                    "chat" => {
+                        let _ = chat_window::show_chat(app.clone(), app.state(), app.state());
+                    }
                     "cycle_size" => {
                         let _ = app.emit_to(
                             "pet",
@@ -691,9 +710,9 @@ fn main() {
                     }
                     "top" => {
                         if let Some(w) = app.get_webview_window("pet") {
-                            let new_val = !top_item.is_checked().unwrap_or(true);
+                            // muda 在派发事件前已切换勾选：读到的就是目标值，不能再次反转。
+                            let new_val = top_item.is_checked().unwrap_or(true);
                             let _ = w.set_always_on_top(new_val);
-                            let _ = top_item.set_checked(new_val);
                             // 同步给前端更新 localStorage 与设置窗口控件
                             let _ = app.emit_to(
                                 "pet",

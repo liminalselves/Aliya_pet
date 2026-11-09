@@ -294,7 +294,7 @@ test('镜像画布使用可见坐标而非已被CSS反转的offsetX',()=>{
  const p=app._eventNorm({clientX:260,clientY:150,offsetX:40,offsetY:100});assert.equal(p.nx,.8);assert.equal(p.ny,.25);
 });
 const settleWindow=()=>new Promise(r=>setImmediate(r));
-function snapHarness(pos=[40,300],snap=true) {
+function snapHarness(pos=[40,300],snap=true,phys={width:300,height:400}) {
  let now=0,rafQ=[],reduced=false;
  const positions=[],saved=[],animations=[];
  const mon={scaleFactor:1.5,workArea:{position:{x:-1920,y:0},size:{width:1920,height:1040}}};
@@ -311,12 +311,12 @@ function snapHarness(pos=[40,300],snap=true) {
  const api={currentMonitor:async()=>mon,PhysicalPosition:class{constructor(x,y){this.x=x;this.y=y}}};
  const {PetApp}=load('pet-app',{'@tauri-apps/api/window':api,'./settings':{saveSettings:s=>saved.push({...s})}},{
   KeyframeEffect,Animation,document:{body,documentElement:{},timeline:{}},
-  window:{matchMedia:()=>({matches:reduced})},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
+  window:{matchMedia:()=>({matches:reduced}),innerWidth:phys.width/1.5,innerHeight:phys.height/1.5},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
   requestAnimationFrame:fn=>rafQ.push(fn),
  });
  const app=Object.create(PetApp.prototype);
  Object.assign(app,{_tauriWindow:{outerPosition:async()=>({x:pos[0],y:pos[1]}),scaleFactor:async()=>1.5,
-  outerSize:async()=>({width:300,height:400}),setPosition:async p=>{pos[0]=p.x;pos[1]=p.y;positions.push([...pos])}},
+  outerSize:async()=>({width:phys.width,height:phys.height}),setPosition:async p=>{pos[0]=p.x;pos[1]=p.y;positions.push([...pos])}},
   _snapAnimToken:0,_snapAnimation:null,_snapHintTimer:null,_windowMoveTask:null,_settings:{snapEdges:snap},
   _winPhysX:pos[0],_winPhysY:pos[1],_scaleFactor:1.5,_metricsSynced:true,_syncChatAnchor(){},_showSnapHint(){}});
  return {app,positions,saved,animations,pos,mon,PetApp,
@@ -338,6 +338,22 @@ test('松手贴边：副屏负坐标、DPI、越界归位与关闭贴边',async(
   const h=snapHarness([...pos],snap);h.app._onDragFinished();await settleWindow();await h.finish();
   assert.deepEqual([h.saved.at(-1).posX,h.saved.at(-1).posY],want,`pos=${pos} snap=${snap}`);
   if(want.join()!==pos.join()) assert.deepEqual(h.positions.at(-1),want);
+ }
+});
+test('贴边以舞台边对齐工作区边：缩小后舞台贴紧屏幕边，外窗边留在屏幕外',async()=>{
+ const phys={width:900,height:1200};
+ for(const edge of ['left','right']){
+  const h=snapHarness([0,-300],true,phys);
+  Object.assign(h.app,{_deskCapacityReady:true,_refreshDesktopCapacity(){},_settings:{snapEdges:true,scale:.5,mirror:false},
+   _model:{isReady:()=>true,boundsAspect:.688,boundsH:2,getStaticBounds:()=>({minX:-.69,maxX:.69,minY:-1,maxY:1})}});
+  const r=h.app._physStageRect(phys),work=h.mon.workArea,gap=30; // 感应带 = 48 CSS px × 1.5
+  assert.ok(r.left>0&&r.width<phys.width,'舞台应小于固定容量的外窗');
+  const workRight=work.position.x+work.size.width;
+  h.pos[0]=Math.round(edge==='left'?work.position.x+gap-r.left:workRight-gap-r.left-r.width);h.app._winPhysX=h.pos[0];
+  h.app._onDragFinished();await settleWindow();await h.finish();
+  const stageEdge=edge==='left'?h.pos[0]+r.left:h.pos[0]+r.left+r.width;
+  assert.ok(Math.abs(stageEdge-(edge==='left'?work.position.x:workRight))<=1,`${edge}: 舞台边未贴紧工作区边`);
+  assert.equal(h.pos[1],-300,'纵向不在感应带内，保持不变');
  }
 });
 test('贴边开启时拖动仍完全跟手：从边缘拉开无阻力，越界不钳制，小数位移不丢失',async()=>{

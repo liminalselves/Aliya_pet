@@ -62,6 +62,9 @@ export class HitAreas {
           priority: Number(m.priority ?? 0),
         };
         if (!def.id) continue;
+        // 非有限数或非正尺寸的区域永远命不中且无提示，直接丢弃。
+        if (![def.x, def.y, def.width, def.height, def.priority].every(Number.isFinite)
+          || def.width <= 0 || def.height <= 0) continue;
         this._areas.push(def);
         if (def.id === 'head_pet_zone') this._headPetZone = def;
       }
