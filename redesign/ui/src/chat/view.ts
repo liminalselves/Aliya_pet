@@ -297,12 +297,12 @@ export class ChatView {
         this.exitTimer = null;
         shell.classList.remove('shell-exit');
         this.setOpen(false);
-        if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
+        if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat')).catch(() => {});
       }, 150);
       return;
     }
     this.setOpen(false);
-    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat'));
+    if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat')).catch(() => {});
   }
   /**
    * 输入区状态：empty 灰化发送键；busy 让停止键原位替换发送键（chat.css .composer-action）；
@@ -321,7 +321,7 @@ export class ChatView {
     this.composer.classList.toggle('busy', busy);
     this.composer.classList.toggle('errored', !busy && !!this.controller.error);
     this.input.disabled = !ready;
-    this.input.readOnly = ready && busy;
+    this.input.readOnly = ready && (busy || this.uploading);
     const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
     if (this.input.placeholder === hint) return;
     this.input.placeholder = hint;
@@ -919,7 +919,7 @@ export class ChatView {
       this.historyMayHaveMore = list.length >= HISTORY_FETCH_LIMIT;
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
-    } catch (e) { this.status.textContent = this.error(e); }
+    } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
   }
   private async applyControlRequest(): Promise<void> {
     if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;

@@ -837,9 +837,12 @@ if (platform === 'android') {
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
       : 'Windows 登录后自动启动',
-    () => settings.autoActions, // 占位，立即被真实值覆盖
+    () => false, // 占位，立即被真实值覆盖
     (v) => {
-      setAutoStart(v);
+      // 设置失败时回读系统真实状态，避免开关停在未生效的位置。
+      void setAutoStart(v).then(async (ok) => {
+        if (!ok && refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+      });
     }
   );
   isAutoStart().then((v) => {

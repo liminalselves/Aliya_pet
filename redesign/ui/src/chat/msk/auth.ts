@@ -120,7 +120,8 @@ export class MskAuth {
       clearTimeout(timer); disposeAbort();
       unlisten?.();
       if (onResume) { window.removeEventListener('focus', onResume); document.removeEventListener('visibilitychange', onResume); }
-      await end?.();
+      // 清理失败不能把已完成的登录改判为失败。
+      try { await end?.(); } catch { /* ignore */ }
     }
   }
   private authUrl(session: string, callback: string): string {

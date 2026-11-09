@@ -172,10 +172,9 @@ export function loadSettings(): PetSettings {
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))
         ? Math.min(0.8, Math.max(0, Number(parsed.chatBackgroundDim))) : DEFAULT_SETTINGS.chatBackgroundDim,
-      randomSpeechMinutes: Math.min(
-        Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1),
-        120
-      ),
+      randomSpeechMinutes: Number.isFinite(Number(parsed.randomSpeechMinutes ?? 5))
+        ? Math.min(Math.max(Number(parsed.randomSpeechMinutes ?? 5), 1), 120)
+        : DEFAULT_SETTINGS.randomSpeechMinutes,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
