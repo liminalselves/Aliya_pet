@@ -23,10 +23,12 @@
 .pet-startup-notice p { margin: 0 0 6px; }
 .pet-startup-notice button { cursor: pointer; }
 
-/* 贴边完成后短暂提示，不改变拖动中的视觉与命中区域。 */
-body::after {
+/* 贴边完成后短暂提示，不改变拖动中的视觉与命中区域。
+   画在舞台（#stage）上，不画在整个外窗上：桌面外窗是固定容量的，缩小后舞台只占其中一块，
+   贴边对齐屏幕的是舞台边，此时外窗边已在屏幕之外。 */
+#stage::after {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 2px;
   pointer-events: none;
   z-index: 40;
@@ -34,11 +36,11 @@ body::after {
   border-radius: var(--al-r-m);
   opacity: 0;
 }
-body.snap-confirm::after { animation: snap-confirm .65s var(--al-ease); }
-body[data-snap-edge~="left"]::after { border-left-color: var(--al-accent-emphasis); }
-body[data-snap-edge~="right"]::after { border-right-color: var(--al-accent-emphasis); }
-body[data-snap-edge~="top"]::after { border-top-color: var(--al-accent-emphasis); }
-body[data-snap-edge~="bottom"]::after { border-bottom-color: var(--al-accent-emphasis); }
+body.snap-confirm #stage::after { animation: snap-confirm .65s var(--al-ease); }
+body[data-snap-edge~="left"] #stage::after { border-left-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="right"] #stage::after { border-right-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="top"] #stage::after { border-top-color: var(--al-accent-emphasis); }
+body[data-snap-edge~="bottom"] #stage::after { border-bottom-color: var(--al-accent-emphasis); }
 @keyframes snap-confirm { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
 
 /* 台词气泡：沿用 app 记录页的暖石墨台词卡片、常规字重与左对齐，保留头顶尾巴。
@@ -117,7 +119,7 @@ body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; displ
 
 @media (prefers-reduced-motion: reduce) {
   #dialogue-bubble { animation: none; }
-  body.snap-confirm::after { animation: none; opacity: 0; }
+  body.snap-confirm #stage::after { animation: none; opacity: 0; }
 }
 
 body.android-main { background:var(--al-bg-0); }

@@ -1434,7 +1434,7 @@ export class PetApp {
           if (!current()) return;
           if (mon) {
             // 贴边按可见舞台算，透明外窗可以越出工作区。
-            const r = this._physVisibleRect(size);
+            const r = this._physStageRect(size);
             const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
             const left = mon.workArea.position.x - Math.round(r.left);
             const top = mon.workArea.position.y - Math.round(r.top);
@@ -1475,28 +1475,6 @@ export class PetApp {
     const H = size?.height ?? Math.round(window.innerHeight * this._scaleFactor);
     if (!this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
-  }
-
-  /**
-   * 角色静态包围盒在外窗内的物理矩形（贴边基准）。舞台矩形含按比例放大的透明边距，
-   * 直接贴舞台边会让缝隙随缩放变大；这里按实际渲染比例还原可见轮廓。
-   */
-  private _physVisibleRect(size?: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
-    const stage = this._physStageRect(size);
-    const bounds = this._model?.isReady() ? this._model.getStaticBounds() : null;
-    if (!bounds) return stage;
-    const k = stage.height / PetApp._renderMarginRatio / this._model.boundsH;
-    const sign = this._settings.mirror ? -1 : 1;
-    const cx = stage.left + stage.width / 2;
-    const cy = stage.top + stage.height / 2;
-    const xa = cx + bounds.minX * k * sign;
-    const xb = cx + bounds.maxX * k * sign;
-    return {
-      left: Math.min(xa, xb),
-      width: Math.abs(xb - xa),
-      top: cy - bounds.maxY * k,
-      height: (bounds.maxY - bounds.minY) * k,
-    };
   }
 
   /** 入口按钮：聊天打开或设置关闭时隐藏（hidden 同时让命中区与穿透放行区一并撤掉）。 */
