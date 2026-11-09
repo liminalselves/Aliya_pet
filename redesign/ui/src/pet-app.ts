@@ -81,7 +81,7 @@ export class PetApp {
   private _behavior: BehaviorService = null;
   private _moodEngine: MoodEngine = null;
   private _ai: PetAI = null;
-  private _remoteChat = { open: false, busy: false, typing: false };
+  private _remoteChat = { open: false, busy: false, typing: false, replying: false };
   private _chatLauncher: HTMLElement | null = null;
   /** 聊天入口当前 bottom 缓存（CSS px）：逐帧校正，值不变不写 style。 */
   private _launcherBottomCss = 0;
@@ -103,12 +103,18 @@ export class PetApp {
   private _windowGeometryError: unknown = null;
   /** 保留原生窗口整数坐标舍去的亚像素，避免反复缩放累积漂移。 */
   private _windowResizeRemainder = { x: 0, y: 0 };
-  private _coordination = new InteractionCoordinator(() => ({
-    interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
-    speaking: this._remoteChat.busy || this._remoteChat.typing || (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
-      (this._chatView?.typing ?? false),
-    paused: this._paused || !this._running,
-  }));
+  private _coordination = new InteractionCoordinator(() => this._coordinationState());
+
+  private _coordinationState(): { interacting: boolean; speaking: boolean; paused: boolean } {
+    return {
+      interacting: this._leftDown || this._dragging || this._nativeDragging || (this._interaction?.isBusy ?? false),
+      // 回复展示期间也算「说话」：待机动作的表情（如生气动作的黑脸与怒气符号）会盖掉聊天表演。
+      speaking: this._remoteChat.busy || this._remoteChat.typing || this._remoteChat.replying ||
+        (this._bubble?.isActive ?? false) || (this._chat?.busy ?? false) ||
+        (this._chatView?.typing ?? false) || (this._chatView?.replying ?? false),
+      paused: this._paused || !this._running,
+    };
+  }
 
   // Tauri 窗口拖动
   private _tauriWindow: TauriWindow | null = null;
@@ -234,11 +240,12 @@ export class PetApp {
   private static readonly _snapZonePx = 48;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.30，不改变用户窗口缩放设置。
-   * 正式 Core 的新动作×表情×极端注视/切换矩阵：需求 1.222872，
-   * 乘 1.05 安全系数后需 1.284015，向上取 1.30（测量方法见 docs/ACTIONS.md）。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.33，不改变用户窗口缩放设置。
+   * 正式 Core 的全部 13 动作×表情×极端注视/切换矩阵：需求 1.236901，
+   * 乘 1.05 安全系数后需 1.298746；最小窗口的投影安全带在 1.30 时贴边失败，
+   * 取 1.33 留出余量（重做前的旧动作在同一矩阵需 1.323，测量方法见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.30;
+  private static readonly _renderMarginRatio = 1.33;
   /** 聊天入口与脚底的固定间隙（CSS px）。 */
   private static readonly _launcherGapCss = 6;
 
@@ -446,6 +453,7 @@ export class PetApp {
     this._behavior.onRandomSpeech = () => this._playRandom();
     this._behavior.setActionMeta(this._model.actionManifest);
     this._behavior.start();
+    if (this._paused) this._behavior.stop();
 
     // 情绪引擎（心境 → 默认表情 + 动作选择加权）+ AI 对外 API
     this._moodEngine = new MoodEngine(this._model);
@@ -1080,9 +1088,17 @@ export class PetApp {
    * Android：App 内为全屏容器无窗口操作；悬浮窗走内容贴合模式，
    * 这里只钳制缩放范围（CSS px），窗口矩形由渲染帧逐帧跟随角色剪影。
    */
-  private _applyWindowSettingsAndroid(s: PetSettings, restoreWindow: boolean): void {
+  private _applyWindowSettingsAndroid(s: PetSettings, restoreWindow: boolean, displayChanged = false): void {
     const shell = androidShell();
     if (!shell) return;
+    // 必须在刷新屏幕尺寸与缩放前判断贴边；旋转后旧屏边可能落在新屏幕中央。
+    const b = displayChanged && s.snapEdges ? this._model?.getStaticBounds() : null;
+    const wasSnapped = !!b && this._screenW > 0 && this._screenH > 0 && Math.min(
+      Math.abs(this._originCssX + b.minX * this._contentScaleCss),
+      Math.abs(this._screenW - this._originCssX - b.maxX * this._contentScaleCss),
+      Math.abs(this._originCssY - b.maxY * this._contentScaleCss),
+      Math.abs(this._screenH - this._originCssY + b.minY * this._contentScaleCss),
+    ) <= 1; // 容忍原生窗口坐标取整。
     this._refreshShellMetrics();
     const baseH = 675 * PetApp._windowMarginRatio;
     const baseW =
@@ -1125,8 +1141,9 @@ export class PetApp {
           this._scaleTween = { from: shownScale, to: this._contentScaleCss, start: performance.now(), settled: true };
         } else this._scaleTween = null;
       }
+      if (displayChanged) this._cancelSnapAnimation();
       this._rectInited = false;
-      if (this._model?.isReady() && s.snapEdges) this._onDragFinishedAndroid();
+      if (this._model?.isReady() && s.snapEdges) this._onDragFinishedAndroid(wasSnapped);
       return;
     }
     // App 内全屏：无窗口操作（保留签名兼容旧逻辑）
@@ -1552,7 +1569,7 @@ export class PetApp {
    * 开启贴边时越界必归位（越界即近边的延伸）；关闭时可整个拖出屏幕
    * （找不回时走设置页「重置位置」）。
    */
-  private _onDragFinishedAndroid(): void {
+  private _onDragFinishedAndroid(forceNearestEdge = false): void {
     const shell = androidShell();
     if (!shell) return;
     // App 内全屏模式没有可移动的窗口：不吸附、不持久化
@@ -1564,18 +1581,20 @@ export class PetApp {
       const b = this._model?.getStaticBounds() ?? null;
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
-        const zone = PetApp._snapZonePx;
+        const zone = forceNearestEdge ? 0 : PetApp._snapZonePx;
         let tx = this._originCssX;
         let ty = this._originCssY;
         const charL = tx + b.minX * s;
         const charR = tx + b.maxX * s;
         const charT = ty - b.maxY * s;
         const charB = ty - b.minY * s;
-        // 统一规则：角色边越界或在感应带内 → 贴到对应屏边
-        if (charL <= zone) tx -= charL;
-        else if (charR >= m.screenW - zone) tx += m.screenW - charR;
-        if (charT <= zone) ty -= charT;
-        else if (charB >= m.screenH - zone) ty += m.screenH - charB;
+        // 旋转前已贴边：不受感应带限制，按新尺寸选择最近屏边；越界的另一轴仍归位。
+        const gaps = [charL, m.screenW - charR, charT, m.screenH - charB].map(Math.abs);
+        const nearest = forceNearestEdge ? gaps.indexOf(Math.min(...gaps)) : -1;
+        if (charL <= zone || nearest === 0) tx -= charL;
+        else if (charR >= m.screenW - zone || nearest === 1) tx += m.screenW - charR;
+        if (charT <= zone || nearest === 2) ty -= charT;
+        else if (charB >= m.screenH - zone || nearest === 3) ty += m.screenH - charB;
         if (tx !== this._originCssX || ty !== this._originCssY) {
           // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
           this._persistWrapOrigin(tx, ty);
@@ -1712,7 +1731,7 @@ export class PetApp {
   private _updatePointerLook(e: PointerEvent): void {
     if (platform === 'tauri' && e.pointerType === 'mouse') return;
     const n = this._eventNorm(e);
-    this._behavior?.updateLookTarget(n.nx, n.ny);
+    this._behavior?.updateLookTarget(n.nx, n.ny, e.type === 'pointerdown' && e.pointerType === 'touch');
   }
 
   /** 构造互动上下文（模型参考坐标 + 物理像素 + 真实事件间隔）。 */
@@ -1760,13 +1779,11 @@ export class PetApp {
     canvas.addEventListener('pointerdown', (e) => {
       if (this._fullClickThrough || !e.isPrimary || (e.button !== 0 && e.button !== 2) || this._activePointerId != null) return;
       this._coordination.activity();
+      // 按下即设置一次目标：短触摸不依赖 move；透明区仍只更新视线、不接管互动。
+      this._updatePointerLook(e);
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
-      if (!this._isOnCharacter(e)) {
-        // 触屏点空白处仍让角色看过去（鼠标视线由全局光标驱动）。
-        this._updatePointerLook(e);
-        return;
-      }
+      if (!this._isOnCharacter(e)) return;
       this._cancelSnapAnimation();
       this._activePointerId = e.pointerId;
       // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
@@ -1791,9 +1808,6 @@ export class PetApp {
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
       this._downScreenY = e.screenY;
-      // 视线跟随：按下即更新目标（轻点不移动也要看向触点）
-      this._updatePointerLook(e);
-
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
         // 声明互动手势：悬浮窗壳不得把这次手势抢成拖动
@@ -1804,7 +1818,6 @@ export class PetApp {
       if (e.button !== 0) return;
 
       this._leftDown = true;
-      this._updatePointerLook(e);
       const handled = this._interaction?.onPointerDown(ctx) ?? false;
       if (this._wrapWindow && handled) androidShell()?.setInteracting(true);
       if (!handled) {
@@ -1863,6 +1876,8 @@ export class PetApp {
     canvas.addEventListener('pointerup', (e) => {
       if (!e.isPrimary || (this._activePointerId != null && e.pointerId !== this._activePointerId)) return;
       this._coordination.activity();
+      // 保留 UP 携带的最终有效触点；拖动接管时不恢复跟随，静止仍由行为层五秒释放。
+      if (e.pointerType === 'touch' && !this._dragging && !this._nativeDragging) this._updatePointerLook(e);
       const viaPetting = e.button === 2 || this._touchPetting;
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
       const ctx = this._ctx(e, viaPetting);
@@ -1895,6 +1910,7 @@ export class PetApp {
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
+      this._behavior?.clearLookTarget();
       this._cancelInteraction();
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
@@ -1904,12 +1920,14 @@ export class PetApp {
       if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
+      this._behavior?.clearLookTarget();
       this._cancelInteraction();
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._resetDragState();
     });
-    canvas.addEventListener('pointerleave', () => {
-      if (platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
+    canvas.addEventListener('pointerleave', (e) => {
+      // 触摸抬起也会产生 leave，并非鼠标移出；最后触点交给行为层定时平滑释放。
+      if (e.pointerType === 'mouse' && platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
     });
     window.addEventListener('blur', () => {
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2124,6 +2142,8 @@ export class PetApp {
   public setPaused(paused: boolean): void {
     if (this._paused === paused) return;
     this._paused = paused;
+    if (paused) this._behavior?.stop();
+    else this._behavior?.start();
     this._syncBackgroundMotion();
     if (paused) {
       this._chat?.stop();
@@ -2160,7 +2180,7 @@ export class PetApp {
       this.setPaused(false);
       this._reloadAfterContextLoss();
     } else if (event === 'display-changed' && this._wrapWindow) {
-      this._applyWindowSettingsAndroid(this._settings, false);
+      this._applyWindowSettingsAndroid(this._settings, false, true);
     }
   }
 

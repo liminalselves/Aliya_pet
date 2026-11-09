@@ -38,7 +38,7 @@
     },
     {
       "id": "aliya_time_dinner_004",
-      "text": "储备食物不太乐观",
+      "text": "三人份的口粮够吃很久",
       "weight": 1,
       "minRepeatDays": 7,
       "tags": [
@@ -148,7 +148,7 @@
     },
     {
       "id": "aliya_time_dinner_014",
-      "text": "试剂可不能放错位置",
+      "text": "食物注水还得等一会儿",
       "weight": 1,
       "minRepeatDays": 7,
       "tags": [
@@ -247,7 +247,7 @@
     },
     {
       "id": "aliya_time_dinner_023",
-      "text": "Ryoko喊我们开饭了",
+      "text": "今天开了包Ryoko的海带",
       "weight": 1,
       "minRepeatDays": 7,
       "tags": [

@@ -77,8 +77,13 @@ body[data-snap-edge~="bottom"] #stage::after { border-bottom-color: var(--al-acc
   white-space: pre-wrap;
   word-break: break-word;
   z-index: 10;
-  /* 与 app 面板一致：轻上浮淡入，不缩放文字；翻页只淡入。 */
-  animation: bubble-in var(--al-t-med) var(--al-ease);
+  /* 出场分两拍：卡片先从尾尖（角色头顶）舒展长出，字迹在卡片快长成时再浮现。
+     缩放原点钉在尾尖，被钳边时随 --tail-x 仍从角色头顶长出。只缩不移、不回弹：
+     卡片始终在自身盒内，不会被 Android 紧贴的气泡窗裁掉。
+     曲线用 iOS 抽屉式的长尾减速，前段不至于一闪而过，尾段慢慢落定。 */
+  --bubble-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  transform-origin: var(--tail-x, 50%) calc(100% + .25em);
+  animation: bubble-in .42s var(--bubble-ease), bubble-ink .3s .14s var(--bubble-ease) backwards;
 }
 
 /* 指向角色的小尾巴 */
@@ -97,28 +102,38 @@ body[data-snap-edge~="bottom"] #stage::after { border-bottom-color: var(--al-acc
   transform: rotate(45deg);
 }
 
-/* translate 走独立属性，不覆盖 JS 的居中与小窗缩放。 */
+/* 卡片：从 72% 大小在尾尖处长出，透明度在前 35% 就到位，免得整段都是半透明。
+   scale 走独立属性，不覆盖 JS 写入的 transform。 */
 @keyframes bubble-in {
-  from { opacity: 0; translate: 0 4px; }
+  0% { opacity: 0; scale: .72; }
+  35% { opacity: 1; }
+}
+/* 字迹：只渐显文字颜色，卡片底色与边框保持不动。 */
+@keyframes bubble-ink {
+  from { color: transparent; }
 }
 
-/* 翻页/被新台词打断：气泡不重弹，只让文字淡入（opacity 走独立动画，不动 transform/scale） */
-#dialogue-bubble.turn { animation: bubble-turn var(--al-t-med) var(--al-ease); }
-@keyframes bubble-turn { from { opacity: .35; } }
+/* 翻页/被新台词打断：卡片不动，只让新的一页字迹重新浮现。 */
+#dialogue-bubble.turn { animation: bubble-ink .3s var(--bubble-ease); }
 
-/* 隐藏淡出：JS 加 .closing 播完再 display:none（见 bubble.ts），不再硬切；出场加速。 */
+/* 隐藏：JS 加 .closing 播完再 display:none（见 bubble.ts）；沿入场路径收回尾尖。 */
 #dialogue-bubble.closing {
   opacity: 0;
-  translate: 0 3px;
-  transition: opacity var(--al-t-out) var(--al-ease-in), translate var(--al-t-out) var(--al-ease-in);
+  scale: .9;
+  transition: opacity var(--al-t-out) var(--bubble-ease), scale var(--al-t-out) var(--bubble-ease);
 }
 
 /* 独立气泡窗（bubble.html）：窗口按气泡实测尺寸开，整页文字全显示，不截断。
    悬浮窗状态也沿用同一套 #dialogue-bubble 基础规则；overlay-wrap 只负责窗口几何与穿透。 */
 body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; display: block; -webkit-line-clamp: unset; }
 
+@keyframes bubble-fade { from { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
-  #dialogue-bubble { animation: none; }
+  /* 少动态效果：保留淡入淡出帮助察觉，去掉缩放与位移。 */
+  #dialogue-bubble { animation: bubble-fade var(--al-t-med) ease; }
+  #dialogue-bubble.turn { animation: bubble-ink var(--al-t-med) ease; }
+  #dialogue-bubble.closing { scale: none; }
   body.snap-confirm #stage::after { animation: none; opacity: 0; }
 }
 

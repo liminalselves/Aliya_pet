@@ -52,12 +52,17 @@ const ACTION_LABELS: Record<string, string> = {
   kiss: '飞吻',
   sob: '委屈',
   deadpan: '无语',
+  look_around: '张望',
+  daydream: '发呆',
+  notice: '回神',
 };
 
 /** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */
 const EXPRESSION_LABELS: Record<string, string> = {
   happy: '开心',
   angry: '生气',
+  annoyed: '不爽',
+  gloomy: '阴沉',
   sad: '难过',
   surprised: '惊讶',
   shy: '害羞',

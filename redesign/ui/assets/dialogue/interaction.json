@@ -109,7 +109,7 @@
     },
     {
       "id": "interaction_ear_right_4",
-      "text": "再戳就要甩尾巴了。",
+      "text": "再戳我就不理你了。",
       "tags": ["ear_right"],
       "enabled": true
     },
@@ -133,7 +133,7 @@
     },
     {
       "id": "interaction_hair_4",
-      "text": "发梢都被你揉乱了。",
+      "text": "高马尾是大人的证明哦。",
       "tags": ["hair"],
       "enabled": true
     },
@@ -157,13 +157,13 @@
     },
     {
       "id": "interaction_body_4",
-      "text": "靠太近会听见心跳。",
+      "text": "又在看我心跳？关掉啦。",
       "tags": ["body"],
       "enabled": true
     },
     {
       "id": "interaction_body_5",
-      "text": "我站得很稳，放心。",
+      "text": "零重力下我也站得很稳。",
       "tags": ["body"],
       "enabled": true
     },
@@ -199,13 +199,13 @@
     },
     {
       "id": "interaction_tablet_2",
-      "text": "记录里全是一千年前的事。",
+      "text": "平板里存着我们的合影。",
       "tags": ["tablet"],
       "enabled": true
     },
     {
       "id": "interaction_tablet_3",
-      "text": "数据不会说谎，但我会。",
+      "text": "猜猜照片里哪个是我？",
       "tags": ["tablet"],
       "enabled": true
     },
@@ -265,7 +265,7 @@
     },
     {
       "id": "interaction_drag_fast_3",
-      "text": "我的咖啡要洒了！",
+      "text": "Kane的书又被甩飞了！",
       "tags": ["drag_fast"],
       "enabled": true
     },

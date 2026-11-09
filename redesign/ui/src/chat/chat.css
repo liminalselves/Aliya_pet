@@ -168,6 +168,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
    上行 = 输入框 + 停止/发送（手指/视线落点一致）；下行 = 导航链接 + 状态 + 关闭。 */
 .chat-composer { position:relative; width:100%; flex:none; padding:6px 6px 4px 12px; border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-bg-2); pointer-events:auto; box-shadow:var(--al-shadow-2); transition:border-color var(--al-t-fast) var(--al-ease); }
 .chat-composer:focus-within { border-color:color-mix(in srgb, var(--al-accent) 60%, var(--al-line-strong)); }
+.chat-composer.drop-target { border-color:var(--al-accent); border-style:dashed; }
 /* 独立透明窗底部只有 6px 留白，外投影会被原生窗口裁成方形黑边，桌面卡片只靠描边分层。 */
 body.chat-window .gal-panel,
 body.chat-window .chat-composer { box-shadow:none; }

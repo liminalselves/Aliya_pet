@@ -128,6 +128,8 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
                 try {
                     wm.addView(view, params)
                     attached = true
+                    // 入场动画在附着前已播完，附着后重播一次，弹入才看得见。
+                    view.evaluateJavascript("window.__replayDialogueBubble && window.__replayDialogueBubble()", null)
                 } catch (error: RuntimeException) {
                     // 不伪装为已显示，留下可诊断的权限/显示器错误。
                     Log.e("DialogueBubbleWindow", "Cannot add dialogue overlay", error)

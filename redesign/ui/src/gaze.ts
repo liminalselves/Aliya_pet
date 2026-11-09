@@ -29,6 +29,8 @@ import { CubismLook } from '@framework/effect/cubismlook';
 export const EXPRESSION_GAZE: Record<string, readonly [number, number]> = {
   happy: [0, 2],
   angry: [0, -6],
+  annoyed: [4, -2],
+  gloomy: [0, -5],
   sad: [0, -8],
   surprised: [0, 4],
   shy: [6, -5],

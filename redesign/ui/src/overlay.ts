@@ -251,6 +251,59 @@ export class HandRaiseChannel implements OverlayChannel {
   }
 }
 
+/**
+ * 生气阴影拆分：模型把黑脸（整脸阴影）和怒气符号挂在同一个 Param32 上，
+ * 参数层无法单独显示其一。这里在 model.update() 之后按网格乘不透明度，
+ * Param32 仍决定出现与淡入淡出；遮罩本身也平滑过渡，切表情不闪。
+ * 只在 Param32 > 0 时生效，其余表情与动作不受影响。
+ */
+export class AngerMarkSplit {
+  /** 目标遮罩：1 = 显示，0 = 隐藏。 */
+  private _targetShade = 1;
+  private _targetMark = 1;
+  private _shade = 1;
+  private _mark = 1;
+  private static readonly TAU_SECONDS = 0.12;
+
+  constructor(
+    private readonly shadeIndex: number,
+    private readonly markIndex: number
+  ) {}
+
+  private _releasePending = false;
+
+  /**
+   * 'both' 为模型原样；'mark' 只留怒气符号；'shade' 只留黑脸。
+   * null：切到不用 Param32 的表情。旧表情的阴影仍在淡出，若立刻恢复 both
+   * 会让被隐藏的那一半在淡出途中闪现，所以等 Param32 归零后再恢复。
+   */
+  setMode(mode: 'both' | 'mark' | 'shade' | null): void {
+    this._releasePending = mode === null;
+    if (mode === null) return;
+    this._targetShade = mode === 'mark' ? 0 : 1;
+    this._targetMark = mode === 'shade' ? 0 : 1;
+  }
+
+  /**
+   * 须在 model.update() 之后、绘制之前调用（直接改 Core 已求值的不透明度）。
+   * @param driver 本帧最终的 Param32 值
+   */
+  apply(opacities: Float32Array, dt: number, driver: number): void {
+    if (!Number.isFinite(dt) || dt < 0) dt = 0;
+    if (this._releasePending && !(driver > 0)) {
+      this._releasePending = false;
+      this._targetShade = this._targetMark = this._shade = this._mark = 1;
+    }
+    const k = 1 - Math.exp(-dt / AngerMarkSplit.TAU_SECONDS);
+    this._shade += (this._targetShade - this._shade) * k;
+    this._mark += (this._targetMark - this._mark) * k;
+    if (Math.abs(this._shade - this._targetShade) < 0.001) this._shade = this._targetShade;
+    if (Math.abs(this._mark - this._targetMark) < 0.001) this._mark = this._targetMark;
+    if (this._shade !== 1) opacities[this.shadeIndex] *= this._shade;
+    if (this._mark !== 1) opacities[this.markIndex] *= this._mark;
+  }
+}
+
 /** 固定顺序通道集合。 */
 export class OverlayLayer {
   private readonly _channels: OverlayChannel[] = [];

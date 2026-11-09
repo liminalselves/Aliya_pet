@@ -11,7 +11,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,14);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,17);assert.equal(refs.Expressions.length,14);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -24,9 +24,7 @@ function load(name,imports={},globals={}){
  const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
-const newActionNames=['cheerful_bounce','shy_sway','puff','kiss','sob','deadpan'];
-// 主动使用四臂的动作；其余动作手臂只做默认复位。
-const armActionNames=['cheerful_bounce','shy_sway'];
+const newActionNames=['cheerful_bounce','shy_sway','puff','kiss','sob','deadpan','look_around','daydream','notice'];
 const modelBase=new URL('assets/live2d/aliya/',root);
 const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
@@ -45,9 +43,12 @@ test('动作注册、元数据、AI 能力清单集合一致且资源可解析',
  }
  for(const name of newActionNames){
   const entry=meta.find(a=>a.name===name);
-  assert.ok(['idle','emotion','reaction'].includes(entry.category));
-  assert.ok(entry.weight>0&&entry.weight<1,'新动作应低频进入日常抽样');
-  assert.ok(Object.values(entry.moods).every(v=>Number.isFinite(v)&&v>0));
+  assert.ok(['idle','emotion','reaction','gaze'].includes(entry.category));
+  // 视线类只在指针静止后抽取、反应类只由事件触发，不属于日常抽样，权重可为 1。
+  assert.ok(entry.weight>0&&(entry.weight<1||['gaze','reaction'].includes(entry.category)),'新动作应低频进入日常抽样');
+  // 反应类（notice）不参与情绪抽样，可以没有 moods。
+  assert.ok(Object.values(entry.moods??{}).every(v=>Number.isFinite(v)&&v>0));
+  if(entry.category!=='reaction')assert.ok(entry.moods&&Object.keys(entry.moods).length>0,`${name}: 非反应类动作需要情绪亲和`);
   assert.ok(PERFORMANCE_ACTIONS.find(a=>a.name===name)?.hint);
   assert.equal(refs.Motions[name].length,1);
   assert.ok(asset(refs.Motions[name][0].File).Curves.length>0);
@@ -74,7 +75,7 @@ test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；�
    assert.ok(s.every(Number.isFinite));
    const neutral=/^ParamEye[LR]Open$/.test(Id)?1:0;
    assert.equal(s[0],0);assert.equal(s[1],neutral,`${name}: ${Id} 起点`);
-   if(/^ParamArm/.test(Id)&&!armActionNames.includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
+   if(/^ParamArm/.test(Id)&&['wave','look_around','daydream'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 手臂只主动复位（挥手由专用通道驱动）`);
    let t=s[0],v=s[1],lastChangingTime=0;points++;
    const [min,max]=limits(Id);
    for(let i=2;i<s.length;){
@@ -283,6 +284,30 @@ test('动作中的特殊眼睛参数只允许零值复位，哈欠不再叠加�
    }
   }
  }
+});
+test('光标静止释放视线、视线类动作只在释放后抽取、久静再动先回神再跟随',()=>{
+ let now=0,target,played=[];
+ const host={playAction:n=>(played.push(n),true),setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null};
+ const {BehaviorService,GAZE_RELEASE_SECONDS,NOTICE_AFTER_SECONDS}=load('behavior',{},{performance:{now:()=>now}});
+ const b=new BehaviorService(()=>host,()=>now);b.autoActions=false;b.autoActions=true;
+ b.setActionMeta(asset('actions.json').actions);
+ const draw=()=>{const seen=new Set();for(let i=0;i<400;i++)seen.add(b.randomActionName());return seen};
+ b.updateLookTarget(.3,.4);assert.ok(target);
+ let seen=draw();assert.ok(!seen.has('look_around')&&!seen.has('daydream')&&!seen.has('notice'),'跟随中不抽视线类/反应类');
+ // 每帧重复上报同一坐标不算移动
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now=t;b.updateLookTarget(.3,.4)}
+ assert.equal(b.gazeReleased,true);assert.equal(target,null,'静止后交还视线');
+ seen=draw();assert.ok(seen.has('look_around')&&seen.has('daydream'));assert.ok(!seen.has('notice'));
+ // 未达久静阈值：只恢复跟随，不回神
+ now+=1000;b.updateLookTarget(.6,.4);assert.ok(target);assert.deepEqual(played,[]);
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.6,.4)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.6,.4);
+ now+=16;b.updateLookTarget(.9,.2);assert.deepEqual(played,['notice']);assert.ok(target,'回神同时恢复跟随');
+ // 冷却内再次久静不重复回神；拖动/互动中不回神
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.9,.2)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.9,.2);now+=16;b.updateLookTarget(.1,.1);
+ assert.deepEqual(played,['notice'],'冷却内不重复');
+ b.stop();
 });
 test('镜像坐标只翻转一次；拖动时回中，松手后恢复',()=>{
  let target;const {BehaviorService}=load('behavior');const b=new BehaviorService(()=>({setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null}));
@@ -501,7 +526,16 @@ test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也
   if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),area);assert.equal(h.reactions.at(-1).type,'earBlink')}
   else assert.equal(h.lines.length,earBefore,'第八次普通点击后的耳朵也必须服从全局冷却');
  }
- assert.deepEqual(h.actions,Array(5).fill('doubt'));
+ assert.deepEqual(h.actions,['doubt'],'疑惑动作演出期间连点不从头重启');
+});
+
+test('疑惑只启动一次完整动作，不接管眼睛，演完后再连点可重新疑惑',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<3;i++){h.setTime(i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt']);assert.equal(h.lines.at(-1),'click_doubt');
+ for(let i=0;i<30;i++){h.advance(16);assert.notEqual(h.writes.eyes?.[0],true,'眨眼和眯眼交给动作曲线')}
+ for(let i=0;i<3;i++){h.setTime(4000+i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt','doubt']);
 });
 
 test('左右耳高频点击不重复台词或动作启动，节流结束仍保留另一侧单眼反馈',()=>{
@@ -630,6 +664,17 @@ test('拖动与点击独立：取消不回应，快速拖动只回应一次',()=
  assert.deepEqual(h.lines,['drag_fast']);
 });
 
+test('生气是情绪动作：生气情绪下会自动播，平静时抽到的概率远低于生气时',()=>{
+ const meta=JSON.parse(readFileSync(new URL('actions.json',modelBase),'utf8')).actions;
+ assert.equal(meta.find(a=>a.name==='angry').category,'emotion');
+ const {BehaviorService}=load('behavior');
+ const b=new BehaviorService(()=>null,()=>0);b.setActionMeta(meta);
+ const rate=mood=>{let n=0;for(let i=0;i<4000;i++){b.setMood(mood);if(b.randomActionName()==='angry')n++}return n/4000};
+ const angry=rate('angry'),calm=rate('neutral');
+ assert.ok(angry>0.1,`生气情绪下应经常抽到生气，实际 ${angry}`);
+ assert.ok(angry>calm*2,`生气情绪下的概率应明显高于平静时：${angry} vs ${calm}`);
+});
+
 test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留安静间隔',()=>{
  let now=0;const state={interacting:false,speaking:false,paused:false};
  const {InteractionCoordinator}=load('interaction/coordination');const c=new InteractionCoordinator(()=>state,()=>now);
@@ -638,6 +683,24 @@ test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留
  state.speaking=true;assert.equal(c.canSpeak('interaction'),false);
  state.speaking=false;state.interacting=false;c.activity();now=2499;assert.equal(c.canIdle(),false);
  now=2500;assert.equal(c.canIdle(),true);state.paused=true;assert.equal(c.canSpeak('interaction'),false);
+});
+
+test('聊天回复展示期间（含读完前）阻止待机动作，避免动作表情盖掉聊天表演',()=>{
+ const {PetApp}=load('pet-app');
+ const {InteractionCoordinator}=load('interaction/coordination');
+ // 构造器依赖 DOM/台词库；用原型实例跑真实的 _coordinationState 汇总逻辑。
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_running:true,_paused:false,_leftDown:false,_dragging:false,_nativeDragging:false,
+  _remoteChat:{open:false,busy:false,typing:false,replying:false}});
+ const c=new InteractionCoordinator(()=>app._coordinationState(),()=>1e9);
+ const idle=()=>c.canIdle();
+ assert.equal(idle(),true);
+ // 原生聊天窗：壳广播的 chat-state.replying
+ app._remoteChat={open:true,busy:false,typing:false,replying:true};assert.equal(idle(),false,'独立聊天窗回复中');
+ app._remoteChat={open:true,busy:false,typing:false,replying:false};assert.equal(idle(),true,'读完收起后恢复');
+ // 内嵌聊天（Android/网页）：ChatView.replying
+ app._chatView={typing:false,replying:true};assert.equal(idle(),false,'内嵌聊天回复中');
+ app._chatView={typing:false,replying:false};assert.equal(idle(),true);
 });
 
 function randomSpeechHarness() {
@@ -880,7 +943,7 @@ test('触屏头部轻点有反馈，未识别的大幅移动不误报为轻点',
 test('自动行为计时器实际遵守调度且不截断现有动作',()=>{
  const timers=new Map();let next=0,actions=0,speech=0;let allowed=false;
  const {BehaviorService}=load('behavior',{}, {setTimeout:fn=>{timers.set(++next,fn);return next},clearTimeout:id=>timers.delete(id)});
- const host={playAction(){actions++;return true},isActionPlaying:false};
+ const host={playAction(){actions++;return true},isActionPlaying:false,setLookTarget(){},clearLookTarget(){}};
  const b=new BehaviorService(()=>host);b.canIdle=()=>allowed;b.randomSpeechEnabled=true;b.onRandomSpeech=()=>speech++;b.start();
  function round(){const pending=[...timers.values()];timers.clear();for(const fn of pending)fn()}
  round();assert.equal(actions,0);assert.equal(speech,0);
