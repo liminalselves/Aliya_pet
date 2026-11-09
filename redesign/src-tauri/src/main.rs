@@ -67,6 +67,9 @@ impl Default for HitMask {
 }
 
 /// 按窗口标签区分的命中掩码表（pet / chat）。
+/// 托盘「置顶显示」勾选项；与穿透项同为 CheckMenuItem，需包一层才能分别注册为 managed state。
+struct TopMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
 type HitMaskState = Arc<Mutex<std::collections::HashMap<String, HitMask>>>;
 
 #[tauri::command]
@@ -493,6 +496,15 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
 
 /// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
 /// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
+/// pet 前端回写置顶设置（设置页改动时同步托盘勾选）；窗口置顶由前端自行应用。
+#[tauri::command]
+fn sync_top_menu(app: tauri::AppHandle, checked: bool) -> Result<(), String> {
+    if let Some(item) = app.try_state::<TopMenuItem>() {
+        item.0.set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn sync_click_through_menu(
     app: tauri::AppHandle,
@@ -593,6 +605,7 @@ fn main() {
             set_pet_bounds,
             show_settings,
             sync_click_through_menu,
+            sync_top_menu,
             show_records,
             show_update,
             current_update_payload,
@@ -665,6 +678,7 @@ fn main() {
                 ],
             )?;
             app.manage(click_through.clone());
+            app.manage(TopMenuItem(top.clone()));
 
             let icon = app
                 .default_window_icon()
@@ -696,9 +710,9 @@ fn main() {
                     }
                     "top" => {
                         if let Some(w) = app.get_webview_window("pet") {
-                            let new_val = !top_item.is_checked().unwrap_or(true);
+                            // muda 在派发事件前已切换勾选：读到的就是目标值，不能再次反转。
+                            let new_val = top_item.is_checked().unwrap_or(true);
                             let _ = w.set_always_on_top(new_val);
-                            let _ = top_item.set_checked(new_val);
                             // 同步给前端更新 localStorage 与设置窗口控件
                             let _ = app.emit_to(
                                 "pet",

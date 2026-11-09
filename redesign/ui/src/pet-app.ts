@@ -752,6 +752,10 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
+      // 设置页改置顶后托盘勾选要跟上（托盘自己点击时值本就一致，重复写入无副作用）。
+      void import('@tauri-apps/api/core')
+        .then(m => m.invoke('sync_top_menu', { checked: s.alwaysOnTop }))
+        .catch(() => {});
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -1323,12 +1327,12 @@ export class PetApp {
       const shell = androidShell();
       if (!shell) return;
       this._refreshShellMetrics();
-      const m = JSON.parse(shell.getMetrics()) as {
-        screenW: number;
-        screenH: number;
-        winW: number;
-        winH: number;
-      };
+      let m: { screenW: number; screenH: number; winW: number; winH: number };
+      try {
+        m = JSON.parse(shell.getMetrics());
+      } catch {
+        return; // 壳没返回可用尺寸：保持当前位置，不抛错中断调用方
+      }
       if (this._wrapWindow) {
         // 贴合模式：原点居中即可，窗口矩形下帧自动跟随
         const x = m.screenW / 2;
@@ -1614,8 +1618,9 @@ export class PetApp {
       this._originCssX = sx + (tx - sx) * progress;
       this._originCssY = sy + (ty - sy) * progress;
       this._rectDirty = true;
-    }, durMs).then(completed => {
-      if (completed) this._persistWrapOrigin();
+    }, durMs).then(() => {
+      // 被打断时 _originCssX/Y 停在中途值，同样以实际位置落盘（贴边开始时存的是终点）。
+      this._persistWrapOrigin();
     }).catch(() => {});
   }
 
@@ -2214,6 +2219,8 @@ export class PetApp {
     this._originCssY += yCss - this._appliedRectY;
     this._appliedRectX = xCss;
     this._appliedRectY = yCss;
+    // 贴边开始时存的是终点，被抓起后以实际停下的位置为准，否则息屏恢复会跳回终点。
+    this._persistWrapOrigin();
   }
 
   public onNativeDragEnd(dxCss: number, dyCss: number, maxSpeedPxPerSec: number, cancelled: boolean): void {
