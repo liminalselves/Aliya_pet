@@ -556,15 +556,15 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     () => settings.showCatEars,
     (v) => update({ showCatEars: v })
   );
-  if (platform !== 'android') {
-    refs.showChatButton = switchRow(
-      box,
-      '显示聊天按钮',
-      '关闭后人物脚下不再显示聊天入口，仍可从托盘菜单「打开聊天」进入',
-      () => settings.showChatButton,
-      (v) => update({ showChatButton: v })
-    );
-  }
+  refs.showChatButton = switchRow(
+    box,
+    '显示聊天按钮',
+    platform === 'android'
+      ? '关闭后收起聊天框时不再显示聊天按钮，可从主界面菜单「聊天」重新打开'
+      : '关闭后人物脚下不再显示聊天入口，仍可从托盘菜单「打开聊天」进入',
+    () => settings.showChatButton,
+    (v) => update({ showChatButton: v })
+  );
   refs.batterySaver = addBatterySaverSwitch(box);
 }
 

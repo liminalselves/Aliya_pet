@@ -614,6 +614,7 @@ export class PetApp {
     this._chat.onCancelPerformance = () => this._chatPerformance?.cancel();
     const mobile = platform === 'android' || (platform === 'web' && matchMedia('(max-width: 560px)').matches);
     document.body.classList.toggle('chat-mobile', mobile);
+    this._chatView.setLauncherEnabled(this._settings.showChatButton);
     if (platform === 'android') this._chatView.setOpen(true);
   }
 
@@ -732,6 +733,7 @@ export class PetApp {
     this.setMirrored(s.mirror);
     this._applyCatEars(s.showCatEars, restoreWindow);
     this._syncChatLauncherVisible();
+    this._chatView?.setLauncherEnabled(s.showChatButton);
 
     // 窗口层
     if (platform === 'android') {

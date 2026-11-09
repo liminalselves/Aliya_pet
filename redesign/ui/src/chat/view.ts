@@ -216,6 +216,12 @@ export class ChatView {
     void this.bootstrap();
   }
   private started = false;
+  private launcherEnabled = true;
+  /** 设置「显示聊天按钮」：关闭后收起聊天框不再露出入口（仍可经菜单/托盘打开）。 */
+  setLauncherEnabled(enabled: boolean): void {
+    this.launcherEnabled = enabled;
+    this.get('.chat-launcher').hidden = this.isOpen || !enabled;
+  }
   private get<T extends HTMLElement>(selector: string): T { return this.root.querySelector<T>(selector)!; }
   get typing(): boolean { return document.activeElement === this.input; }
   /** 回复/连接/记录面板正在显示（只剩输入框时为 false）：此时桌宠台词让位给面板。 */
@@ -234,7 +240,7 @@ export class ChatView {
       (document.activeElement as HTMLElement | null)?.blur();
     }
     this.isOpen = open;
-    this.get('.chat-launcher').hidden = open;
+    this.get('.chat-launcher').hidden = open || !this.launcherEnabled;
     // 输入框是常驻锚点：切屏（连接/会话）只禁用不隐藏——显隐切换会让卡片
     // 在过渡帧撕裂（面板方角底边悬空），是用户视频的闪烁源之一。
     this.composer.hidden = !open;
