@@ -32,13 +32,6 @@ button { font: inherit; }
 .records-refresh.loading svg { animation: records-spin .9s linear infinite; }
 @keyframes records-spin { to { transform: rotate(360deg); } }
 
-/* ---------- 状态条：仅在有内容时占位 ---------- */
-/* 状态提示：浮在列表上方的小胶囊，不占布局（展开收起会把整列消息顶下去） */
-.records-status { position: absolute; top: 64px; left: 50%; z-index: 3; max-width: calc(100% - 48px); padding: 6px 14px; border: 1px solid var(--al-line-strong); border-radius: var(--al-r-pill); background: var(--al-bg-3); box-shadow: var(--al-shadow-2); color: var(--al-text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; pointer-events: none; transform: translate(-50%, -6px); transition: opacity var(--al-t-med) var(--al-ease), transform var(--al-t-med) var(--al-ease); }
-.records-status.show { opacity: 1; transform: translate(-50%, 0); }
-.records-status:empty, .records-status:not(.show) { visibility: hidden; transition: opacity var(--al-t-out) var(--al-ease-in), transform var(--al-t-out) var(--al-ease-in), visibility 0s var(--al-t-out); }
-.records-status[data-kind="error"] { color: var(--al-danger); }
-
 /* ---------- 消息列：居中阅读栏，宽窗不再半边空 ---------- */
 .records-list { min-height: 0; padding: 16px max(22px, calc((100% - 860px) / 2)) 42px; overflow-x: hidden; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--al-scrollbar) transparent; }
 /* 非错落的内容交换（静默/手动刷新、上下文定位后的替换）纯淡入盖住替换帧，不再硬切。 */
@@ -188,7 +181,6 @@ button { font: inherit; }
 .android-records .records-logo, .android-records .records-kicker { display:none; }
 .android-records .records-brand { flex:1; }
 .android-records .records-title { max-width:42vw; }
-.android-records .records-status { top:68px; }
 .android-records .records-tobottom { right:16px; bottom:16px; width:44px; height:44px; }
 .records-back { display:grid; place-items:center; flex:none; width:44px; height:44px; margin-left:-8px; border:0; border-radius:50%; background:transparent; color:var(--al-text-1); font-size:0; cursor:pointer; transition:background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
 .records-back::before { content:''; width:10px; height:10px; margin-left:4px; border-left:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(45deg); }

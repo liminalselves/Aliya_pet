@@ -33,6 +33,7 @@ import { checkForUpdate } from './update/check';
 import { OFFICIAL_SITE_URL } from './update/config';
 import { openUpdateModal } from './update/dialog';
 import './settings.css';
+import { showToast } from './toast';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
@@ -586,7 +587,9 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
   opLab.textContent = '人物透明度';
   const opSub = document.createElement('span');
   opSub.className = 'sub';
-  opSub.textContent = '只影响桌宠显示，不影响聊天与其他窗口';
+  opSub.textContent = platform === 'android'
+    ? '只影响悬浮窗里的人物，不影响 App 主界面'
+    : '只影响桌宠显示，不影响聊天与其他窗口';
   opLab.appendChild(opSub);
   const opWrap = document.createElement('div');
   opWrap.className = 'slider-row';
@@ -735,7 +738,7 @@ if (platform === 'android') {
     const file = picker.files?.[0];
     picker.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) { status.textContent = '请选择图片文件。'; box.appendChild(status); return; }
+    if (!file.type.startsWith('image/')) { showToast('请选择图片文件', { kind: 'error' }); return; }
     status.textContent = '正在处理图片…';
     box.appendChild(status);
     try {
@@ -747,7 +750,8 @@ if (platform === 'android') {
       status.textContent = '';
       status.remove();
     } catch (e) {
-      status.textContent = e instanceof Error && e.message ? e.message : '图片保存失败，请重试。';
+      status.remove();
+      showToast(e instanceof Error && e.message ? e.message : '图片保存失败，请重试', { kind: 'error' });
     }
     sync();
   });
@@ -815,24 +819,25 @@ if (platform === 'android') {
       // 贴合模式：petX/petY 是角色原点（非窗口左上角），写屏中心，
       // 悬浮窗下次启动（或服务重建）时在屏幕中央出现
       const shell = androidShell();
-      if (shell) {
-        try {
-          const m = JSON.parse(shell.getMetrics()) as {
-            screenW: number;
-            screenH: number;
-          };
-          const x = Math.round(m.screenW / 2);
-          const y = Math.round(m.screenH * 0.45);
-          update({ posX: x, posY: y });
-          shell.setPref('petX', String(x));
-          shell.setPref('petY', String(y));
-        } catch {
-          // 忽略
-        }
+      try {
+        if (!shell) throw new Error('shell unavailable');
+        const m = JSON.parse(shell.getMetrics()) as {
+          screenW: number;
+          screenH: number;
+        };
+        const x = Math.round(m.screenW / 2);
+        const y = Math.round(m.screenH * 0.45);
+        update({ posX: x, posY: y });
+        shell.setPref('petX', String(x));
+        shell.setPref('petY', String(y));
+        showToast('已重置位置，悬浮窗下次显示时会出现在屏幕中央', { kind: 'success' });
+      } catch {
+        showToast('位置重置失败，请稍后重试', { kind: 'error' });
       }
       return;
     }
     trayAction('reset-position');
+    showToast('已移回屏幕中央', { kind: 'success' });
   });
   box.appendChild(reset);
 

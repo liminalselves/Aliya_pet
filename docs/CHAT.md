@@ -85,6 +85,7 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   border/radius 需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌
   不抢软键盘），composer 有 `:focus-within` 腮红聚焦环；历史角色标签
   who-aliya 腮红 / who-user 瞳紫双色区分；回复面板顶边一线腮红包边。
+- 轻提示：设置与记录页的短暂操作反馈统一走 `ui/src/toast.ts`（样式 `styles/toast.css`）：`showToast(文案, {kind: info|success|error})`，底部居中胶囊、同时只显示一条、新提示顶替旧提示；加载中等持续状态与需处理的错误仍就地显示。
 - 锚点由 pet 前端 `sync_chat_anchor(x,y,w,h)` 上报（物理像素，与
   `update_hit_mask` 的 win_* 同源）；未上报回退原生查询。
 - 壳命令：`show_chat`/`hide_chat`/`sync_chat_anchor`/

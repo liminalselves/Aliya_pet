@@ -1220,7 +1220,9 @@ export class PetApp {
   /** 合成层透明度不改变 WebGL 原始 alpha，命中采样及阈值保持原样。 */
   private _applyPetDisplay(s: PetSettings): void {
     const opacity = clampPetOpacity(s.petOpacity);
-    if (this._canvas) this._canvas.style.opacity = String(opacity / 100);
+    // Android 主界面的桌宠不受透明度影响，该设置只作用于悬浮窗。
+    const mainActivity = platform === 'android' && !this._wrapWindow;
+    if (this._canvas) this._canvas.style.opacity = mainActivity ? '' : String(opacity / 100);
     // Android 主界面包含聊天：绝不对 Activity 整窗禁用触摸。
     const full = (platform !== 'android' || this._wrapWindow)
       && (s.fullClickThrough === true || opacity === 0);
