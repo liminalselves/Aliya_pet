@@ -7,7 +7,8 @@ import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
-import { DialogueStore, timeScene, type ResolvedDialogue } from './dialogue/dialogue';
+import { timeScene, type ResolvedDialogue } from './dialogue/dialogue';
+import { ReactionLibrary } from './interaction/reactions';
 import { DialogueBubble } from './dialogue/bubble';
 import { bubbleFontFor, fitBubble } from './dialogue/bubble-fit';
 import { AndroidDialogueBubble } from './dialogue/android-bubble';
@@ -16,8 +17,10 @@ import { showStartupNotice } from './startup-notice';
 import { InteractionService } from './interaction/interaction';
 import { PointerContext } from './interaction/petting-recognizer';
 import { BehaviorService } from './behavior';
-import { MoodEngine } from './emotion';
+import { StateEngine } from './state';
 import { PetAI } from './pet-ai';
+import { ACTIONS, isMotion } from './catalog';
+import { isProceduralReactionType, proceduralReaction } from './interaction/procedural';
 import {
   PetSettings,
   DEFAULT_SCALE_PERCENT,
@@ -67,7 +70,7 @@ export class PetApp {
   private _lastFrameTime = 0;
 
   // 逻辑层
-  private _dialogue = new DialogueStore();
+  private _reactions = new ReactionLibrary();
   /** 监听先于资源加载；依赖模型/台词的操作在完整装配后按接收顺序执行。 */
   private _pendingShellActions: ShellAction[] = [];
   private _shellActionsReady = false;
@@ -79,7 +82,10 @@ export class PetApp {
   private _androidBubble: AndroidDialogueBubble | null = null;
   private _interaction: InteractionService = null;
   private _behavior: BehaviorService = null;
-  private _moodEngine: MoodEngine = null;
+  private _stateEngine: StateEngine = null;
+  private _stateTimer: ReturnType<typeof setInterval> | null = null;
+  /** 互动临时表情到期回到状态默认表情；新的临时表情或聊天表演接管时作废。 */
+  private _reactionExpressionTimer: ReturnType<typeof setTimeout> | null = null;
   private _ai: PetAI = null;
   private _remoteChat = { open: false, busy: false, typing: false, replying: false };
   private _chatLauncher: HTMLElement | null = null;
@@ -417,7 +423,7 @@ export class PetApp {
     });
 
     // 逻辑层装配
-    await Promise.all([this._dialogue.loadAll(), this._hitAreas.load()]);
+    await Promise.all([this._reactions.load(), this._hitAreas.load()]);
     const stage = document.getElementById('stage');
     this._androidBubble?.hide();
     this._bubble = new DialogueBubble(stage);
@@ -429,50 +435,44 @@ export class PetApp {
     this._interaction = new InteractionService({
       hitAreas: this._hitAreas,
       getTarget: () => (this._model?.isReady() ? this._model : null),
-      dialogue: this._dialogue,
-      pettingHost: {
-        isDialogueActive: () => this._bubble?.isActive ?? false,
-        playPettingDialogue: (resolved) => {
-          this._speak(resolved, 'interaction');
-        },
+      reactions: this._reactions,
+      host: {
+        canSpeak: () => !this._chatHoldsSpeech() && this._coordination.canSpeak('interaction'),
+        speak: (line) => this._speak(line, 'interaction'),
+        express: (name, line) => this._expressForReaction(name, line),
+        playMotion: (name) => this._playMotion(name),
       },
-      playCharacterAction: (action) => {
-        const ok = this._model?.playAction(action) ?? false;
-        if (ok) this._behavior?.notifyManualAction();
-        return ok;
-      },
-      isActionPlaying: () => this._model?.isActionPlaying ?? false,
+      pettingHost: { isDialogueActive: () => this._bubble?.isActive ?? false },
     });
-    this._interaction.playClickDialogue = (tag) => this._playInteraction(tag);
-    this._interaction.isDialogueActive = () => this._bubble?.isActive ?? false;
 
     this._behavior = new BehaviorService(() =>
       this._model?.isReady() ? this._model : null
     );
     this._behavior.canIdle = () => this._coordination.canIdle();
     this._behavior.onRandomSpeech = () => this._playRandom();
-    this._behavior.setActionMeta(this._model.actionManifest);
     this._behavior.start();
     if (this._paused) this._behavior.stop();
 
-    // 情绪引擎（心境 → 默认表情 + 动作选择加权）+ AI 对外 API
-    this._moodEngine = new MoodEngine(this._model);
-    this._moodEngine.onMoodChanged((mood) => {
-      this._behavior?.setMood(mood.name);
-      this._broadcastMood(mood.name);
-    });
+    // 状态引擎（默认表情 + 待机动作池；手动优先，自动跟随时段）+ AI 对外 API
+    this._stateEngine = new StateEngine(this._model);
     this._ai = new PetAI({
       model: () => (this._model?.isReady() ? this._model : null),
-      moodEngine: () => this._moodEngine,
-      playAction: (name) => {
-        const ok = this._model?.playAction(name) ?? false;
-        if (ok) this._behavior?.notifyManualAction();
-        return ok;
+      stateEngine: () => this._stateEngine,
+      playAction: (name) => this._playAction(name),
+      actionNames: () => {
+        const motions = new Set(this._model?.getMotionNames() ?? []);
+        return ACTIONS.filter(a => a.kind === 'procedural' || motions.has(a.name)).map(a => a.name);
       },
     });
+    this._behavior.setState(this._stateEngine.current.name);
+    this._stateEngine.onChanged((state, previous) => {
+      this._behavior?.setState(state.name);
+      this._broadcastState(state.name, state.manual);
+      this._ai?.emitState(state.name, state.manual, previous);
+    });
+    this._stateTimer = setInterval(() => this._stateEngine?.tick(), 60_000);
     if (typeof window !== 'undefined') {
       (window as unknown as Record<string, unknown>).petAI = this._ai;
-      (window as unknown as Record<string, unknown>).__mood = this._moodEngine;
     }
 
     this._initializeChat();
@@ -542,7 +542,7 @@ export class PetApp {
       if (visible) this._hitAreas?.disabled?.delete(id);
       else this._hitAreas?.disabled?.add(id);
     }
-    this._dialogue?.setExcludedTags?.(visible ? [] : ['ears']);
+    this._reactions?.setExcludedTags?.(visible ? [] : ['ears']);
     if (changed && !visible) this._interaction?.procedural.cancelAll();
   }
 
@@ -555,7 +555,8 @@ export class PetApp {
     this._chat = new ChatController({ label: '未连接', async *reply(): AsyncGenerator<never> { throw new Error('请先连接 Misskey。'); } });
     this._chatPerformance = new ChatPerformance({
       expressions: () => this._ai?.expressions() ?? [],
-      actions: () => this._ai?.state().actions ?? [],
+      // 聊天只认 Live2D 动作（与上报清单一致），程序微动只给互动用。
+      actions: () => this._model?.getMotionNames() ?? [],
       expression: () => this._ai?.state().expression ?? null,
       express: name => { this._ai?.express(name); },
       clearExpression: () => this._ai?.clearExpression(),
@@ -1261,7 +1262,7 @@ export class PetApp {
    */
   public onShellAction(p: ShellAction): void {
     if (!this._shellActionsReady && [
-      'open-chat', 'play-action', 'random-speech', 'express', 'clear-expression', 'set-mood',
+      'open-chat', 'play-action', 'random-speech', 'express', 'clear-expression', 'set-state',
     ].includes(p.action)) {
       // 启动阶段连续点随机台词只补发一次，不积压一串气泡。
       if (p.action !== 'random-speech' || !this._pendingShellActions.some(a => a.action === p.action)) {
@@ -1305,15 +1306,16 @@ export class PetApp {
         case 'random-speech':
           this._playRandom('manual');
           break;
-        // 表情/情绪（设置窗口「表情与情绪」面板）
+        // 表情/状态（设置窗口「表情与状态」面板）
         case 'express':
           if (p.name) this._ai?.express(p.name, p.duration);
           break;
         case 'clear-expression':
           this._ai?.clearExpression();
           break;
-        case 'set-mood':
-          if (p.name) this._ai?.setMood(p.name, p.duration);
+        case 'set-state':
+          // name 缺省 = 回到自动
+          this._ai?.setState(p.name || null);
           break;
     }
   }
@@ -1325,18 +1327,54 @@ export class PetApp {
     for (const action of pending) this.onShellAction(action);
   }
 
-  /** 向设置窗口广播当前情绪（「表情与情绪」面板高亮同步）。 */
-  private _broadcastMood(name: string): void {
+  /** 向设置窗口广播当前状态（「表情与状态」面板高亮同步）。 */
+  private _broadcastState(name: string, manual: string | null): void {
+    const payload = { state: name, manual };
     // Android：设置页是另一 WebView，经共享 localStorage 传递（focus/回前台读取）
     if (platform === 'android') {
-      try { window.localStorage.setItem('aliya_pet_mood', name); } catch { /* 存储不可用则跳过 */ }
+      try { window.localStorage.setItem('aliya_pet_state', JSON.stringify(payload)); } catch { /* 存储不可用则跳过 */ }
     }
     if (!this._tauriWindow) return;
     import('@tauri-apps/api/event')
       .then((ev) => {
-        ev.emitTo('settings', 'pet-mood', { mood: name }).catch(() => {});
+        ev.emitTo('settings', 'pet-state', payload).catch(() => {});
       })
       .catch(() => {});
+  }
+
+  /** 统一动作入口：程序微动走互动覆盖通道，Live2D 动作走模型。 */
+  private _playAction(name: string): boolean {
+    if (isProceduralReactionType(name)) {
+      if (!this._interaction || !this._model?.isReady()) return false;
+      this._interaction.procedural.apply(proceduralReaction(name));
+      return true;
+    }
+    return this._playMotion(name);
+  }
+
+  private _playMotion(name: string): boolean {
+    if (!isMotion(name)) return false;
+    const ok = this._model?.playAction(name) ?? false;
+    if (ok) this._behavior?.notifyManualAction();
+    return ok;
+  }
+
+  /**
+   * 互动反应的临时表情：随台词持续（台词时长按气泡节奏估算），没有台词时保持 3 秒，
+   * 之后回到当前状态默认表情。聊天表演正在保持表情时不覆盖它。
+   */
+  private _expressForReaction(name: string, line: ResolvedDialogue | null): void {
+    if (this._chatPerformance?.active) return;
+    if (!this._model?.startExpression(name)) return;
+    if (this._reactionExpressionTimer) clearTimeout(this._reactionExpressionTimer);
+    const ms = line ? line.pages.reduce((sum, p) => sum + 600 + p.text.length * 90, 900) : 3000;
+    this._reactionExpressionTimer = setTimeout(() => {
+      this._reactionExpressionTimer = null;
+      if (this._chatPerformance?.active) return;
+      if (this._model?.getCurrentExpression() === name) {
+        this._model.startExpression(this._stateEngine?.definition.expression ?? null);
+      }
+    }, ms);
   }
 
   /** 位置重置：移回主屏幕中央。 */
@@ -1660,17 +1698,25 @@ export class PetApp {
     if (this._coordination.canSpeak(source)) void this._bubble?.play(resolved);
   }
 
-  private _playInteraction(tag: string): void {
-    if (this._chatHoldsSpeech() || !this._coordination.canSpeak('interaction')) return;
-    const resolved = this._dialogue.resolveSceneTag('interaction', tag)
-      ?? this._dialogue.resolveSceneTag('interaction', 'body');
-    if (resolved) this._speak(resolved, 'interaction');
-  }
-
+  /**
+   * 随机台词：从通用反应组与当前时段反应组里抽一组，按两边台词数量分配概率。
+   * 与互动反应一样，台词、表情、动作同时出现。
+   */
   private _playRandom(source: 'ambient' | 'manual' = 'ambient'): void {
     if (this._chatHoldsSpeech() || !this._coordination.canSpeak(source)) return;
-    const resolved = this._dialogue.resolveRandom();
-    if (resolved) this._speak(resolved, source);
+    const time = `time.${timeScene(new Date())}`;
+    const general = this._reactions.lineCount('random'), timed = this._reactions.lineCount(time);
+    if (general + timed === 0) return;
+    this._playReaction(Math.random() * (general + timed) < timed ? time : 'random', source);
+  }
+
+  /** 播放一个非触碰触发的反应组（随机台词、问候）：动作走统一入口，表情随台词。 */
+  private _playReaction(trigger: string, source: SpeechSource): void {
+    const pick = this._reactions.pick(trigger);
+    if (!pick) return;
+    if (pick.group.action) this._playAction(pick.group.action);
+    if (pick.group.expression) this._expressForReaction(pick.group.expression, pick.line);
+    if (pick.line) this._speak(pick.line, source);
   }
 
   // ---------- 指针输入 ----------
@@ -2077,8 +2123,8 @@ export class PetApp {
   public get interaction(): InteractionService | null {
     return this._interaction;
   }
-  public get dialogue(): DialogueStore {
-    return this._dialogue;
+  public get reactions(): ReactionLibrary {
+    return this._reactions;
   }
   public get model(): PetModel | null {
     return this._model;
@@ -2294,12 +2340,8 @@ export class PetApp {
       this._chatView?.start();
       if (isEmbed) {
         postToHost('ready');
-        // 网页访客看到的第一句：按当前时段问候并挥手，与应用启动时的问候同源。
-        setTimeout(() => {
-          this._model?.playAction('wave');
-          const greet = this._dialogue.resolveScene(timeScene(new Date()));
-          if (greet) this._speak(greet, 'manual');
-        }, 600);
+        // 网页访客看到的第一句：问候反应组（挥手 + 当前时段问候语）。
+        setTimeout(() => this._playReaction('greet', 'manual'), 600);
       }
       if (platform === 'android' && !this._wrapWindow) androidShell()?.shellAction('pet-ready');
     });
@@ -2486,7 +2528,6 @@ export class PetApp {
     // 互动层先算平滑值并写入模型通道，模型 update 时统一应用
     this._chatPerformance?.tick();
     this._interaction?.tick(dt * 1000);
-    this._moodEngine?.tick(dt);
     this._model?.update(dt);
   }
 

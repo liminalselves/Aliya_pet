@@ -50,9 +50,9 @@
           "FadeOutTime": 1.0
         }
       ],
-      "angry": [
+      "fume": [
         {
-          "File": "motions/angry.motion3.json",
+          "File": "motions/fume.motion3.json",
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }

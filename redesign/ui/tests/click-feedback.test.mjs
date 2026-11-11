@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import ts from 'typescript';
+import { reactionHost, reactionStub } from './reaction-stub.mjs';
 
 function load(name, imports = {}, globals = {}) {
   const code = ts.transpileModule(readFileSync(new URL(`../src/${name}.ts`, import.meta.url), 'utf8'), {
@@ -35,9 +36,12 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
     setEarInteraction(...v) { writes.ears = v; }, setFaceCheek(...v) { writes.cheek = v; },
   };
   const hitAreas = { hitAreaAt: () => area, isInHeadPetZone: () => area === 'head' };
-  const service = new InteractionService({ hitAreas, getTarget: () => target,
-    dialogue: { resolveSceneTag: (_scene, tag) => ({ entryId: tag, pages: [{ text: tag }] }) },
-    pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: name => { actions.push(name); return true; } });
+  let app = null;
+  const service = new InteractionService({ hitAreas, getTarget: () => target, reactions: reactionStub(),
+    host: reactionHost({ actions,
+      canSpeak: () => !app._chatHoldsSpeech() && app._coordination.canSpeak('interaction'),
+      speak: line => app._speak(line, 'interaction') }),
+    pettingHost: { isDialogueActive: () => speaking } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
   const { PetApp } = load('pet-app', { './settings': load('settings'), '@tauri-apps/api/core': { invoke },
@@ -46,7 +50,7 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
       setPetDisplay: (opacity, full) => displayCalls.push({ opacity, full }),
       setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) } }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
-  const app = Object.create(PetApp.prototype);
+  app = Object.create(PetApp.prototype);
   Object.assign(app, {
     _canvas: { width: 800, style: {}, addEventListener: (name, fn) => { canvasEvents[name] = fn; },
       setPointerCapture: id => captures.push(id), hasPointerCapture: id => captures.includes(id),
@@ -56,7 +60,6 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
     _coordination: new InteractionCoordinator(() => ({ interacting: service.isBusy, speaking, paused: false }), () => now),
     _behavior: { updateLookTarget() {}, clearLookTarget() {}, isDragging: false },
     _remoteChat: { open: false }, _chatView: { isOpen: false, pointerActive: false },
-    _dialogue: { resolveSceneTag: (_scene, tag) => ({ pages: [{ text: tag }] }) },
     _bubble: { play: r => lines.push(r.pages[0].text), cancel: () => assert.fail('点击不能取消现有气泡') },
     _activePointerId: null, _leftDown: false, _touchPetting: false, _touchTapCandidate: false,
     _dragCandidate: false, _dragging: false, _wrapWindow: false, _scaleFactor: 1,
@@ -65,8 +68,6 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
     _hitMaskSend: args => masks.push(args), _settings: { mirror: false },
     _syncWindowMetrics() {}, _cancelSnapAnimation() {}, _moveWindowBy() {}, _onDragFinished() {},
   });
-  service.playClickDialogue = tag => app._playInteraction(tag);
-  service.isDialogueActive = () => speaking;
   app._wirePointerEvents();
   const event = (overrides = {}) => ({ pointerId: 1, pointerType: 'mouse', isPrimary: true,
     button: 0, buttons: 1, clientX: 400, clientY: 200, screenX: 400, screenY: 200, ...overrides });

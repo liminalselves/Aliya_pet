@@ -9,9 +9,10 @@ const source = name => ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
 }).outputText;
 const behaviorCode = source('behavior');
-const meta = JSON.parse(readFileSync(new URL('assets/live2d/aliya/actions.json', root), 'utf8')).actions;
+const catalogExports = {};
+vm.runInNewContext(source('catalog'), { exports: catalogExports });
+const { STATES } = catalogExports;
 const motions = JSON.parse(readFileSync(new URL('assets/live2d/aliya/16.model3.json', root), 'utf8')).FileReferences.Motions;
-const idleNames = ['nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn', 'cheerful_bounce', 'shy_sway', 'puff', 'kiss', 'sob', 'deadpan'];
 const gazeNames = ['look_around', 'daydream'];
 
 function harness(autoActions = false) {
@@ -24,7 +25,7 @@ function harness(autoActions = false) {
     setLookTarget(x, y) { target = [x, y]; },
     clearLookTarget() { target = null; clears++; },
   };
-  const globals = { exports, Math: math, performance: { now: () => now },
+  const globals = { exports, Math: math, performance: { now: () => now }, require: () => catalogExports,
     setTimeout(fn, delay) { const id = nextId++; timers.set(id, { at: now + delay, fn }); return id; },
     clearTimeout(id) { timers.delete(id); },
   };
@@ -153,7 +154,7 @@ for (const state of ['interaction', 'AI', 'chat', 'autoActions off']) test(`${st
 
 test('释放后自动视线动作允许被 notice 接棒，手动动作通知则撤销该权限', () => {
   for (const manual of [false, true]) {
-    const h = harness(true); h.b.setActionMeta(meta); h.random(() => 0); h.b.start();
+    const h = harness(true); h.random(() => 0); h.b.start();
     h.b.updateLookTarget(0.2, 0.4); h.advance(8000);
     assert.equal(h.played[0], 'look_around');
     h.host.isActionPlaying = true;
@@ -200,48 +201,34 @@ function sample(h, released) {
   return seen;
 }
 
-for (const [name, entries] of [
-  ['正常', meta], ['未加载', null], ['为空', []],
-  ['全部缺少分类', meta.map(({ name, weight, moods }) => ({ name, weight, moods }))],
-  ['部分缺少条目', meta.filter(m => ['nod', 'daydream', 'notice', 'angry'].includes(m.name))],
-  ['仅事件与视线条目', meta.filter(m => ['daydream', 'notice', 'angry'].includes(m.name))],
-  ['未知条目', [{ name: 'not-playable', weight: 100 }]],
-  ['错误分类不放宽边界', [{ name: 'angry', category: 'idle' }, { name: 'notice', category: 'idle' }, { name: 'daydream', category: 'idle' }]],
-]) for (const released of [false, true]) test(`元数据${name}，released=${released} 时随机选择安全且可播放`, () => {
-  const h = harness(); h.b.setActionMeta(entries);
+for (const state of STATES) for (const released of [false, true]) test(`状态 ${state.name}，released=${released} 时随机选择安全且可播放`, () => {
+  const h = harness(); h.b.setState(state.name);
   const seen = sample(h, released); assert.ok(seen.size > 0);
-  if ((name === '未加载' || name === '为空') && released) {
-    assert.ok(seen.has('look_around')); assert.ok(seen.has('daydream'));
-  }
+  for (const name of seen) assert.ok(state.idle[name] > 0, `${name} 必须来自 ${state.name} 的待机池`);
+  if (released) assert.ok([...seen].some(n => gazeNames.includes(n)), '视线释放后能抽到视线类');
   h.b.stop();
 });
 
-test('正常元数据的权重×心情亲和与 65% 视线分支保持原分布', () => {
-  for (const released of [false, true]) for (const mood of ['neutral', 'happy', 'sleepy', 'angry']) {
-    const h = harness(); h.b.setActionMeta(meta); h.b.setMood(mood);
+test('待机抽取按当前状态池权重与 65% 视线分支分布', () => {
+  for (const released of [false, true]) for (const state of STATES) {
+    const h = harness(); h.b.setState(state.name);
     if (released) { h.b.updateLookTarget(0.3, 0.4); h.advance(5000); }
     for (const branch of [0, 0.6499, 0.65, 0.9999]) for (let i = 0; i < 100; i++) {
       const roll = (i + 0.5) / 100;
-      const entries = meta.filter(m => m.category !== 'reaction' && (released && branch < 0.65 ? m.category === 'gaze' : m.category !== 'gaze'));
-      const weights = entries.map(m => m.weight * (m.moods?.[mood] ?? 1));
-      let value = roll * weights.reduce((a, b) => a + b, 0);
-      const expected = entries.find((_, j) => (value -= weights[j]) <= 0).name;
+      const entries = Object.entries(state.idle).filter(([n]) => n !== 'notice' &&
+        (released && branch < 0.65 ? gazeNames.includes(n) : !gazeNames.includes(n)));
+      let value = roll * entries.reduce((a, [, w]) => a + w, 0);
+      const expected = entries.find(([, w]) => (value -= w) <= 0)[0];
       let call = 0; h.random(() => released && call++ === 0 ? branch : roll);
-      assert.equal(h.b.randomActionName(), expected, `${mood}, released=${released}, branch=${branch}, roll=${roll}`);
+      assert.equal(h.b.randomActionName(), expected, `${state.name}, released=${released}, branch=${branch}, roll=${roll}`);
     }
     h.b.stop();
   }
 });
 
-test('非法权重/心情倍率与零权重总和不会返回缺失或事件动作', () => {
-  for (const entries of [
-    [{ name: 'nod', weight: Infinity, moods: { neutral: NaN } }],
-    [{ name: 'sway', weight: NaN, moods: { neutral: -1 } }],
-    [{ name: 'nod', moods: { neutral: 0 } }],
-    [{ name: 'notice' }],
-  ]) {
-    const h = harness(); h.b.setActionMeta(entries);
-    for (let i = 0; i < 10; i++) assert.ok(idleNames.includes(h.b.randomActionName()));
-    h.b.stop();
-  }
+test('未知状态回落到平静的待机池', () => {
+  const h = harness(); h.b.setState('not-a-state');
+  const neutral = STATES.find(s => s.name === 'neutral').idle;
+  for (let i = 0; i < 10; i++) assert.ok(neutral[h.b.randomActionName()] > 0);
+  h.b.stop();
 });

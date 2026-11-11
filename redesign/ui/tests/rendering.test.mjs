@@ -32,7 +32,7 @@ const segments = load('chat/rendering/segments');
 const tokens = load('chat/rendering/tokens');
 const draw = load('chat/rendering/draw');
 const emoji = load('chat/rendering/emoji');
-const manifest = load('chat/performance-manifest');
+const manifest = load('chat/performance-manifest', { '../catalog': load('catalog') });
 const composeMod = load('chat/rendering/compose', {
   '../render': render,
   './esc': esc,

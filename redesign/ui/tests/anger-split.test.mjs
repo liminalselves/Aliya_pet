@@ -79,10 +79,10 @@ test('黑脸与怒气符号可分开显示，切换表情时被隐藏的一半�
     [s, m] = run(1.5);
     assert.ok(s > 0.5 && m > 0.95, `恢复生气 ${s} ${m}`);
 
-    // 生气动作（motion 自带 Param32）在中性表情下两者同时出现，与原表现一致。
+    // 气得发抖动作（motion 自带 Param32）在中性表情下两者同时出现，与原表现一致。
     assert.ok(p.startExpression(null));
     run(1.5);
-    assert.ok(p.playAction('angry'));
+    assert.ok(p.playAction('fume'));
     [s, m] = run(1.0);
     assert.ok(s > 0.3 && m > 0.6, `生气动作保持原表现 ${s} ${m}`);
   } finally {

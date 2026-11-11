@@ -1,10 +1,12 @@
 /**
  * 角色行为服务（移植自 Flutter CharacterBehaviorService，逻辑等价）：
- *   - 自动随机动作：8~16 秒间隔，从动作库随机抽取
+ *   - 自动随机动作：8~16 秒间隔，从当前状态的待机动作池按权重抽取
  *   - 随机台词：默认关闭，间隔可配（分钟）
  *   - 视线跟随：指针归一化坐标 → Live2D 注视目标（y 轴翻转：窗口向下为正，视线向上为正）
  * 与渲染框架解耦，通过 PetBehaviorHost 访问模型能力。
  */
+
+import { MOTION_NAMES, STATE_BY_NAME, isGazeAction, isMotion } from './catalog';
 
 export interface PetBehaviorHost {
   /** 播放语义动作名（nod/sway/...）；动作不存在返回 false。 */
@@ -15,42 +17,12 @@ export interface PetBehaviorHost {
   clearLookTarget(): void;
 }
 
-/** 随机动作库（业务语义名 → model3.json 动作组名，一一对应）。 */
-export const ACTION_LIBRARY = [
-  'nod',
-  'sway',
-  'shake',
-  'stretch',
-  'wave',
-  'doubt',
-  'angry',
-  'yawn',
-  'cheerful_bounce',
-  'shy_sway',
-  'puff',
-  'kiss',
-  'sob',
-  'deadpan',
-  'look_around',
-  'daydream',
-  'notice',
-];
-
-/** 元数据不可用时只从已注册的普通待机动作回退，不把事件反应混进随机池。 */
-const SAFE_IDLE_ACTIONS = ACTION_LIBRARY.filter(name =>
-  !['notice', 'look_around', 'daydream'].includes(name));
-const GAZE_ACTIONS = ['look_around', 'daydream'];
-
-/** 已知反应/视线动作的边界不能被缺失或错误的元数据放宽（生气是情绪动作，由情绪加权抽取）。 */
-function actionCategory(meta: ActionMeta): ActionMeta['category'] {
-  if (meta.name === 'notice') return 'reaction';
-  if (GAZE_ACTIONS.includes(meta.name)) return 'gaze';
-  return meta.category;
-}
+/** notice 只由「久静后指针再动」触发，不进入待机池。 */
+const NOTICE_ACTION = 'notice';
 
 /**
  * 视线跟随释放策略：指针静止 GAZE_RELEASE_SECONDS 后不再盯住光标，
- * 眼睛回到动作/待机控制，自动动作优先抽 category=gaze 的张望/发呆；
+ * 眼睛回到动作/待机控制，自动动作优先抽视线类的张望/发呆；
  * 静止超过 NOTICE_AFTER_SECONDS 后指针再动，先播一下 notice（回神）再恢复跟随。
  */
 export const GAZE_RELEASE_SECONDS = 5;
@@ -60,15 +32,6 @@ const NOTICE_COOLDOWN_SECONDS = 30;
 const POINTER_MOVE_EPSILON = 0.005;
 /** 视线释放期间自动动作改抽视线类演出的概率。 */
 const GAZE_IDLE_CHANCE = 0.65;
-
-/** 动作清单元数据条目（pet-model 从 actions.json 载入后注入）。 */
-export interface ActionMeta {
-  name: string;
-  /** gaze=只在视线释放后自动播放；reaction=只由事件触发，不参与随机。 */
-  category?: 'idle' | 'emotion' | 'reaction' | 'gaze';
-  weight?: number;
-  moods?: Record<string, number>;
-}
 
 const AUTO_ACTION_MIN_SECONDS = 8;
 const AUTO_ACTION_MAX_SECONDS = 16;
@@ -114,10 +77,8 @@ export class BehaviorService {
   /** 共用调度入口：互动、说话、暂停和操作后的安静间隔。 */
   canIdle: () => boolean = () => true;
 
-  /** 动作元数据（actions.json；注入后自动动作按 权重×情绪亲和 抽取）。 */
-  private _actionMeta: ActionMeta[] | null = null;
-  /** 当前情绪名（用于亲和加权；null = neutral）。 */
-  private _mood: string | null = null;
+  /** 当前状态名（决定待机动作池）。 */
+  private _state = 'neutral';
 
   private _autoActionTimer: ReturnType<typeof setTimeout> | null = null;
   private _randomSpeechTimer: ReturnType<typeof setTimeout> | null = null;
@@ -144,14 +105,9 @@ export class BehaviorService {
     return this._gazeReleased;
   }
 
-  /** 注入动作元数据清单（模型加载完成后调用）。 */
-  setActionMeta(meta: ActionMeta[] | null): void {
-    this._actionMeta = meta;
-  }
-
-  /** 同步当前情绪（情绪引擎每次变化时调用）。 */
-  setMood(name: string): void {
-    this._mood = name;
+  /** 同步当前状态（状态引擎每次变化时调用）。 */
+  setState(name: string): void {
+    this._state = name;
   }
 
   start(): void {
@@ -171,37 +127,25 @@ export class BehaviorService {
   // ---------- 动作调度 ----------
 
   /**
-   * 按权重抽取动作：基础权重（actions.json，缺省 1）× 当前情绪亲和倍率。
-   * 无元数据时使用分类后的安全回退池。
+   * 从当前状态的待机动作池按权重抽取（catalog.ts STATES）。
+   * 视线类演出只在视线释放后出现（盯着光标时张望会被跟随覆盖，显得穿帮），
+   * 释放期间按概率优先抽视线类；notice 只由事件触发。
    */
   randomActionName(): string {
-    const fallback = SAFE_IDLE_ACTIONS.map(name => ({ name } as ActionMeta));
-    const meta = this._actionMeta?.length ? this._actionMeta
-      : [...fallback, ...GAZE_ACTIONS.map(name => ({ name } as ActionMeta))];
-    const mood = this._mood ?? 'neutral';
-    // 视线类演出只在视线释放后出现（盯着光标时张望会被跟随覆盖，显得穿帮）；
-    // reaction 只由事件触发。释放期间按概率优先抽视线类。
+    const pool = Object.entries((STATE_BY_NAME.get(this._state) ?? STATE_BY_NAME.get('neutral')!).idle)
+      .filter(([name, weight]) => isMotion(name) && name !== NOTICE_ACTION && Number.isFinite(weight) && weight > 0);
+    const gazePool = pool.filter(([name]) => isGazeAction(name));
+    const idlePool = pool.filter(([name]) => !isGazeAction(name));
     const wantGaze = this._gazeReleased && Math.random() < GAZE_IDLE_CHANCE;
-    const pool = meta.filter((m) => ACTION_LIBRARY.includes(m.name) && actionCategory(m) !== 'reaction');
-    const gazePool = pool.filter((m) => actionCategory(m) === 'gaze');
-    const idlePool = pool.filter((m) => actionCategory(m) !== 'gaze');
-    const entries = wantGaze && gazePool.length > 0
-      ? gazePool
-      : idlePool.length > 0 ? idlePool : fallback;
-    const weights = entries.map((m) => {
-      const base = typeof m.weight === 'number' && Number.isFinite(m.weight) && m.weight > 0 ? m.weight : 1;
-      const value = m.moods?.[mood];
-      const affinity = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 1;
-      return base * affinity;
-    });
-    const total = weights.reduce((a, b) => a + b, 0);
-    if (!Number.isFinite(total) || total <= 0) return SAFE_IDLE_ACTIONS[0];
+    const entries = wantGaze && gazePool.length > 0 ? gazePool : idlePool;
+    const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
+    if (!(total > 0)) return MOTION_NAMES[0];
     let roll = Math.random() * total;
-    for (let i = 0; i < entries.length; i++) {
-      roll -= weights[i];
-      if (roll <= 0) return entries[i].name;
+    for (const [name, weight] of entries) {
+      roll -= weight;
+      if (roll <= 0) return name;
     }
-    return entries[entries.length - 1].name;
+    return entries[entries.length - 1][0];
   }
 
   /** 播放指定动作（点击即播，动作可互相打断，不等待完成）。 */
@@ -239,7 +183,7 @@ export class BehaviorService {
       if (this.petRunning && this.autoActions && !this.isDragging && this.canIdle() && !this._getHost()?.isActionPlaying) {
         const name = this.randomActionName();
         this.playAction(name);
-        this._lastAutoWasGaze = actionCategory(this._actionMeta?.find((m) => m.name === name) ?? { name }) === 'gaze';
+        this._lastAutoWasGaze = isGazeAction(name);
       }
       this._scheduleNextAutoAction();
     }, seconds * 1000);
@@ -358,10 +302,9 @@ export class BehaviorService {
     if (stillSeconds < NOTICE_AFTER_SECONDS) return;
     if (now - this._lastNoticeMs < NOTICE_COOLDOWN_SECONDS * 1000) return;
     if (!this.petRunning || !this.autoActions || this.isDragging || !this.canIdle()) return;
-    if (!ACTION_LIBRARY.includes('notice')) return;
     // 只打断自己放的张望/发呆；AI、点击等其它来源的演出继续播完。
     if (this._getHost()?.isActionPlaying && !this._lastAutoWasGaze) return;
     this._lastNoticeMs = now;
-    this.playAction('notice');
+    this.playAction(NOTICE_ACTION);
   }
 }

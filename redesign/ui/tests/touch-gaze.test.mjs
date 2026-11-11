@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { reactionStub } from './reaction-stub.mjs';
 
 const code = new Map();
 function load(name, imports, globals) {
@@ -25,7 +26,7 @@ function harness({ overlay = false, autoActions = false, mirror = false, platfor
     setTimeout(fn, delay) { const id = ++nextTimer; timers.set(id, { at: now + delay, fn }); return id; },
     clearTimeout(id) { timers.delete(id); },
   };
-  const { BehaviorService } = load('behavior', {}, globals);
+  const { BehaviorService } = load('behavior', { './catalog': load('catalog', {}, globals) }, globals);
   const { GazeController } = load('gaze', {}, globals);
   const gaze = new GazeController({ updateParameters() {} }, 'eyeX', 'eyeY');
   const parameters = new Map();
@@ -53,10 +54,9 @@ function harness({ overlay = false, autoActions = false, mirror = false, platfor
   const { InteractionService } = load('interaction/interaction', { './petting-controller': petting, './procedural': procedural }, globals);
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
   const hitAreas = { referenceRenderMargin: 1.22, hitAreaAt: () => area, isInHeadPetZone: () => area === 'head' };
-  const interaction = new InteractionService({ hitAreas, getTarget: () => model,
-    dialogue: { resolveSceneTag: (_scene, tag) => ({ entryId: tag, pages: [{ text: tag }] }) },
-    pettingHost: { isDialogueActive: () => speaking, playPettingDialogue: line => lines.push(line) },
-    playCharacterAction: name => model.playAction(name),
+  const interaction = new InteractionService({ hitAreas, getTarget: () => model, reactions: reactionStub(),
+    host: { canSpeak: () => !speaking, speak: line => lines.push(line.entryId), express() {}, playMotion: name => model.playAction(name) },
+    pettingHost: { isDialogueActive: () => speaking },
   });
   const window = new EventTarget();
   Object.assign(window, { innerWidth: 800, innerHeight: 800 });
@@ -85,8 +85,6 @@ function harness({ overlay = false, autoActions = false, mirror = false, platfor
     _originCssX: 500, _originCssY: 600, _appliedRectX: 100, _appliedRectY: 200, _contentScaleCss: 600,
     _cancelSnapAnimation() {}, _syncWindowMetrics() {}, _onDragFinished() {},
   });
-  interaction.playClickDialogue = tag => lines.push(tag);
-  interaction.isDialogueActive = () => speaking;
   app._wirePointerEvents();
   function pointer(type, overrides = {}) {
     const up = ['pointerup', 'pointercancel', 'lostpointercapture', 'pointerleave'].includes(type);

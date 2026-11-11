@@ -1,9 +1,9 @@
 /**
  * 表演能力清单与 [[agent_cue]] 指令解析。
- * 清单是 AI 可用表情/动作的唯一权威来源（name + 中文 hint），随聊天请求上报——
- * 服务端把「携带清单」识别为桌宠环境并注入表演协议（docs/PERFORMANCE.md）。
- * 与 16.model3.json 的 Expressions、actions.json、behavior.ts ACTION_LIBRARY 四表同步。
+ * 清单由 catalog.ts 派生（全部表情 + Live2D 动作；互动专用的程序微动与状态不上报），
+ * 随聊天请求上报——服务端把「携带清单」识别为桌宠环境并注入表演协议（docs/PERFORMANCE.md）。
  */
+import { ACTIONS, EXPRESSIONS } from '../catalog';
 import type { PerformanceCue } from './types';
 
 export interface PerformanceItem {
@@ -11,42 +11,11 @@ export interface PerformanceItem {
   hint: string;
 }
 
-export const PERFORMANCE_EXPRESSIONS: readonly PerformanceItem[] = [
-  { name: 'neutral', hint: '平静' },
-  { name: 'happy', hint: '开心' },
-  { name: 'angry', hint: '生气（黑脸 + 怒气符号）' },
-  { name: 'annoyed', hint: '不爽：只冒怒气符号，轻微皱眉别开脸，不黑脸' },
-  { name: 'gloomy', hint: '阴沉：只有黑脸低头压眉，没有怒气符号' },
-  { name: 'sad', hint: '难过' },
-  { name: 'surprised', hint: '惊讶' },
-  { name: 'shy', hint: '害羞' },
-  { name: 'sleepy', hint: '困倦' },
-  { name: 'smug', hint: '得意' },
-  { name: 'speechless', hint: '无语' },
-  { name: 'worried', hint: '担心' },
-  { name: 'serious', hint: '认真' },
-  { name: 'hit', hint: '受打击' },
-];
+export const PERFORMANCE_EXPRESSIONS: readonly PerformanceItem[] =
+  EXPRESSIONS.map(({ name, hint }) => ({ name, hint }));
 
-export const PERFORMANCE_ACTIONS: readonly PerformanceItem[] = [
-  { name: 'nod', hint: '点头附和' },
-  { name: 'sway', hint: '摇摆身体' },
-  { name: 'shake', hint: '摇头' },
-  { name: 'stretch', hint: '伸懒腰' },
-  { name: 'wave', hint: '挥手打招呼' },
-  { name: 'doubt', hint: '歪头疑惑' },
-  { name: 'angry', hint: '气得发抖' },
-  { name: 'yawn', hint: '打哈欠' },
-  { name: 'cheerful_bounce', hint: '开心地轻弹上半身，笑着逐渐收住（不离地跳跃）' },
-  { name: 'shy_sway', hint: '撒娇：小臂内折藏在外套后、低头轻晃，自动渐入脸红并随收尾淡出；不替换当前表情（非手指交握）' },
-  { name: 'puff', hint: '鼓起腮帮子扭头生闷气，偷瞄一眼后泄气' },
-  { name: 'kiss', hint: '凑近嘟嘴飞吻，弹回后眨单眼笑' },
-  { name: 'sob', hint: '委屈得眼泪汪汪抽泣两下，吸鼻子忍住' },
-  { name: 'deadpan', hint: '愣住后换成无语眼慢慢耷拉，叹口气' },
-  { name: 'look_around', hint: '左右张望，像在找东西或好奇四周' },
-  { name: 'daydream', hint: '发呆走神：视线飘向上方、眼皮半垂，最后眨眼回神' },
-  { name: 'notice', hint: '回过神来：轻微一惊、挑眉眨眼后转成微笑' },
-];
+export const PERFORMANCE_ACTIONS: readonly PerformanceItem[] =
+  ACTIONS.filter(a => a.kind === 'motion').map(({ name, hint }) => ({ name, hint }));
 
 export interface PerformanceRequestPayload {
   expressions: PerformanceItem[];

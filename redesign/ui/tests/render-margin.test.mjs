@@ -82,15 +82,15 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
     p = await model();
     try {
       assert.equal(p.getExpressionNames().length, 14);
-      assert.equal(p.actionManifest.length, 17);
-      for (const action of p.actionManifest.map(a => a.name)) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
+      assert.equal(p.getMotionNames().length, 17);
+      for (const action of p.getMotionNames()) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
         for (let frame = 0; frame < fps * 8; frame++) {
           p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
         }
       }
-      for (const action of ['cheerful_bounce', 'shy_sway']) for (const next of p.actionManifest.map(a => a.name)) for (const at of [.2, 1.8, action === 'shy_sway' ? 5.2 : 3.9]) {
+      for (const action of ['cheerful_bounce', 'shy_sway']) for (const next of p.getMotionNames()) for (const at of [.2, 1.8, action === 'shy_sway' ? 5.2 : 3.9]) {
         summary.cases++;
         p.startExpression('shy'); p.setLookTarget(0, 0); assert.ok(p.playAction(action));
         for (let frame = 0; frame < Math.ceil(at * fps) + 8 * fps; frame++) {

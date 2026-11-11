@@ -1,10 +1,10 @@
 /**
- * 程序化互动反应与指针追踪小服务（移植自 Flutter 同名服务，逻辑等价）：
+ * 程序化互动反应与指针追踪小服务（移植自 Flutter 同名服务）：
  *   - ClickSequenceService：3秒3次疑惑 / 4秒5次吐槽 / 6秒8次点击冷却
  *   - DragReactionService：快速拖动（≥250px/s）检测
  *   - PointerProximityService：指针位置/速度平滑滤波
- *   - ProceduralReactionService：点击 head（闭眼+头倾）、face（脸红）、
- *     耳朵（同侧眨眼与轻微偏头）、快速拖动（睁大）、连续点击（疑惑）的相位动画
+ *   - ProceduralReactionService：程序微动（catalog.ts kind=procedural 的动作）的相位动画，
+ *     经互动覆盖通道写头部偏移、眼睑、猫耳、脸红
  */
 
 import { InteractionTarget, type InteractionPose } from './target';
@@ -158,66 +158,45 @@ export class PointerProximityService {
 
 // ---------- 程序化反应 ----------
 
+/** 程序微动名 = catalog.ts 中 kind=procedural 的动作名。 */
 export type ProceduralReactionType =
-  | 'headTiltAndEyes'
-  | 'lookAtThenAway'
-  | 'earBlink'
-  | 'eyesWiden'
-  | 'doubt'
-  | 'blush'
   | 'acknowledge'
+  | 'tilt'
   | 'nuzzle'
   | 'flinch'
-  | 'tieTug'
-  | 'legPout'
-  | 'lookBack'
+  | 'blush'
+  | 'ear_blink'
+  | 'eyes_widen'
+  | 'tie_tug'
+  | 'leg_pout'
+  | 'look_back'
   | 'landing';
 
 export interface ProceduralReaction {
   type: ProceduralReactionType;
   strength: number;
+  /** 触发的命中区域；ear_left/ear_right 决定单眼眨的一侧。 */
   areaId?: string;
-  /** 模型空间水平朝向：+1 = 画面右（未镜像时），用于蹭手等朝向反应。 */
+  /** 模型空间水平朝向：+1 = 画面右（未镜像时），用于蹭手、回头等朝向反应。 */
   side?: number;
 }
 
-export const ProceduralReactions = {
-  acknowledge: (strength: number): ProceduralReaction => ({
-    type: 'acknowledge',
-    strength,
-  }),
-  eyesAndTilt: (strength: number): ProceduralReaction => ({
-    type: 'headTiltAndEyes',
-    strength,
-  }),
-  earBlink: (strength: number, areaId: string): ProceduralReaction => ({
-    type: 'earBlink',
-    strength,
-    areaId,
-  }),
-  eyesWiden: (strength: number): ProceduralReaction => ({
-    type: 'eyesWiden',
-    strength,
-  }),
-  doubt: (strength: number): ProceduralReaction => ({
-    type: 'doubt',
-    strength,
-  }),
-  blush: (strength: number): ProceduralReaction => ({
-    type: 'blush',
-    strength,
-  }),
-  nuzzle: (strength: number, side: number): ProceduralReaction => ({
-    type: 'nuzzle',
-    strength,
-    side,
-  }),
-  flinch: (strength: number): ProceduralReaction => ({ type: 'flinch', strength }),
-  tieTug: (strength: number): ProceduralReaction => ({ type: 'tieTug', strength }),
-  legPout: (strength: number): ProceduralReaction => ({ type: 'legPout', strength }),
-  lookBack: (strength: number): ProceduralReaction => ({ type: 'lookBack', strength }),
-  landing: (strength: number): ProceduralReaction => ({ type: 'landing', strength }),
+/** 各微动的默认强度（反应组未指定 strength 时使用）。 */
+export const PROCEDURAL_DEFAULT_STRENGTH: Record<ProceduralReactionType, number> = {
+  acknowledge: 0.8, tilt: 0.8, nuzzle: 0.8, flinch: 0.9, blush: 1, ear_blink: 0.8,
+  eyes_widen: 1, tie_tug: 1, leg_pout: 1, look_back: 1, landing: 1,
 };
+
+export function isProceduralReactionType(name: string): name is ProceduralReactionType {
+  return Object.prototype.hasOwnProperty.call(PROCEDURAL_DEFAULT_STRENGTH, name);
+}
+
+export function proceduralReaction(
+  type: ProceduralReactionType,
+  opts: { strength?: number; areaId?: string; side?: number } = {},
+): ProceduralReaction {
+  return { type, strength: opts.strength ?? PROCEDURAL_DEFAULT_STRENGTH[type], areaId: opts.areaId, side: opts.side };
+}
 
 interface Phase {
   durationMs: number;
@@ -254,9 +233,6 @@ function phase(
   return { durationMs, eyeOpen, headX, headY, headZ, earL, earR, cheek };
 }
 
-/** doubt 动作表演段约 3s；这段时间内再连点不重启动作。 */
-const DOUBT_REPLAY_GUARD_MS = 3000;
-
 /**
  * 相位动画反应服务。每帧由渲染循环驱动 tick()。
  * 抚摸模式期间不叠加程序化反应（apply 直接忽略）。
@@ -264,7 +240,6 @@ const DOUBT_REPLAY_GUARD_MS = 3000;
 export class ProceduralReactionService {
   private readonly _getTarget: () => InteractionTarget | null;
   private readonly _isPettingActive: () => boolean;
-  private readonly _playCharacterAction: (action: string) => boolean;
   private readonly _takeOverPetting?: () => InteractionPose | null;
   private _recovery: { from: InteractionPose; current: InteractionPose; startMs: number } | null = null;
 
@@ -287,18 +262,15 @@ export class ProceduralReactionService {
   private _holdSway = 0;
   private _holdSwayTarget = 0;
   private _lastTickMs = 0;
-  private _doubtUntilMs = 0;
 
   constructor(deps: {
     getTarget: () => InteractionTarget | null;
     isPettingActive: () => boolean;
     takeOverPetting?: () => InteractionPose | null;
-    playCharacterAction: (action: string) => boolean;
   }) {
     this._getTarget = deps.getTarget;
     this._isPettingActive = deps.isPettingActive;
     this._takeOverPetting = deps.takeOverPetting;
-    this._playCharacterAction = deps.playCharacterAction;
   }
 
   get isPlaying(): boolean {
@@ -332,21 +304,14 @@ export class ProceduralReactionService {
         ]);
         break;
       }
-      case 'headTiltAndEyes':
+      case 'tilt':
         this._start([
           phase(180, 0.85, 2.5, 0, -3, 0, 0),
           phase(320, 0.85, 2.5, 0, -3, 0, 0),
           phase(320, 1.0, 0, 0, 0, 0, 0),
         ]);
         break;
-      case 'lookAtThenAway':
-        this._start([
-          phase(180, 1.0, 0, 1.8, 0, 0, 0),
-          phase(300, 1.0, 0, 1.8, 0, 0, 0),
-          phase(300, 1.0, 0, -1.2, 0, 0, 0),
-        ]);
-        break;
-      case 'earBlink': {
+      case 'ear_blink': {
         const left = reaction.areaId === 'ear_left';
         this._start([
           phase(120, 0, 0, 0, left ? -1.5 : 1.5, 0, 0),
@@ -355,27 +320,13 @@ export class ProceduralReactionService {
         ]);
         break;
       }
-      case 'eyesWiden':
+      case 'eyes_widen':
         this._start([
           phase(180, 1.3, 0, 0, 0, 0, 0),
           phase(260, 1.3, 0, 0, 0, 0, 0),
           phase(300, 1.0, 0, 0, 0, 0, 0),
         ]);
         break;
-      case 'doubt': {
-        // 表演完全交给 doubt 动作（歪头、眨眼、思考、打量）；连点时不重启正在演的动作，
-        // 否则每点一下都从头「一愣」，永远演不到后半段。
-        const now = performance.now();
-        if (now >= this._doubtUntilMs && this._playCharacterAction('doubt')) {
-          this._doubtUntilMs = now + DOUBT_REPLAY_GUARD_MS;
-        }
-        // 这里只给点击的即时反馈：头轻轻一缩再放开，不接管眼睛、不叠加歪头。
-        this._start([
-          phase(90, 1, 0, 1.5, 0, 0, 0),
-          phase(220, 1, 0, 0, 0, 0, 0),
-        ]);
-        break;
-      }
       case 'blush':
         this._start([
           phase(300, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
@@ -404,7 +355,7 @@ export class ProceduralReactionService {
         ]);
         break;
       }
-      case 'tieTug': {
+      case 'tie_tug': {
         // 领带被拽：头被带着往下点，再抬回来。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
@@ -415,7 +366,7 @@ export class ProceduralReactionService {
         ]);
         break;
       }
-      case 'legPout': {
+      case 'leg_pout': {
         // 碰到腿：扭头半眯眼，脸微红。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
@@ -425,14 +376,15 @@ export class ProceduralReactionService {
         ]);
         break;
       }
-      case 'lookBack': {
-        // 马尾被碰：朝马尾所在的画面左侧（AngleX 负）回头看，眨一下再转回。
+      case 'look_back': {
+        // 朝触点一侧回头看（缺省画面左侧，AngleX 负），眨一下再转回。
         const s = Math.min(1, Math.max(0, reaction.strength));
+        const d = (reaction.side ?? -1) >= 0 ? -1 : 1;
         this._start([
-          phase(260, 1, -8 * s, 1.5 * s, 2.5 * s, 0, 0),
-          phase(420, 1, -8 * s, 1.5 * s, 2.5 * s, 0, 0),
-          phase(90, 0, -7 * s, 1 * s, 2 * s, 0, 0),
-          phase(110, 1, -6 * s, 1 * s, 2 * s, 0, 0),
+          phase(260, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0),
+          phase(420, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0),
+          phase(90, 0, -7 * s * d, 1 * s, 2 * s * d, 0, 0),
+          phase(110, 1, -6 * s * d, 1 * s, 2 * s * d, 0, 0),
           phase(380, 1, 0, 0, 0, 0, 0),
         ]);
         break;
@@ -448,8 +400,8 @@ export class ProceduralReactionService {
       }
     }
     this._holding = false;
-    this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'lookAtThenAway'
-      && reaction.type !== 'acknowledge' && reaction.type !== 'tieTug' && reaction.type !== 'doubt';
+    this._eyeOverrideActive = reaction.type !== 'blush' && reaction.type !== 'acknowledge'
+      && reaction.type !== 'tie_tug';
   }
 
   /** 拖动期间保持「被拎起」姿态：睁大眼、微抬头；松手由下一个反应平滑接管。 */
@@ -480,7 +432,6 @@ export class ProceduralReactionService {
     this._holdSway = this._holdSwayTarget = 0;
     this._phases.length = 0;
     this._recovery = null;
-    this._doubtUntilMs = 0;
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
     this._eyeOpen = 1;

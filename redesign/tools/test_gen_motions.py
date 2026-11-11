@@ -17,7 +17,7 @@ spec = importlib.util.spec_from_file_location("gen_motions", GENERATOR_PATH)
 generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
 
-ALL_ACTIONS = {"nod", "sway", "shake", "stretch", "wave", "doubt", "angry", "yawn",
+ALL_ACTIONS = {"nod", "sway", "shake", "stretch", "wave", "doubt", "fume", "yawn",
                "cheerful_bounce", "shy_sway", "look_around", "daydream", "notice",
                "puff", "kiss", "sob", "deadpan"}
 
@@ -246,9 +246,9 @@ class GazeMotionTests(unittest.TestCase):
 
 
 class LegacyRemakeTests(unittest.TestCase):
-    LEGACY = ('nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'angry', 'yawn')
+    LEGACY = ('nod', 'sway', 'shake', 'stretch', 'wave', 'doubt', 'fume', 'yawn')
     DURATIONS = {'nod': 3.2, 'sway': 5.6, 'shake': 3.8, 'stretch': 5.0,
-                 'wave': 4.2, 'doubt': 4.4, 'angry': 4.2, 'yawn': 5.6}
+                 'wave': 4.2, 'doubt': 4.4, 'fume': 4.2, 'yawn': 5.6}
 
     def test_durations_unchanged_and_wave_leaves_arms_to_hand_channel(self):
         for name in self.LEGACY:

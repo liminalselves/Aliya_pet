@@ -3,6 +3,19 @@
 桌宠聊天协议与跨仓实现的权威来源。misskey 后端位于独立仓库。协议已实施，
 本文替代 `CHAT.md` 旧「本地关键词推断表情」方案。
 
+## 三个概念
+
+桌宠的表演只分三类，定义都在 `ui/src/catalog.ts`：
+
+| 概念 | 含义 | 谁来控制 | 上报 MSK |
+| --- | --- | --- | --- |
+| 表情 | 一张持续的脸（exp3.json） | AI 指令、互动反应组、设置预览，都是临时覆盖 | 是（全部） |
+| 动作 | 播一次就结束。`motion`=Live2D 动作；`procedural`=互动层参数微动（歪头、蹭手、缩一下等） | AI 指令（只限 motion）、互动反应组、待机抽取 | 只上报 motion |
+| 状态 | 稳定保持的「默认表情 + 待机动作池」 | 桌宠自己：设置里手动选择优先并一直保持；「自动」时深夜/凌晨困倦，其余平静 | 否，MSK 不干预 |
+
+临时表情结束后一律回到当前状态的默认表情。互动（点击、抚摸、拖动）是另一套与 MSK 无关的系统，
+见 `INTERACTION.md` 的反应组。
+
 ## 目标
 
 - AI 回复内嵌表演指令：**动作只播一次，表情切换后长期保持**，逐段台词可各换一次，
@@ -86,7 +99,7 @@ timeline（原文）→ 记录屏渲染时剥离指令
 | `packages/backend/src/server/api/endpoints/agents/messages/send.ts` | paramDef、system 注入、历史过滤、落库前过滤 |
 | `packages/backend/src/core/AgentProactiveMessageService.ts` | 主动消息路径：不注入协议，历史与回复无条件剥离 |
 | `packages/frontend/src/utility/agent-message-segments.ts` + `agent-session*.vue` | MSK 网页展示剥离（与后端同款三段式），编辑界面读原文零改动 |
-| `ui/src/chat/performance-manifest.ts` | name+中文 hint 的唯一权威来源（清单、指令解析、剥离正则） |
+| `ui/src/chat/performance-manifest.ts` | 从 `catalog.ts` 派生上报清单；指令解析、剥离正则 |
 | `ui/src/chat/msk/client.ts`、`msk/provider.ts` | 请求体携带清单 |
 | `ui/src/chat/rendering/compose.ts`、`segments.ts` | 指令行独立成段 → `msk-cue` 隐藏页；行内残留防御剥离 |
 | `ui/src/chat/view.ts`（showPage） | 播到指令页时派发 cue 并自动翻页；页脚不计 cue 页 |
@@ -96,8 +109,8 @@ timeline（原文）→ 记录屏渲染时剥离指令
 ## 语义与边界
 
 - **表情持久**：下一个表情指令覆盖；重复切换保持中的表情被幂等吸收（不重放
-  express）；用户触碰（busy）暂时让位、结束恢复；情绪引擎/设置面板手动预览
-  覆盖后每帧拿回；聊天关闭/取消回情绪默认。不跨聊天会话保留。推论：聊天表情
+  express）；用户触碰（busy）暂时让位、结束恢复；状态切换/设置面板手动预览
+  覆盖后每帧拿回；聊天关闭/取消回状态默认表情。不跨聊天会话保留。推论：聊天表情
   保持期间，设置面板的表情预览会被立即拿回，预览需先收起聊天或等取消。
 - **动作一次**：播放即完，不排队；busy（拖动/互动）期间的动作指令丢弃；
   4s 内的重复动作指令被限频吞掉——都属既有行为，指令化后不改。
@@ -109,7 +122,7 @@ timeline（原文）→ 记录屏渲染时剥离指令
   的 `face` 时间轴驱动（见 `ACTIONS.md`），AI 用 `play=` 触发时同样生效。
 - **回复展示期间不放待机动作**：`InteractionCoordinator.speaking` 包含回复面板展示中
   （原生聊天窗经 `chat-state.replying`，内嵌聊天读 `ChatView.replying`），直到读完收起。
-  否则 8～16s 的自动动作会在读回复时插进来；动作自带的表情曲线（如 `angry` 的黑脸与
+  否则 8～16s 的自动动作会在读回复时插进来；动作自带的表情曲线（如 `fume` 的黑脸与
   怒气符号、`wave` 的满笑眼）叠在聊天表情上，看起来人物表情与台词不符。
   手动点击、AI 指令和设置面板的动作不受影响。
 - **混合客户端**：同一会话网页轮次 AI 看不到指令（输入输出都剥），桌宠轮次
@@ -127,7 +140,7 @@ timeline（原文）→ 记录屏渲染时剥离指令
 ## 决策记录
 
 1. 主动消息 v1 不注入表演协议；其历史与回复无条件剥离指令。
-2. 表情不跨聊天会话保留，聊天关闭即回情绪默认。
+2. 表情不跨聊天会话保留，聊天关闭即回状态默认表情。
 3. 桌宠记录屏剥离指令（与 MSK 展示一致），不显示原始指令行。
 4. 不限每条回复指令数量，靠桌宠端动作限频兜底。
 5. name+hint 由桌宠清单供给，后端/网页不维护语义字典。
@@ -136,13 +149,12 @@ timeline（原文）→ 记录屏渲染时剥离指令
 
 ## 同步纪律
 
-`performance-manifest.ts` 是第四张动作/表情对照表，与既有三处保持同步
-（新增/改名时四表一起动，规则见 `ACTIONS.md`）：
+`ui/src/catalog.ts` 是表情、动作、状态的唯一权威来源（name、中文 label、给 AI 的 hint、
+动作类型、状态的默认表情与待机池）。上报清单、设置页按钮、待机抽取、PetAI 全部从它派生。
+资源侧只剩两处要对齐，由 `tests/catalog-reactions.test.mjs` 强制检查：
 
-1. `assets/live2d/aliya/16.model3.json` 的 Expressions/Motions
-2. `assets/live2d/aliya/actions.json`（含动作脸部提示 `face` 时间轴）
-3. `src/behavior.ts` 的 `ACTION_LIBRARY`
-4. `src/chat/performance-manifest.ts`（本表，另带 hint）
+1. `assets/live2d/aliya/16.model3.json` 的 Expressions/Motions 与目录同名
+2. `assets/live2d/aliya/actions.json` 只放动作的 `face` 时间轴（替换脸），条目名必须是目录里的 Live2D 动作
 
 ## 测试与验收
 

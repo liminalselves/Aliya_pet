@@ -102,17 +102,17 @@ test('隐藏猫耳时耳朵命中让给头部，耳朵台词停用且洗牌袋�
   assert.equal(hit.isInArea('ear_left', ear.x, ear.y), false);
   hit.disabled.clear(); assert.equal(hit.hitAreaAt(ear.x, ear.y), 'ear_left');
 
-  const petting = JSON.parse(readFileSync(resolve(uiRoot, 'assets/dialogue/head_petting.json'), 'utf8'));
+  const reactions = JSON.parse(readFileSync(resolve(uiRoot, 'assets/interaction/reactions.json'), 'utf8'));
   const { DialogueStore } = loadSource('dialogue/dialogue');
   const d = new DialogueStore();
-  d._files.set(petting.scene, petting);
-  const soft = petting.entries.filter(e => e.tags.includes('petting_soft'));
-  const earIds = new Set(soft.filter(e => e.tags.includes('ears')).map(e => e.id));
-  assert.ok(earIds.size > 0);
-  d.selectByTag(petting.scene, 'petting_soft'); // 先建出含耳朵台词的洗牌袋
+  const group = reactions.groups.find(g => g.lines.some(l => l.tags?.includes('ears')) && g.lines.some(l => !l.tags));
+  d.setScene(group.id, { entries: group.lines });
+  const earIds = new Set(group.lines.filter(l => l.tags?.includes('ears')).map(l => l.id));
+  const n = group.lines.length * 3;
+  d.select(group.id); // 先建出含耳朵台词的洗牌袋
   d.setExcludedTags(['ears']);
-  for (let i = 0; i < soft.length * 3; i++) assert.ok(!earIds.has(d.selectByTag(petting.scene, 'petting_soft').id));
+  for (let i = 0; i < n; i++) assert.ok(!earIds.has(d.select(group.id).id));
   d.setExcludedTags([]);
-  const seen = new Set(); for (let i = 0; i < soft.length * 3; i++) seen.add(d.selectByTag(petting.scene, 'petting_soft').id);
+  const seen = new Set(); for (let i = 0; i < n; i++) seen.add(d.select(group.id).id);
   assert.ok([...earIds].some(id => seen.has(id)), '开启后耳朵台词重新可用');
 });

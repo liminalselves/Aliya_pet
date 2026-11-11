@@ -278,8 +278,8 @@ def doubt():
         # 手臂不动：只由 base_reset 保持 0（同时释放被打断动作的手臂残值）。
     })
 
-def angry():
-    """生气：先吸气一挺 → 猛地前倾压头 → 全身发抖 → 嘟囔渐弱、松开；双手攥拳收紧。"""
+def fume():
+    """气得发抖：先吸气一挺 → 猛地前倾压头 → 全身发抖 → 嘟囔渐弱、松开；双手攥拳收紧。"""
     dur = 3.0
     hold = lambda v: [(0, 0), (0.35, v), (2.3, v), (2.8, 0), (dur, 0)]
     tremble, body = [(0, 0), (0.35, 0)], [(0, 0), (0.35, 0)]
@@ -291,7 +291,7 @@ def angry():
         t += 0.15
     tremble += [(2.2, 0), (dur, 0)]
     body += [(2.25, 0), (dur, 0)]
-    return emit("angry", dur, {
+    return emit("fume", dur, {
         "Param32": hold(1.0),
         "ParamBrowLAngle": [(0, 0), (0.3, -0.95), (1.2, -0.75), (1.8, -0.9), (2.2, -0.4), (2.8, 0), (dur, 0)],
         "ParamBrowRAngle": [(0, 0), (0.3, -0.95), (1.2, -0.75), (1.8, -0.9), (2.2, -0.4), (2.8, 0), (dur, 0)],
@@ -579,7 +579,7 @@ def deadpan():
 
 GENERATORS = {
     "nod": nod, "sway": sway, "shake": shake, "stretch": stretch,
-    "wave": wave, "doubt": doubt, "angry": angry, "yawn": yawn,
+    "wave": wave, "doubt": doubt, "fume": fume, "yawn": yawn,
     "cheerful_bounce": cheerful_bounce,
     "shy_sway": shy_sway,
     "puff": puff, "kiss": kiss, "sob": sob, "deadpan": deadpan,

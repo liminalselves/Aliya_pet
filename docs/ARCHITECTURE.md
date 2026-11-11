@@ -105,9 +105,9 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - 存储：localStorage（`aliya_pet_settings_v1`），同一 Android App 的多个
   WebView 共享 → `posX/posY`（CSS px）、scale、镜像、贴边、省电等。
 - Windows 跨窗口同步：设置窗口 → pet 走 `settings-changed`，托盘 → pet 走
-  `tray-action`，pet 广播回设置窗口（`pet-mood` 情绪同理）。Android 设置页
+  `tray-action`，pet 广播回设置窗口（`pet-state` 状态同理）。Android 设置页
   与桌宠页是两个 WebView：设置经壳桥 `notifySettings` 实时转发，动作试放/
-  表情/情绪经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；情绪
+  表情/状态经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；状态
   高亮由 pet 写共享 localStorage、设置页回前台刷新。
 
 ## 双端差异（壳层职责）

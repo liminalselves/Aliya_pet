@@ -19,7 +19,8 @@ import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion
 import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
-import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
+import type { PetBehaviorHost } from './behavior';
+import { MOTION_NAMES } from './catalog';
 import { GazeController } from './gaze';
 import {
   OverlayLayer,
@@ -43,12 +44,9 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
-/** 动作清单元数据（assets/live2d/aliya/actions.json）。 */
-export interface ActionManifestEntry {
+/** 动作资源附加数据（assets/live2d/aliya/actions.json）。 */
+interface ActionAssetEntry {
   name: string;
-  category?: 'idle' | 'emotion' | 'reaction' | 'gaze';
-  weight?: number;
-  moods?: Record<string, number>;
   /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
   face?: unknown;
 }
@@ -94,9 +92,6 @@ export class PetModel
   // 管理器复用 CubismUserModel 基类自带的 _expressionManager。
   private readonly _expressions = new Map<string, CubismExpressionMotion>();
   private _currentExpression: string | null = null;
-
-  // 动作清单元数据（可选，缺省时均匀抽取）
-  private _actionManifest: ActionManifestEntry[] | null = null;
 
   // 眨眼参数 ID（覆盖写入用）
   private _eyeBlinkIds: CubismIdHandle[] = [];
@@ -351,13 +346,12 @@ export class PetModel
     // 动作库（tools/gen-motions.py 为 Aliya 生成的自编动作）
     await this._preloadMotions();
 
-    // 动作清单元数据（可选：情绪亲和权重；缺失时行为层均匀抽取）
+    // 动作脸部时间轴（可选：缺失时替换脸动作只播普通曲线）
     try {
       const buf = await this._fetchArrayBuffer('actions.json');
       const parsed = JSON.parse(new TextDecoder().decode(buf));
       if (Array.isArray(parsed.actions)) {
-        this._actionManifest = parsed.actions;
-        for (const entry of parsed.actions as ActionManifestEntry[]) {
+        for (const entry of parsed.actions as ActionAssetEntry[]) {
           const spans = parseFaceCues(entry.face);
           if (spans.length > 0) this._faceCues.set(entry.name, spans);
         }
@@ -441,9 +435,9 @@ export class PetModel
     return this._ready;
   }
 
-  /** 动作清单元数据（actions.json；null = 未提供）。 */
-  public get actionManifest(): ActionManifestEntry[] | null {
-    return this._actionManifest;
+  /** 已加载可播放的 Live2D 动作名。 */
+  public getMotionNames(): string[] {
+    return MOTION_NAMES.filter(name => this._motions.has(`${name}_0`));
   }
 
   /** 模型静态包围盒宽（模型坐标单位） */
@@ -514,7 +508,7 @@ export class PetModel
   // ---------- 动作播放 ----------
 
   private async _preloadMotions(): Promise<void> {
-    for (const group of ACTION_LIBRARY) {
+    for (const group of MOTION_NAMES) {
       const count = this._setting.getMotionCount(group);
       for (let i = 0; i < count; i++) {
         const name = `${group}_${i}`;

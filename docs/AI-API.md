@@ -8,8 +8,8 @@
 
 ```
 AI / 业务（petAI + 事件总线）
-情绪引擎（emotion.ts：心境 → 默认表情 + 动作选择加权，自然衰减）
-动作（motion3.json，瞬时行为） ⊕ 表情（exp3.json，持续心境）
+状态引擎（state.ts：默认表情 + 待机动作池；手动优先，自动按时段）
+动作（motion3.json，瞬时行为） ⊕ 表情（exp3.json，持续的脸）
 视线（gaze.ts GazeController：唯一所有者——指针跟随 × 动作交挖权重
       × 表情注视偏移 → 眼球总钳制）+ 覆盖通道（overlay.ts：抬手/猫耳/
       眨眼覆盖/互动偏移，物理后写入）
@@ -30,40 +30,38 @@ loadParameters → 动作 → saveParameters → 调度器(眨眼→表情→呼
 
 ## API 一览
 
+表情、动作、状态的名字与含义只在 `ui/src/catalog.ts` 定义（三概念见 `PERFORMANCE.md`）。
+
 ```ts
-// 表情（12 个：neutral/happy/angry/sad/surprised/shy/sleepy/
-//           smug/speechless/worried/serious/hit）
+// 表情：临时覆盖，结束后回当前状态的默认表情
 petAI.expressions()                    // string[]
 petAI.express('angry')                 // 切表情（交叉淡入淡出）
-petAI.express('hit', 2.5)              // 临时表情，2.5s 后自动回情绪默认
-petAI.clearExpression()                // 立即回情绪默认表情
+petAI.express('hit', 2.5)              // 2.5s 后自动回状态默认表情
+petAI.clearExpression()                // 立即回状态默认表情
 
-// 情绪（10 档：neutral/happy/cheerful/angry/sad/shy/sleepy/
-//        smug/curious/speechless）
-petAI.moods()                          // 定义（含动作亲和表）
-petAI.setMood('happy')                 // 切心境：默认表情 + 动作加权 + 到期衰减
-petAI.setMood('angry', 120)            // 指定 120 秒后回 neutral
-petAI.mood()                           // { name, elapsedSeconds }
-
-// 动作（14 个，唯一清单见 src/chat/performance-manifest.ts 的
-//        PERFORMANCE_ACTIONS：nod/sway/shake/stretch/wave/doubt/angry/yawn/
-//        cheerful_bounce/shy_sway/puff/kiss/sob/deadpan）
+// 动作：Live2D 动作与互动程序微动共用一个入口
 petAI.play('wave')                     // 播动作（挥手自动联动抬手）
+petAI.play('nuzzle')                   // 程序微动（蹭手）
 petAI.state().actions                  // 可用动作名
+
+// 状态：默认表情 + 待机动作池；手动指定后一直保持
+petAI.states()                         // 定义列表
+petAI.setState('sleepy')               // 手动指定
+petAI.setState(null)                   // 回到自动（深夜困倦，其余平静）
 
 // 视线（AI 引导注意力）
 petAI.gaze(-0.8, 0.2)                  // -1..1，x右y上
 petAI.clearGaze()                      // 回跟随指针
 
-// 状态快照（AI 上下文）
-petAI.state()                          // { mood, expression, expressions, actions }
+// 快照（AI 上下文）
+petAI.state()                          // { state, manual, expression, expressions, actions }
 ```
 
 ## 事件总线（window CustomEvent，'pet:*'）
 
 ```ts
-window.addEventListener('pet:mood', e => {
-  // e.detail = { mood: 'happy', previous: 'neutral' }
+window.addEventListener('pet:state', e => {
+  // e.detail = { state: 'sleepy', manual: null, previous: 'neutral' }
 });
 window.addEventListener('pet:expression', e => {
   // e.detail = { expression: 'angry' }（null = 回默认）
@@ -76,42 +74,37 @@ window.addEventListener('pet:action', e => {
 ## 典型用法
 
 ```ts
-// 1) LLM 情感分析驱动表情
-const mood = analyzeSentiment(userText);   // 'happy' | 'sad' | ...
-petAI.setMood(mood === 'positive' ? 'happy' : mood);
-
-// 2) 说到关键词时配合动作
+// 1) 说到关键词时配合动作
 if (/再见|拜拜/.test(userText)) petAI.play('wave');
 
-// 3) 被骂了：短暂生气然后消气
-petAI.setMood('angry', 90);               // 90 秒后自动回 neutral
+// 2) 被骂了：短暂生气，3 秒后回到状态默认表情
+petAI.express('angry', 3);
 
-// 4) 提醒场景：认真模式 + 注视
-petAI.setMood('curious');
+// 3) 提醒场景：认真脸 + 注视
+petAI.express('serious');
 petAI.gaze(0.3, 0.5);
 ```
 
 ## 扩展指引
 
 - **加表情**：改 `redesign/tools/gen-expressions.py` 配方 → 重新生成 →
-  在 `16.model3.json` 的 Expressions 里登记 → `emotion.ts` 的 MOODS 可选挂接 →
-  `chat/performance-manifest.ts` 的 `PERFORMANCE_EXPRESSIONS` 补条目。
+  在 `16.model3.json` 的 Expressions 里登记 → `catalog.ts` 的 `EXPRESSIONS` 补条目。
 - **加动作**：改 `redesign/tools/gen-motions.py` → 重新生成 → model3.json
-  Motions 登记 → `behavior.ts` ACTION_LIBRARY + `actions.json` 加亲和
-  （用替换脸时在 `actions.json` 条目里写 `face` 时间轴，见 ACTIONS.md）→
-  `performance-manifest.ts` 的 `PERFORMANCE_ACTIONS` 补条目。
-- **加情绪**：`emotion.ts` 的 MOODS 加定义（表情 + 持续时间 + 动作亲和）。
+  Motions 登记 → `catalog.ts` 的 `ACTIONS` 补条目，并加进需要的状态待机池
+  （用替换脸时在 `actions.json` 写 `face` 时间轴，见 ACTIONS.md）。
+- **加状态**：`catalog.ts` 的 `STATES` 加定义（默认表情 + 待机池）。
+- **加互动反应**：只改 `assets/interaction/reactions.json`（见 `INTERACTION.md`）。
 - **Tauri 壳**：`window.__TAURI__` 下可 evaluate 脚本调用 petAI；如需
   原生 command 代理，在 src-tauri 包一层即可（API 已收敛到语义名）。
 
 ## 设置窗口控制面板
 
-设置窗口（settings.html）的「表情与情绪」面板走同一套能力（桌面端）：
+设置窗口（settings.html）的「表情与状态」面板走同一套能力：
 
-- 表情按钮 → `tray-action: express`（8 秒预览后自动回情绪默认）；
+- 表情按钮 → `tray-action: express`（8 秒预览后回状态默认表情）；
 - 恢复默认表情 → `tray-action: clear-expression`；
-- 情绪按钮 → `tray-action: set-mood`，pet 窗口经 `pet-mood` 事件回推，
-  面板高亮实时跟随（包括 AI 改的情绪和自然回落）。
+- 状态按钮 → `tray-action: set-state`（name 为空 = 自动），pet 窗口经 `pet-state`
+  事件（Android 为 localStorage `aliya_pet_state`）回推，面板高亮跟随。
 
 即：**菜单手动控制与 petAI 程序控制共享同一状态源**，互相不冲突、
 界面始终反映真实状态。

@@ -46,7 +46,7 @@ export interface AndroidShell {
   setDialogueBubble?(json: string): void;
   /** 设置页全量设置变更（JSON）：壳转发给桌宠页实时生效。 */
   notifySettings(json: string): void;
-  /** 设置页动作转发（play-action/express/set-mood 等 tray-action 形状 JSON）给桌宠页。 */
+  /** 设置页动作转发（play-action/express/set-state 等 tray-action 形状 JSON）给桌宠页。 */
   notifyPetAction(json: string): void;
 }
 

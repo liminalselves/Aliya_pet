@@ -1,9 +1,9 @@
 /**
  * 设置窗口页面（独立 webview）：
  * 改动 → 写 localStorage + emitTo('pet', 'settings-changed') 实时生效；
- * 动作/台词/表情/情绪按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
+ * 动作/台词/表情/状态按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
  * 监听 'settings-changed'（托盘改动经 pet 广播）刷新控件、
- * 'pet-mood'（pet 情绪变化）刷新情绪高亮。
+ * 'pet-state'（pet 状态变化）刷新状态高亮。
  */
 
 import {
@@ -24,8 +24,7 @@ import {
   shellAction,
   notifyPetAction,
 } from './platform';
-import { ACTION_LIBRARY } from './behavior';
-import { MOODS } from './emotion';
+import { ACTIONS, EXPRESSIONS, STATES } from './catalog';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
 import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
@@ -38,64 +37,15 @@ import { showToast } from './toast';
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
 
-const ACTION_LABELS: Record<string, string> = {
-  nod: '点头',
-  sway: '摇摆',
-  shake: '摇头',
-  stretch: '伸展',
-  wave: '挥手',
-  doubt: '疑惑',
-  angry: '生气',
-  yawn: '哈欠',
-  cheerful_bounce: '开心雀跃',
-  shy_sway: '撒娇',
-  puff: '鼓腮',
-  kiss: '飞吻',
-  sob: '委屈',
-  deadpan: '无语',
-  look_around: '张望',
-  daydream: '发呆',
-  notice: '回神',
-};
-
-/** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */
-const EXPRESSION_LABELS: Record<string, string> = {
-  happy: '开心',
-  angry: '生气',
-  annoyed: '不爽',
-  gloomy: '阴沉',
-  sad: '难过',
-  surprised: '惊讶',
-  shy: '害羞',
-  sleepy: '困倦',
-  smug: '得意',
-  speechless: '无语',
-  worried: '担忧',
-  serious: '认真',
-  hit: '受击',
-};
-
-/** 情绪面板：emotion.ts MOODS 键 → 中文。 */
-const MOOD_LABELS: Record<string, string> = {
-  neutral: '平静',
-  happy: '开心',
-  cheerful: '愉快',
-  angry: '生气',
-  sad: '难过',
-  shy: '害羞',
-  sleepy: '困倦',
-  smug: '得意',
-  curious: '好奇',
-  speechless: '无语',
-};
-
 type Emit = (event: string, payload: unknown) => void;
 type Listen = (event: string, cb: () => void) => void;
 
 let emitToPet: Emit = () => {};
 let emitToSettings: Emit = () => {};
 let onSettingsChanged: Listen = () => {};
-let onMoodChanged: (cb: (mood: string) => void) => void = () => {};
+/** pet 窗口推送的状态：manual=null 表示自动。 */
+type PetStatePayload = { state: string; manual: string | null };
+let onStateChanged: (cb: (s: PetStatePayload) => void) => void = () => {};
 let invokeCmd: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) =
   () => Promise.resolve(null);
 
@@ -112,12 +62,10 @@ if (platform === 'tauri') try {
   onSettingsChanged = (event, cb) => {
     ev.listen(event, cb).catch(() => {});
   };
-  onMoodChanged = (cb) => {
+  onStateChanged = (cb) => {
     ev
-      .listen<{ mood: string }>('pet-mood', (e) => {
-        if (e.payload && typeof e.payload.mood === 'string') {
-          cb(e.payload.mood);
-        }
+      .listen<PetStatePayload>('pet-state', (e) => {
+        if (e.payload && typeof e.payload.state === 'string') cb(e.payload);
       })
       .catch(() => {});
   };
@@ -306,15 +254,15 @@ function refreshControls(): void {
     refs.batterySaver.checked = settings.batterySaver === true;
 }
 
-// ---- 互动 ----（动作试放经跨窗口事件；Android 经壳桥转发到桌宠页）
+// ---- 动作 ----（试放 Live2D 动作，经跨窗口事件；Android 经壳桥转发到桌宠页）
 {
-  const box = section('互动');
+  const box = section('动作');
   const grid = document.createElement('div');
   grid.className = 'grid';
-  for (const name of ACTION_LIBRARY) {
+  for (const { name, label } of ACTIONS.filter(a => a.kind === 'motion')) {
     const b = document.createElement('button');
     b.className = 'act';
-    b.textContent = ACTION_LABELS[name] ?? name;
+    b.textContent = label;
     b.addEventListener('click', () => perform(b, 'play-action', { name }));
     grid.appendChild(b);
   }
@@ -326,29 +274,28 @@ function refreshControls(): void {
   box.appendChild(speech);
 }
 
-// ---- 表情与情绪 ----（表情 = 临时预览；情绪 = 持续心境；Android 经壳桥转发）
-// 表情 = 临时预览（8s 后自动回当前情绪的默认表情）；
-// 情绪 = 持续心境（默认表情 + 动作选择加权 + 到期自然回落「平静」）。
-const moodButtons = new Map<string, HTMLButtonElement>();
-let currentMood = 'neutral';
+// ---- 表情与状态 ----（表情 = 临时预览；状态 = 持续保持；Android 经壳桥转发）
+// 「自动」键名为空串：深夜困倦、其余平静；手动选择一直保持到选回自动。
+const stateButtons = new Map<string, HTMLButtonElement>();
+let manualState = '';
 
-function refreshMoodHighlight(): void {
-  for (const [name, btn] of moodButtons) {
-    btn.classList.toggle('active', name === currentMood);
+function refreshStateHighlight(): void {
+  for (const [name, btn] of stateButtons) {
+    btn.classList.toggle('active', name === manualState);
   }
 }
 
 {
-  const box = section('表情与情绪');
+  const box = section('表情与状态');
 
   // 表情（临时预览）
   const exprHint = document.createElement('div');
   exprHint.className = 'hint';
-  exprHint.textContent = '表情（点击预览，8 秒后自动恢复）';
+  exprHint.textContent = '表情（点击预览，8 秒后恢复当前状态的表情）';
   box.appendChild(exprHint);
   const exprGrid = document.createElement('div');
   exprGrid.className = 'grid';
-  for (const [name, label] of Object.entries(EXPRESSION_LABELS)) {
+  for (const { name, label } of EXPRESSIONS.filter(e => e.name !== 'neutral')) {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = label;
@@ -362,28 +309,27 @@ function refreshMoodHighlight(): void {
   clearExpr.addEventListener('click', () => perform(clearExpr, 'clear-expression'));
   box.appendChild(clearExpr);
 
-  // 情绪（持续心境）
-  const moodHint = document.createElement('div');
-  moodHint.className = 'hint';
-  moodHint.textContent =
-    '情绪（持续心境：影响默认表情与自发动作，一段时间后自然平静）';
-  box.appendChild(moodHint);
-  const moodGrid = document.createElement('div');
-  moodGrid.className = 'grid';
-  for (const name of Object.keys(MOODS)) {
+  // 状态（持续保持）
+  const stateHint = document.createElement('div');
+  stateHint.className = 'hint';
+  stateHint.textContent = '状态（一直保持的表情与待机动作；自动时深夜困倦，其余时间平静）';
+  box.appendChild(stateHint);
+  const stateGrid = document.createElement('div');
+  stateGrid.className = 'grid';
+  for (const { name, label } of [{ name: '', label: '自动' }, ...STATES]) {
     const b = document.createElement('button');
     b.className = 'act';
-    b.textContent = MOOD_LABELS[name] ?? name;
+    b.textContent = label;
     b.addEventListener('click', () => {
-      currentMood = name;
-      refreshMoodHighlight();
-      perform(b, 'set-mood', { name });
+      manualState = name;
+      refreshStateHighlight();
+      perform(b, 'set-state', { name });
     });
-    moodButtons.set(name, b);
-    moodGrid.appendChild(b);
+    stateButtons.set(name, b);
+    stateGrid.appendChild(b);
   }
-  box.appendChild(moodGrid);
-  refreshMoodHighlight();
+  box.appendChild(stateGrid);
+  refreshStateHighlight();
 }
 
 // 省电模式（所有平台；移动端收益最大）
@@ -1071,30 +1017,29 @@ onSettingsChanged('settings-changed', () => {
   refreshControls();
 });
 
-// pet 窗口情绪变化（petAI/托盘/自然回落）→ 刷新情绪高亮
-onMoodChanged((mood: string) => {
-  currentMood = mood;
-  refreshMoodHighlight();
+// pet 窗口状态变化（petAI/设置）→ 刷新状态高亮
+onStateChanged((s) => {
+  manualState = s.manual ?? '';
+  refreshStateHighlight();
 });
 
-// Android：桌宠页把情绪写入共享 localStorage（跨 WebView 无事件总线），
+// Android：桌宠页把状态写入共享 localStorage（跨 WebView 无事件总线），
 // 回到本页/收到 storage 事件时刷新高亮
 if (platform === 'android') {
-  const readMood = () => {
-    let mood = '';
+  const readState = () => {
     try {
-      mood = localStorage.getItem('aliya_pet_mood') ?? '';
+      const s = JSON.parse(localStorage.getItem('aliya_pet_state') ?? 'null') as PetStatePayload | null;
+      if (s && typeof s.state === 'string') {
+        manualState = s.manual ?? '';
+        refreshStateHighlight();
+      }
     } catch {
-      // 存储不可用则保持当前高亮
-    }
-    if (mood) {
-      currentMood = mood;
-      refreshMoodHighlight();
+      // 存储不可用或内容损坏则保持当前高亮
     }
   };
-  window.addEventListener('focus', readMood);
+  window.addEventListener('focus', readState);
   window.addEventListener('storage', (e) => {
-    if (e.key === 'aliya_pet_mood') readMood();
+    if (e.key === 'aliya_pet_state') readState();
   });
-  readMood();
+  readState();
 }

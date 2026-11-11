@@ -17,10 +17,9 @@ npm --prefix redesign/ui run build
 ```
 
 生成器同时更新 assets 与 dist；生产构建会重新复制正式 assets。动作资源位于
-`redesign/ui/assets/live2d/aliya/motions/`。注册须同步生成器 `GENERATORS`、
-`16.model3.json` 的 `Motions`、`actions.json`、`src/behavior.ts` 的
-`ACTION_LIBRARY`、`src/chat/performance-manifest.ts` 的 `PERFORMANCE_ACTIONS`。
-设置页中文标签由 `src/settings-page.ts` 的 `ACTION_LABELS` 提供。
+`redesign/ui/assets/live2d/aliya/motions/`。新增动作要改三处：生成器 `GENERATORS`、
+`16.model3.json` 的 `Motions`、`src/catalog.ts` 的 `ACTIONS`（名字、中文 label、给 AI 的 hint），
+再按需加进 `STATES` 各状态的待机池。上报清单、设置页按钮都从目录派生（见 `PERFORMANCE.md`）。
 
 ## 动作清单
 
@@ -35,7 +34,7 @@ npm --prefix redesign/ui run build
 | 疑惑 | `doubt` | 「嗯？」一愣（微抬头、双眉一挑、轻张嘴）→ 歪头 10 看着你并眨眼 → 视线飘向上方想一想 → 「嗯～？」前倾凑近、歪到 11、眯眼打量；视线大部分时间对着正前方，身体反向轻倾，手臂不动 |
 | 挥手 | `wave` | 手臂仍由专用通道抬起；头身先反向一带，随每次挥动侧倾并上下轻弹 |
 | 伸展 | `stretch` | 先往下一缩蓄力，后仰 10 同时双臂外展 6.5，左右扭一下，放下时回弹前倾、甩头 |
-| 生气 | `angry` | 先吸气一挺，再猛地前倾压头，头身一起发抖（±3.5），双手攥拳收紧，嘟囔渐弱后松开 |
+| 气得发抖 | `fume` | 先吸气一挺，再猛地前倾压头，头身一起发抖（±3.5），双手攥拳收紧，嘟囔渐弱后松开 |
 | 打哈欠 | `yawn` | 吸气抬头，后仰张大嘴、双臂微展，呼气时前倾并晃一下脑袋，眼皮仍沉 |
 | 开心雀跃 | `cheerful_bounce` | 蓄势、两次递减的上半身弹动、小幅协同摆臂 |
 | 撒娇 | `shy_sway` | 贴身收肘藏手、三次柔和轻晃、低头偷看，自动脸红 |
@@ -73,12 +72,12 @@ npm --prefix redesign/ui run build
 
 - 光标静止 **5s**（`GAZE_RELEASE_SECONDS`）→ 释放视线：`clearLookTarget()`，
   `GazeController` 平滑回中，眼睛交还动作曲线。触屏只在事件时上报，由自动动作定时器补查。
-- 释放期间自动动作以 65% 概率改抽 `category: "gaze"` 的 `look_around` / `daydream`；
+- 释放期间自动动作以 65% 概率改抽当前状态待机池里的视线类（`gaze: true`）`look_around` / `daydream`；
   跟随中永远不抽视线类（否则张望会被跟随覆盖，头动而眼不动）。
 - 静止 ≥ **12s** 后光标再动 → 先播 `notice`（回神）并立即恢复跟随；冷却 30s。
   只在 `canIdle()`、非拖动时触发，且只打断自己抽出的视线类演出，不打断 AI、点击等来源的动作。
-- `category: "reaction"` 不参与随机抽取，只由事件触发；设置页、AI cue 仍可直接播放三者。
-- `angry`（生气）是 `emotion` 类：生气情绪下按亲和倍率（3.5）自动抽到，平静时抽到的概率低得多，AI cue 与设置页同样可直接播放。
+- `notice` 不进任何待机池，只由事件触发；设置页、AI cue 仍可直接播放三者。
+- 待机抽取的权重只看当前状态的待机池（`catalog.ts` 的 `STATES[].idle`）：例如 `fume` 在生气状态权重 2.1，平静时 0.6。
 
 | 中文名称 | 内部动作名 | 时长 | 设计要点 |
 | --- | --- | --- | --- |
@@ -106,7 +105,7 @@ npm --prefix redesign/ui run build
 眉嘴仍按原节拍表演；满笑眼期间眼球 XY 保持 0。使用现有 `smooth_curve_segments()`
 保形 C1 插值，单调中间关键帧不强制停速，极值与收尾自然减速。
 模型没有独立整体升降或腿部跳跃绑定，所以这是上半身俯仰弹动，不是离地跳跃。
-随机配置为 emotion、基础权重 0.45，偏好 happy。
+平静待机池权重 0.45，开心状态 1.35。
 
 ## 撒娇 shy_sway
 
@@ -164,7 +163,7 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 [[agent_cue express=shy play=shy_sway]]
 ```
 
-这不是自动脸红的必要条件。随机配置仍为 emotion、基础权重 0.4，shy 倍率 4、happy 倍率 2。
+这不是自动脸红的必要条件。平静待机池权重 0.4，害羞状态 1.6、开心状态 0.8。
 
 ## 自编动作的工程约束
 
@@ -250,7 +249,7 @@ Android 设备的实际渲染与触摸观感仍需人工确认。跨平台使用
 
 Param32 仍决定出现时机与淡入淡出，遮罩本身以 0.12s 时间常数过渡，生气↔不爽↔阴沉之间切换不闪。
 切到不用 Param32 的表情时，遮罩等 Param32 淡到 0 才恢复，避免被隐藏的那一半在淡出途中闪现。
-`angry` 动作自带 Param32，在中性或其他表情下仍两者同显，与原表现一致。
+`fume` 动作自带 Param32，在中性或其他表情下仍两者同显，与原表现一致。
 `tests/anger-split.test.mjs` 用正式 Core/moc 和 `PetModel.update` 校验三种显示及切换过程。
 
 ## 互动命中坐标

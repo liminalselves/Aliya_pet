@@ -55,7 +55,7 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 - **渲染质量**：纹理使用线性 Mipmap 过滤与边缘钳制，Cubism 裁剪遮罩缓冲区提升至 512，改善缩放时发丝、眼睛和衣物轮廓的锯齿；不通过提高 DPR 或开启无验证收益的高精度遮罩来换取 GPU 开销。
 - **自然表现**：视线跟随、独立的约 5 秒静止释放、久静回神（`notice`）、张望 / 发呆动作、自动随机动作与每日互动状态。
 - **触摸与互动**：Android 短触摸按下即产生视线反馈，抬起后保留最后触点并平滑释放；持续移动、抚摸、点击、拖动和双击仍按原优先级仲裁。
-- **表情与情绪**：情绪引擎驱动默认表情与动作选择，经 `window.petAI` 暴露给 AI / 自动化（见[动作库与资源](#动作库与资源)）。
+- **表情、动作、状态**：状态决定默认表情与待机动作（手动选择或按时段自动），表情和动作是临时表演，经 `window.petAI` 暴露给 AI / 自动化（见[动作库与资源](#动作库与资源)）。
 - **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页；支持 Windows 截图预览、图片上传、粘贴与拖放附件。
 - **显示与穿透**：设置页支持人物透明度 0–100%、5% 步进和实时预览；独立的“人物完全穿透”开关仅作用于人物悬浮窗，不影响聊天、设置和独立台词气泡。0% 会安全降级为完全穿透，保留原始 Alpha 命中掩码。
 - **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
@@ -147,7 +147,7 @@ redesign/                    # 重写版（当前主产品）
 │   │   ├── platform.ts      # 平台适配层（tauri / android / 浏览器），唯一平台分叉点
 │   │   ├── pet-app.ts       # 应用外壳：渲染循环 / 指针接线 / 窗口
 │   │   ├── pet-model.ts     # 模型：动作 / 物理 / 眨眼 / 呼吸 / 视线 / 互动通道
-│   │   ├── pet-ai.ts        # PetAI 语义 API（表情 / 情绪 / 动作 / 视线，见 docs/AI-API.md）
+│   │   ├── pet-ai.ts        # PetAI 语义 API（表情 / 动作 / 状态 / 视线，见 docs/AI-API.md）
 │   │   ├── interaction/     # 抚摸状态机、程序式反应、连点 / 拖动
 │   │   ├── dialogue/        # 台词分页 / 播放 / 气泡
 │   │   ├── chat/            # Misskey 智能体聊天（GAL 式回复 / 会话管理）
@@ -189,7 +189,7 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 | `docs/INTERACTION.md` | 普通互动规则（操作约定、手势生命周期与互斥） |
 | `docs/ACTIONS.md` | 动作接入指南（自编动作工程约束 + 余量重新测量） |
 | `docs/MODEL.md` | 模型能力图谱（参数表 / 物理链 / 值域坑） |
-| `docs/AI-API.md` | PetAI 对外接口（表情 / 情绪 / 动作 / 视线 + 事件总线） |
+| `docs/AI-API.md` | PetAI 对外接口（表情 / 动作 / 状态 / 视线 + 事件总线） |
 | `docs/EMBED.md` | 官网首页的网页嵌入构建 |
 | `CHANGELOG.md` | 版本更新记录 |
 
@@ -200,7 +200,8 @@ docs/                        # 架构、构建、Android、聊天、动作接入
 ## 动作库与资源
 
 - **动作库**：17 个动作（普通待机、情绪、视线张望 / 发呆与事件反应）是为当前 Aliya 模型自编的 motion3.json，由 `redesign/tools/gen-motions.py` 生成（设计要点与工程约束见 `docs/ACTIONS.md`）。其中 4 个用了模型自带的替换脸网格（鼓嘴/嘟嘴/哭眼/无语眼），脸部切换由 `actions.json` 的 `face` 时间轴驱动。视线类动作只在释放跟随后进入对应随机池，事件反应不会进入普通待机池。
-- **表情与情绪**：14 个 exp3.json 表情（`gen-expressions.py` 生成）+ 情绪引擎（心境 → 默认表情、动作选择加权、自然衰减），经 `window.petAI` 语义 API 暴露给 AI / 自动化（见 `docs/AI-API.md`）；设置窗口有对应的「表情与情绪」控制面板（表情预览 / 情绪切换，与 AI 共享状态源）。
+- **表情与状态**：14 个 exp3.json 表情（`gen-expressions.py` 生成）+ 9 个状态（默认表情 + 待机动作池，定义在 `src/catalog.ts`），经 `window.petAI` 语义 API 暴露给 AI / 自动化（见 `docs/AI-API.md`）；设置窗口有对应的「表情与状态」控制面板。
+- **互动反应组**：点击 25 个细分部位、连点、拖动、抚摸、随机台词都按反应组播放（台词 + 表情 + 动作同时触发），数据在 `assets/interaction/reactions.json`（见 `docs/INTERACTION.md`）。
 
 ## 许可与声明
 
@@ -264,7 +265,7 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 - **Rendering quality**: linear Mipmap filtering with edge clamping and a 512×512 Cubism clipping-mask buffer reduce scaled edge aliasing around hair, eyes and clothing; the project does not trade GPU cost for unverified higher DPR or high-precision masks.
 - **Natural behavior**: gaze following, an independent ~5-second idle release, long-idle wake-up (`notice`), look-around / daydream motions, automatic random motions and daily interaction state.
 - **Touch & interaction**: Android touch-down produces immediate gaze feedback; the last touch point is retained after release and fades back through the existing timer. Continuous movement, petting, clicks, dragging and double-tap arbitration remain intact.
-- **Expressions & emotion**: an emotion engine drives the default expression and motion selection, exposed to AI/automation via `window.petAI` (see [Motion Library & Assets](#motion-library--assets)).
+- **Expressions, motions, states**: a state sets the default expression and idle motions (chosen manually or automatically by time of day); expressions and motions are temporary performances, exposed to AI/automation via `window.petAI` (see [Motion Library & Assets](#motion-library--assets)).
 - **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android; Windows screen-capture preview and image attachments support paste and drag-and-drop.
 - **Display & click-through**: the settings page provides 0–100% character opacity in 5% steps with live preview, plus a separate full click-through switch that only affects the character overlay, not chat, settings or the standalone dialogue bubble. At 0%, the character safely falls back to full click-through while preserving the original alpha hit mask.
 - **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start; click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
@@ -355,7 +356,7 @@ redesign/                    # The rewrite (current main product)
 │   │   ├── platform.ts      # Platform layer (tauri / android / browser), the only fork point
 │   │   ├── pet-app.ts       # App shell: render loop / pointer wiring / window
 │   │   ├── pet-model.ts     # Model: motions / physics / blink / breathe / gaze / channels
-│   │   ├── pet-ai.ts        # PetAI semantic API (expressions / emotion / motions / gaze, see docs/AI-API.md)
+│   │   ├── pet-ai.ts        # PetAI semantic API (expressions / motions / states / gaze, see docs/AI-API.md)
 │   │   ├── interaction/     # Petting state machine, procedural reactions, clicks / drags
 │   │   ├── dialogue/        # Line paging / playback / bubbles
 │   │   ├── chat/            # Misskey agent chat (GAL-style replies / session management)
@@ -397,14 +398,15 @@ See `docs/ARCHITECTURE.md` for more implementation details.
 | `docs/INTERACTION.md` | Local interaction rules (gestures, lifecycles and mutual exclusion) |
 | `docs/ACTIONS.md` | Motion integration guide (self-authored motion constraints + re-measuring the margin) |
 | `docs/MODEL.md` | Model capability map (parameters / physics chains / value-range pitfalls) |
-| `docs/AI-API.md` | PetAI external API (expressions / emotion / motions / gaze + event bus) |
+| `docs/AI-API.md` | PetAI external API (expressions / motions / states / gaze + event bus) |
 | `docs/EMBED.md` | Web embed build used on the official site |
 | `CHANGELOG.md` | Version history |
 
 ### Motion Library & Assets
 
-- **Motions**: the 13 motions under `redesign/ui/assets/live2d/aliya/motions/` cover idle, emotion, gaze look-around / daydream and event reactions. They are motion3.json files authored for the current Aliya model and generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`). Gaze motions enter the corresponding random pool only after gaze release; event reactions never enter the ordinary idle pool.
-- **Expressions & emotion**: 14 exp3.json expressions (generated by `gen-expressions.py`) plus an emotion engine (mood → default expression, weighted motion selection, natural decay), exposed to AI/automation via the `window.petAI` semantic API (see `docs/AI-API.md`); the settings window has a matching "Expressions & Emotion" panel.
+- **Motions**: the 17 motions under `redesign/ui/assets/live2d/aliya/motions/` cover idle, emotion, gaze look-around / daydream and event reactions. They are motion3.json files authored for the current Aliya model and generated by `redesign/tools/gen-motions.py` (design notes and constraints in `docs/ACTIONS.md`). Gaze motions enter the corresponding random pool only after gaze release; event reactions never enter the ordinary idle pool.
+- **Expressions & states**: 14 exp3.json expressions (generated by `gen-expressions.py`) plus 9 states (default expression + idle motion pool, defined in `src/catalog.ts`), exposed to AI/automation via the `window.petAI` semantic API (see `docs/AI-API.md`); the settings window has a matching "Expressions & States" panel.
+- **Interaction reaction groups**: clicks on 25 body regions, repeated clicks, dragging, petting and random lines all play reaction groups (line + expression + motion together), stored in `assets/interaction/reactions.json` (see `docs/INTERACTION.md`).
 
 ### License & Notices
 
