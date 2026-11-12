@@ -13,7 +13,9 @@
   align-items: center;
   gap: 9px;
   box-sizing: border-box;
-  max-width: min(420px, calc(100% - 32px));
+  /* left:50% 会把收缩宽度限在半屏，长文案折成窄条；按内容最大宽排版，再由 max-width 收住。 */
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
   padding: 9px 16px 9px 14px;
   border: 1px solid var(--al-line-strong);
   border-radius: var(--al-r-pill);
@@ -43,3 +45,13 @@
 .al-toast[data-kind="success"] .al-toast-dot { background: var(--al-success); }
 .al-toast[data-kind="error"] .al-toast-dot { background: var(--al-danger); }
 .al-toast-text { min-width: 0; overflow-wrap: anywhere; }
+
+/* 聊天界面底部是输入框：提示改放顶部，不遮输入。
+   Windows 聊天窗的卡片上方是透明穿透区；Android 主界面顶部是角色头顶留白。 */
+body.chat-window .al-toast,
+body.android-main .al-toast {
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+}
+body.chat-window .al-toast.in, body.android-main .al-toast.in { --al-rise: -8px; }
+body.chat-window .al-toast.out, body.android-main .al-toast.out { --al-sink: -4px; }

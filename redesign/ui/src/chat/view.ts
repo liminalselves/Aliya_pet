@@ -12,6 +12,7 @@ import { buildStickerResolver, normalizeCharacterStickers, fetchCustomEmojis } f
 import type { MskApiCaller } from './rendering/types';
 import { openUrl, platform, shellAction } from '../platform';
 import { loadSettings } from '../settings';
+import { showToast } from '../toast';
 import './chat.css';
 
 /** 会话列表用的简短相对时间。 */
@@ -140,7 +141,7 @@ export class ChatView {
       else if (platform === 'android') shellAction('open-settings');
     };
     this.get('.app-settings').hidden = platform === 'web';
-    this.get('.stop').onclick = () => { this.controller.stop(); this.status.textContent = '已停止等待；服务器可能仍在生成，可在记录中刷新。'; this.reportLayout(); };
+    this.get('.stop').onclick = () => { this.controller.stop(); showToast('已停止等待，回复可能稍后出现在记录里'); };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     const picker = this.get<HTMLInputElement>('.attach-input');
     this.get('.attach').onclick = () => { if (!this.attachBlocked()) { this.invalidateCapture(); picker.click(); } };
@@ -181,7 +182,7 @@ export class ChatView {
       const files = Array.from(e.dataTransfer?.files ?? []);
       const image = files.find(f => f.type.startsWith('image/'));
       if (image) this.setAttachment(image);
-      else if (files.length) { this.status.textContent = '只能发送图片。'; this.reportLayout(); }
+      else if (files.length) showToast('只能发送图片。', { kind: 'error' });
     });
     // 落在输入框外的文件不让 WebView 直接打开导航走。
     window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
@@ -345,8 +346,8 @@ export class ChatView {
     if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('hide_chat')).catch(() => {});
   }
   /**
-   * 输入区状态：empty 灰化发送键；busy 让停止键原位替换发送键（chat.css .composer-action）；
-   * errored 驱动状态行样式。占位符随屏态/等待态切换，连接与会话屏禁用，等待回复时只读
+   * 输入区状态：empty 灰化发送键；busy 让停止键原位替换发送键（chat.css .composer-action）。
+   * 占位符随屏态/等待态切换，连接与会话屏禁用，等待回复时只读
    * （保留焦点，回复落地即可接着打字）。
    */
   private syncComposerState(): void {
@@ -360,7 +361,6 @@ export class ChatView {
     const remove = this.composer.querySelector<HTMLButtonElement>('.remove-attachment');
     if (remove) remove.disabled = this.uploading || busy;
     this.composer.classList.toggle('busy', busy);
-    this.composer.classList.toggle('errored', !busy && !!this.controller.error);
     this.input.disabled = !ready;
     this.input.readOnly = ready && (busy || this.uploading);
     const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
@@ -462,15 +462,21 @@ export class ChatView {
     document.body.style.setProperty('--chat-composer-height', `${composerHeight}px`);
     if (this.replyActive && this.playing && !this.typewriter?.typing) this.lockPanel();
   }
-  private showConnect(message = ''): void {
+  /** 连接失败：回到连接屏，原因走轻提示（连接屏的状态行只放进行中的状态）。 */
+  private connectFailed(e: unknown): void {
+    this.showConnect();
+    showToast(this.error(e), { kind: 'error' });
+  }
+  /** status 只用于进行中的状态（恢复连接、等待授权），一次性结果走轻提示。 */
+  private showConnect(status = ''): void {
     this.screen = 'connect'; this.clearRendering();
     this.syncComposerState();
     this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
-    this.get('.auth-status').textContent = message;
+    this.get('.auth-status').textContent = status;
     this.get('.authorize').onclick = () => { void this.login(); };
     this.get('.reconnect').hidden = !this.auth.token;
     this.get('.reconnect').onclick = () => { void this.bootstrap(); };
-    this.get('.cancel-auth').onclick = () => { this.operation?.abort(); this.showConnect('已取消。'); };
+    this.get('.cancel-auth').onclick = () => { this.operation?.abort(); this.showConnect(); showToast('已取消授权。'); };
     this.get<HTMLFormElement>('.manual').onsubmit = e => { e.preventDefault(); void this.login(this.get<HTMLInputElement>('.manual input').value); };
     this.showPanel('连接');
     this.animateContent('stagger');
@@ -491,7 +497,7 @@ export class ChatView {
       try { await this.auth.validateSaved(signal); } catch (e) { prefetch.abort(); throw e; }
       if (signal.aborted) { prefetch.abort(); return; }
       await this.loadSessions(true, sessions);
-    } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
+    } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
   private async login(token?: string): Promise<void> {
     const signal = this.reset(); this.showConnect('等待授权……');
@@ -499,7 +505,7 @@ export class ChatView {
     try {
       if (token !== undefined) await this.auth.loginManual(token, signal); else await this.auth.loginBrowser(signal);
       if (!signal.aborted) await this.loadSessions();
-    } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
+    } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
   private async loadSessions(restore = false, prefetched?: Promise<MskSession[]>): Promise<void> {
     const signal = this.reset(); this.screen = 'sessions';
@@ -545,8 +551,7 @@ export class ChatView {
         } catch (e) {
           if (!signal.aborted) {
             create.disabled = false;
-            const error = document.createElement('p'); error.className = 'auth-status'; error.textContent = this.error(e);
-            actions.querySelector('.auth-status')?.remove(); actions.append(error);
+            showToast(this.error(e), { kind: 'error' });
           }
         }
       };
@@ -558,7 +563,7 @@ export class ChatView {
       this.content.append(actions);
       // 加载占位→列表一次性成型：不换屏只换内容，纯淡入盖住替换帧，不重放面板入场。
       this.animateContent('stagger');
-    } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
+    } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
   private sessionKey(): string { return mskSessionKey(this.auth.savedUser()?.id ?? 'current'); }
   private async enterSession(session: MskSession): Promise<void> {
@@ -599,11 +604,11 @@ export class ChatView {
       } catch { /* Optional storage. */ }
       this.notify();
       void this.applyControlRequest();
-    } catch (e) { if (!signal.aborted) this.showConnect(this.error(e)); }
+    } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
   private disconnect(): void {
     this.reset(); this.auth.logout(); this.activeSession = null;
-    this.controller.replaceHistory([]); this.input.value = ''; this.setAttachment(null); this.showConnect('已退出账号。'); this.notify();
+    this.controller.replaceHistory([]); this.input.value = ''; this.setAttachment(null); this.showConnect(); showToast('已退出账号。', { kind: 'success' }); this.notify();
   }
   private attachBlocked(): boolean {
     return this.screen !== 'ready' || this.controller?.busy === true || this.uploading;
@@ -656,7 +661,10 @@ export class ChatView {
       this.setAttachment(blob, 'screen');
       if (!this.input.value.trim()) { this.input.value = '看看我现在在干什么？'; this.syncComposerState(); }
     } catch (e) {
-      if (current()) this.status.textContent = `截图失败：${e instanceof Error ? e.message : String(e)}`;
+      if (current()) {
+        this.status.textContent = '';
+        showToast(`截图失败：${e instanceof Error ? e.message : String(e)}`, { kind: 'error' });
+      }
     } finally {
       if (version === this.captureVersion) {
         this.capturing = false;
@@ -673,13 +681,12 @@ export class ChatView {
     const box = this.get('.composer-attachment');
     const state = this.get('.attachment-state');
     state.textContent = ''; box.classList.remove('failed', 'uploading');
-    if (file && !file.type.startsWith('image/')) { this.status.textContent = '只能发送图片。'; file = null; }
-    else if (file && file.size > MAX_UPLOAD_BYTES) { this.status.textContent = '图片太大了（上限 20MB）。'; file = null; }
+    if (file && !file.type.startsWith('image/')) { showToast('只能发送图片。', { kind: 'error' }); file = null; }
+    else if (file && file.size > MAX_UPLOAD_BYTES) { showToast('图片太大了（上限 20MB）。', { kind: 'error' }); file = null; }
     if (file) {
       const fileName = file instanceof File && file.name ? file.name : `${name}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
       this.attachment = { blob: file, name: fileName, url: URL.createObjectURL(file), uploaded: null };
       this.get<HTMLImageElement>('.composer-attachment img').src = this.attachment.url;
-      if (this.status.textContent === '只能发送图片。' || this.status.textContent === '图片太大了（上限 20MB）。') this.status.textContent = '';
     }
     const show = !!this.attachment;
     if (show && box.hidden) { box.hidden = false; box.classList.remove('attach-in'); void box.offsetWidth; box.classList.add('attach-in'); }
@@ -715,7 +722,7 @@ export class ChatView {
       } catch (e) {
         if (sequence !== this.sequence || this.attachment !== attachment) return;
         box.classList.add('failed'); state.textContent = '上传失败';
-        this.status.textContent = this.error(e);
+        showToast(this.error(e), { kind: 'error' });
         return;
       } finally {
         if (sequence === this.sequence) { this.uploading = false; box.classList.remove('uploading'); this.syncComposerState(); }
@@ -733,8 +740,9 @@ export class ChatView {
     if (c.busy) this.invalidateCapture();
     this.get<HTMLButtonElement>('.send').disabled = c.busy || this.screen !== 'ready';
     this.get<HTMLButtonElement>('.stop').disabled = !c.busy;
-    // 等待提示在输入框占位里显示（等待期间不可输入）；状态行只留停止/错误等需要留意的信息。
-    this.status.textContent = c.busy ? '' : c.error ? '回复未完成' : this.status.textContent === '回复未完成' ? '' : this.status.textContent;
+    // 等待提示在输入框占位里显示（等待期间不可输入）；失败原因由回复面板的「未完成」页展示。
+    // 状态行只留进行中的状态（截图中），一次性反馈统一走轻提示。
+    if (c.busy) this.status.textContent = '';
     this.syncComposerState();
     if (this.screen === 'ready' && this.lastBusy && !c.busy) {
       if (c.latest?.role === 'assistant' && c.latest.status === 'complete' && c.latest.id !== this.lastAnswer) {
@@ -1023,7 +1031,7 @@ export class ChatView {
       this.historyMayHaveMore = list.length >= HISTORY_FETCH_LIMIT;
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
-    } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
+    } catch (e) { if (seq === this.sequence) showToast(this.error(e), { kind: 'error' }); }
   }
   private async applyControlRequest(): Promise<void> {
     if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;
@@ -1051,7 +1059,7 @@ export class ChatView {
           if (source) message = { id: source.id, messageId: source.id, role: 'assistant', text: source.content, file: source.file, status: 'complete' };
         }
         if (!message || message.role !== 'assistant') {
-          this.status.textContent = '这条回复已删除，无法重新播放。';
+          showToast('这条回复已删除，无法重新播放。', { kind: 'error' });
           return;
         }
         this.setOpen(true);
@@ -1083,8 +1091,8 @@ export class ChatView {
       }
       this.animateContent('stagger');
       if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
-      else this.status.textContent = '目标消息已删除或不在可见记录中。';
-    } catch (e) { if (seq === this.sequence) this.status.textContent = this.error(e); }
+      else showToast('目标消息已删除或不在可见记录中。', { kind: 'error' });
+    } catch (e) { if (seq === this.sequence) showToast(this.error(e), { kind: 'error' }); }
     finally {
       this.controlRequestActive = false;
       // 处理期间写入的新请求被入口守卫跳过，这里补消费；同一条不重复进

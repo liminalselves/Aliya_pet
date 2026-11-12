@@ -275,7 +275,7 @@ function refreshControls(): void {
 }
 
 // ---- 表情与状态 ----（表情 = 临时预览；状态 = 持续保持；Android 经壳桥转发）
-// 「自动」键名为空串：深夜困倦、其余平静；手动选择一直保持到选回自动。
+// 「自动」键名为空串，当前自动即平静（见 state.ts autoStateAt）；手动选择一直保持到选回自动。
 const stateButtons = new Map<string, HTMLButtonElement>();
 let manualState = '';
 
@@ -312,7 +312,7 @@ function refreshStateHighlight(): void {
   // 状态（持续保持）
   const stateHint = document.createElement('div');
   stateHint.className = 'hint';
-  stateHint.textContent = '状态（一直保持的表情与待机动作；自动时深夜困倦，其余时间平静）';
+  stateHint.textContent = '状态（一直保持的表情与待机动作；自动时为平静）';
   box.appendChild(stateHint);
   const stateGrid = document.createElement('div');
   stateGrid.className = 'grid';
@@ -958,17 +958,13 @@ if (platform === 'android') {
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
 
-  // 检查更新：手动入口不看「跳过/稍后」抑制；结果就地一行展示。
+  // 检查更新：手动入口不看「跳过/稍后」抑制；结果走统一轻提示。
   // Windows 弹独立 update 窗口（pet 窗口透明不能画 UI）；Android 本页内模态。
   const checkRow = document.createElement('div');
   checkRow.className = 'row';
   const checkLab = document.createElement('div');
   checkLab.className = 'label';
   checkLab.textContent = '软件更新';
-  const checkSub = document.createElement('span');
-  checkSub.className = 'sub';
-  checkSub.setAttribute('role', 'status');
-  checkLab.appendChild(checkSub);
   const checkBtn = document.createElement('button');
   checkBtn.className = 'act';
   checkBtn.type = 'button';
@@ -976,14 +972,14 @@ if (platform === 'android') {
   checkBtn.addEventListener('click', async () => {
     if (checkBtn.disabled) return;
     checkBtn.disabled = true;
-    checkSub.textContent = '正在检查…';
+    checkBtn.textContent = '正在检查…';
     try {
       const result = await checkForUpdate(
         platform === 'android' ? 'android' : 'windows',
         __APP_VERSION__
       );
       if (result.updateAvailable) {
-        checkSub.textContent = `可更新到 v${result.latest}`;
+        showToast(`发现新版本 v${result.latest}`);
         if (platform === 'tauri') {
           const { invoke } = await import('@tauri-apps/api/core');
           await invoke('show_update', { payload: result });
@@ -991,12 +987,13 @@ if (platform === 'android') {
           openUpdateModal(result);
         }
       } else {
-        checkSub.textContent = `已是最新版本 v${result.latest}`;
+        showToast(`已是最新版本 v${result.latest}`, { kind: 'success' });
       }
     } catch {
-      checkSub.textContent = '检查失败，请稍后重试';
+      showToast('检查更新失败，请稍后重试', { kind: 'error' });
     } finally {
       checkBtn.disabled = false;
+      checkBtn.textContent = '检查更新';
     }
   });
   checkRow.append(checkLab, checkBtn);

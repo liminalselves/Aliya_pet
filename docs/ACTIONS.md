@@ -177,8 +177,8 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
    TotalPointCount = 1 + Linear×1 + Bezier×3，保留 `hasConsistency()` 校验。
 5. `Param33/34/35` 是整套特殊眼型选择器，不可中间值渐变；motion 只写 0 复位，
    运行时最后负责互斥。`Param32` 是生气阴影，不是脸红。
-6. 眼球 XY 的真实范围为 ±30，而不是惯例 ±1；动作与指针跟随走现有 `GazeController`
-   混合和径向钳制。轻笑眼（≤0.4）只用小视线（≤±5），满笑眼（≥0.7）眼球居中。
+6. 眼球 XY 的真实范围为 ±30，而不是惯例 ±1；动作播放期间眼球只由动作曲线决定（指针跟随
+   与表情注视偏移让位，见 `AI-API.md`），仍经 `GazeController` 的径向钳制。轻笑眼（≤0.4）只用小视线（≤±5），满笑眼（≥0.7）眼球居中。
 7. `stretch` 闭眼保持使用 EyeOpen=0、EyeBallXY=0；EyeOpen=0.1 在此模型仍露紫色虹膜，
    叠加笑眼会产生夹层。`doubt` 起止眼开度为默认 1，不能用零值 hold 复位眼开度。
    连点触发疑惑时，程序化反应只做头部轻缩、不接管眼睛，眨眼与眯眼全部来自 `doubt` 曲线；

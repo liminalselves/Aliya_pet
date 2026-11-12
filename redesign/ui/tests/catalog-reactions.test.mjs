@@ -61,25 +61,23 @@ test('状态的默认表情存在，待机池只含 Live2D 动作且权重为正
   }
 });
 
-test('状态引擎：自动按时段，手动优先且一直保持，回到自动后跟随时段', () => {
+test('状态引擎：自动恒为平静（深夜困倦暂停），手动优先且一直保持，可回到自动', () => {
   const { StateEngine, autoStateAt } = load('state');
   const at = h => new Date(2026, 10, 10, h, 0);
-  assert.equal(autoStateAt(at(10)), 'neutral');
-  assert.equal(autoStateAt(at(23)), 'sleepy');
-  assert.equal(autoStateAt(at(2)), 'sleepy');
-  let now = at(10); const faces = [], changes = [];
+  for (const h of [2, 10, 23]) assert.equal(autoStateAt(at(h)), 'neutral', `${h} 点自动不困倦`);
+  let now = at(23); const faces = [], changes = [];
   const engine = new StateEngine({ startExpression: name => { faces.push(name); return true; } }, () => now);
   engine.onChanged(s => changes.push([s.name, s.manual]));
   assert.deepEqual(plain(engine.current), { name: 'neutral', manual: null });
-  now = at(23); engine.tick();
-  assert.equal(engine.current.name, 'sleepy'); assert.equal(faces.at(-1), 'sleepy');
-  assert.ok(engine.setManual('happy'));
+  engine.tick(); assert.deepEqual(changes, [], '自动下时段推进不切换');
+  assert.ok(engine.setManual('sleepy')); assert.equal(faces.at(-1), 'sleepy', '手动仍可选困倦');
   now = at(10); engine.tick();
-  assert.deepEqual(plain(engine.current), { name: 'happy', manual: 'happy' }, '手动选择不被时段覆盖');
+  assert.deepEqual(plain(engine.current), { name: 'sleepy', manual: 'sleepy' }, '手动选择一直保持');
   assert.equal(engine.setManual('cheerful'), false, '未知状态被拒绝');
   engine.setManual(null);
   assert.deepEqual(plain(engine.current), { name: 'neutral', manual: null });
-  assert.deepEqual(changes, [['sleepy', null], ['happy', 'happy'], ['neutral', null]]);
+  assert.equal(faces.at(-1), null, '回到自动恢复平静脸');
+  assert.deepEqual(changes, [['sleepy', 'sleepy'], ['neutral', null]]);
 });
 
 test('反应组数据合规：台词必填、表情动作至少一个、引用全部存在，区域都有点击反应', () => {

@@ -23,10 +23,11 @@ loadParameters → 动作 → saveParameters → 调度器(眨眼→表情→呼
 → GazeController → OverlayLayer → model.update
 ```
 
-关键规则：**眼球的写入者只有 GazeController 与动作曲线**（动作播放时
-跟随权重平滑交挖）；表情不直写眼球——注视偏移（垂眼/回避/斜眼）声明在
-`gaze.ts EXPRESSION_GAZE`，与指针跟随合成后统一平滑与钳制（±20 安全
-行程）。程序化效果（猫耳/抬手）走 `overlay.ts` 通道，晚于物理求值。
+关键规则：**眼球的写入者只有 GazeController 与动作曲线**。任何动作播放期间
+（待机、互动、AI 指令、设置试放；状态只设默认表情，不算动作）头部与眼球都完全交给
+动作曲线，指针跟随与表情注视偏移让位，播完约 0.2s 时间常数淡回跟随；表情不直写眼球——
+注视偏移（垂眼/回避/斜眼）声明在 `gaze.ts EXPRESSION_GAZE`，与指针跟随合成后统一平滑
+与钳制（±20 安全行程）。程序化效果（猫耳/抬手）走 `overlay.ts` 通道，晚于物理求值。
 
 ## API 一览
 
@@ -47,7 +48,7 @@ petAI.state().actions                  // 可用动作名
 // 状态：默认表情 + 待机动作池；手动指定后一直保持
 petAI.states()                         // 定义列表
 petAI.setState('sleepy')               // 手动指定
-petAI.setState(null)                   // 回到自动（深夜困倦，其余平静）
+petAI.setState(null)                   // 回到自动（当前为平静）
 
 // 视线（AI 引导注意力）
 petAI.gaze(-0.8, 0.2)                  // -1..1，x右y上

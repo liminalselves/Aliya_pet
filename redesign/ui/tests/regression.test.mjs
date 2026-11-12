@@ -235,12 +235,16 @@ test('受击和无语恢复专用眼型，切换与清除始终互斥且无中�
  }
 });
 function gaze(){const values=new Map();return {controller:new GazeController({updateParameters(){}},'x','y'),model:{getParameterValueById:id=>values.get(id)??0,setParameterValueById:(id,v)=>values.set(id,v),addParameterValueById:(id,v)=>values.set(id,(values.get(id)??0)+v)},values}}
-test('动作期间持续跟随；交接不会叠加动作残值',()=>{
- const {controller,model,values}=gaze();controller.setTarget(1,.5);
- for(let i=0;i<120;i++){values.set('x',-18);values.set('y',0);controller.update(model,1/30,{motionActive:true,reduction:1})}
- assert.ok(values.get('x')>17);assert.ok(Math.abs(values.get('y'))<.01);
- controller.clearTarget();for(let i=0;i<120;i++){values.set('x',-10);controller.update(model,1/30,{motionActive:true,reduction:1})}
- assert.ok(Math.abs(values.get('x')+10)<.01);
+test('动作期间眼部完全交给动作（有指针目标与表情偏移也不推偏），播完平滑淡回跟随',()=>{
+ const {controller,model,values}=gaze();controller.setTarget(1,.5);controller.setExpression('shy');
+ for(let i=0;i<120;i++){values.set('x',-14);values.set('y',4);controller.update(model,1/30,{motionActive:true,reduction:1})}
+ assert.ok(Math.abs(values.get('x')+14)<.01&&Math.abs(values.get('y')-4)<.01,`动作眼球原样保留 ${values.get('x')},${values.get('y')}`);
+ // 正式动作曲线播完前都回到中性（见「完整默认复位」测试），这里同样先回中再结束动作。
+ for(let i=1;i<=30;i++){values.set('x',-14*(1-i/30));values.set('y',4*(1-i/30));controller.update(model,1/30,{motionActive:true,reduction:1})}
+ let prev=values.get('x');
+ for(let i=0;i<120;i++){values.set('x',0);values.set('y',0);controller.update(model,1/30,{motionActive:false,reduction:1});
+  assert.ok(Math.abs(values.get('x')-prev)<4,'交接不跳变');prev=values.get('x')}
+ assert.ok(values.get('x')>17,'动作结束后恢复跟随');
 });
 test('全部表情角落注视受径向行程限制；非法输入不污染后续帧',()=>{
  for(const name of readdirSync(new URL('assets/live2d/aliya/expressions/',root))){

@@ -1,11 +1,12 @@
 /**
  * 状态引擎：桌宠稳定保持的「默认表情 + 待机动作池」（定义见 catalog.ts STATES）。
- * 手动选择优先并一直保持，选回「自动」后按时段决定：深夜/凌晨困倦，其余平静。
+ * 手动选择优先并一直保持，选回「自动」后为平静（按时段自动困倦已暂停，见 autoStateAt）。
  * MSK 不干预状态；聊天表情、互动表情都只是临时覆盖，结束后回到状态默认表情。
  */
 
 import { STATE_BY_NAME, type StateDef } from './catalog';
-import { timeScene } from './dialogue/dialogue';
+// 恢复自动困倦时一并取消注释（见 autoStateAt 的 TODO）。
+// import { timeScene } from './dialogue/dialogue';
 
 export interface StateHost {
   startExpression(name: string | null): boolean;
@@ -20,10 +21,14 @@ export interface StateSnapshot {
 
 export type StateListener = (state: StateSnapshot, previous: string) => void;
 
-/** 自动规则：只看本地时段。 */
-export function autoStateAt(now: Date): string {
-  const scene = timeScene(now);
-  return scene === 'late_night' || scene === 'deep_night' ? 'sleepy' : 'neutral';
+/**
+ * 自动规则：当前恒为平静。
+ * TODO(待办)：深夜/凌晨自动困倦暂停——sleepy 表情整段眯眼、观感差，等美术做出专属困倦动画后再恢复下面的时段规则。
+ */
+export function autoStateAt(_now: Date): string {
+  // const scene = timeScene(_now);
+  // return scene === 'late_night' || scene === 'deep_night' ? 'sleepy' : 'neutral';
+  return 'neutral';
 }
 
 export class StateEngine {

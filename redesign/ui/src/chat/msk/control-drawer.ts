@@ -3,6 +3,7 @@ import { MSK_BASE, MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './config';
 import { CONTROL_REQUEST_KEY, type ControlRequest } from './control-bridge';
 import { MskClient } from './client';
 import { openUrl } from '../../platform';
+import { showToast } from '../../toast';
 import './control.css';
 
 export interface AgentControlHandle {
@@ -92,7 +93,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
       drawer.querySelector('.control-session')!.textContent = name;
       refreshSummary();
       await publish('refresh');
-    } catch { if (drawer.open && revision === currentRevision) { status.className = 'control-status error'; status.textContent = '配置已保存，但会话信息刷新失败。'; } }
+    } catch { if (drawer.open && revision === currentRevision) showToast('配置已保存，但会话信息刷新失败。', { kind: 'error' }); }
   };
   const onEvent = (event: ControlEvent) => {
     if (!drawer.open) return;
@@ -108,7 +109,7 @@ export function mountAgentControls(container: HTMLElement, openRecords: () => Pr
       try { const url = new URL(event.url, MSK_BASE); if (['http:', 'https:'].includes(url.protocol)) void openUrl(url.href); } catch { /* Ignore malformed navigation. */ }
     }
     if (['misskey:agent-control:navigate-message', 'misskey:agent-control:navigate-context-divider'].includes(event.type) && typeof event.messageId === 'string') {
-      void publish('navigate', event).catch(() => { status.textContent = '无法打开聊天记录。'; });
+      void publish('navigate', event).catch(() => { showToast('无法打开聊天记录。', { kind: 'error' }); });
     }
     if (event.type === 'misskey:agent-control:close-requested') {
       if (event.reason === 'session-deleted') {

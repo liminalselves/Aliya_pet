@@ -10,7 +10,7 @@
  *   (头部跟随 + 眼球跟随 + 表情注视偏移[仅眼] → 总钳制)
  *
  * 所有权规则（写眼球的只有这里与动作曲线）：
- *   头部让动作控制；眼球有目标时跟随，无目标时让动作控制。
+ *   动作播放时头部与眼球都让动作控制（含眼部动画），播完再平滑淡回跟随。
  *   抚摸期间跟随增益 ×0.25。
  *
  * 性能：无每帧分配，全部标量字段复用。
@@ -127,9 +127,10 @@ export class GazeController {
     this._weight +=
       (weightTarget - this._weight) *
       (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
-    // 有指针目标时眼球持续跟随；头部仍让动作控制。无目标时淡回动作视线。
+    // 动作播放期间眼球也完全交给动作曲线（张望、摇头、鼓腮等都有自己的眼球行程），
+    // 即使有指针目标也不跟随；动作结束后再淡回跟随。状态只设默认表情，不算动作。
     this._eyeWeight +=
-      ((this._active || !opts.motionActive ? 1 : 0) - this._eyeWeight) *
+      ((opts.motionActive ? 0 : 1) - this._eyeWeight) *
       (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
 
     // 2) 指针目标平滑（无目标时回中）
@@ -163,11 +164,12 @@ export class GazeController {
         18 * this._y * this._eyeWeight * opts.reduction
     );
 
-    // 5) 眼球：叠加表情偏移（仅眼）→ 总钳制（跟随 18×follow + 偏移，
-    //    与动作注视曲线的交挖瞬态都在安全行程内）
-    if (Math.abs(this._exprX) > 0.01 || Math.abs(this._exprY) > 0.01) {
-      model.addParameterValueById(this._idEyeBallX, this._exprX);
-      model.addParameterValueById(this._idEyeBallY, this._exprY);
+    // 5) 眼球：叠加表情偏移（仅眼，同样随动作交挖让位，动作眼球不被推偏）→ 总钳制
+    //    （跟随 18×follow + 偏移，与动作注视曲线的交挖瞬态都在安全行程内）
+    const exprX = this._exprX * this._eyeWeight, exprY = this._exprY * this._eyeWeight;
+    if (Math.abs(exprX) > 0.01 || Math.abs(exprY) > 0.01) {
+      model.addParameterValueById(this._idEyeBallX, exprX);
+      model.addParameterValueById(this._idEyeBallY, exprY);
     }
     const openness = opts.eyeOpenness ?? 1;
     const limit = GazeController.EYE_LIMIT * Math.min(1, Math.max(0, openness));

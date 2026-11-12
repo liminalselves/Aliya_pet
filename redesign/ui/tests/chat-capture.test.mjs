@@ -25,7 +25,7 @@ const image = name => new File(['image'], name, { type: 'image/png' });
 // Real ChatView constructor, event handlers and async methods; only browser/native/network boundaries are stubbed.
 function harness({ reducedMotion = true } = {}) {
   const elements = new Map(), timers = new Map(), windowEvents = new Map();
-  const captures = [], encodings = [], calls = [], revoked = [], urls = [], sent = [], uploads = [];
+  const captures = [], encodings = [], calls = [], revoked = [], urls = [], sent = [], uploads = [], toasts = [];
   let nextTimer = 0;
   class Element {
     constructor(selector = '') {
@@ -91,6 +91,7 @@ function harness({ reducedMotion = true } = {}) {
   }
   const imports = {
     '../platform': { platform: 'tauri' },
+    '../toast': { showToast: (message, options = {}) => toasts.push({ message, kind: options.kind ?? 'info' }) },
     './msk/config': { mskSessionKey: () => 'session' },
     './msk/control-bridge': { CONTROL_REQUEST_KEY: 'control', readControlRequest: store => JSON.parse(store?.getItem('control') ?? 'null') },
     './msk/client': { MskClient, MAX_UPLOAD_BYTES: 20 * 1024 * 1024 },
@@ -122,7 +123,7 @@ function harness({ reducedMotion = true } = {}) {
     encodings[index].callback(blob); await flush(); return blob;
   };
   const windowEvent = async (name, event = {}) => { for (const fn of windowEvents.get(name) ?? []) fn(event); await flush(); };
-  return { view, get, controller, storage, captures, encodings, calls, revoked, urls, sent, uploads, timers,
+  return { view, get, controller, storage, captures, encodings, calls, revoked, urls, sent, uploads, timers, toasts,
     capture, encode, finish, windowEvent,
     runTimer(ms) { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.fn(); } },
   };
@@ -275,7 +276,8 @@ for (const failure of ['native', 'short header', 'invalid pixels', 'encode']) te
   else { await h.encode(); await h.finish(0, null); }
   assert.equal(h.view.attachment, attachment); assert.equal(h.view.attachment.blob, original);
   assert.equal(h.get('textarea').value, '保留文本'); assert.equal(h.get('.composer-attachment').hidden, false);
-  assert.match(h.get('.chat-status').textContent, /^截图失败：/);
+  assert.equal(h.get('.chat-status').textContent, '', '进行中的状态已清除');
+  assert.match(h.toasts.at(-1).message, /^截图失败：/); assert.equal(h.toasts.at(-1).kind, 'error');
   assert.equal(h.get('.capture-screen').disabled, false); assert.deepEqual(h.revoked, []);
   assert.equal(h.sent.length, 0); assert.equal(h.uploads.length, 0);
 });
@@ -287,7 +289,7 @@ test('附件发送上传失败后仍保留草稿，旧截图不能替换可重�
   assert.equal(h.uploads.length, 1); h.uploads[0].reject(new Error('upload failed')); await flush();
   await h.finish();
   assert.equal(h.view.attachment, attachment); assert.equal(h.get('textarea').value, '待重发');
-  assert.equal(h.get('.attachment-state').textContent, '上传失败'); assert.equal(h.get('.chat-status').textContent, 'upload failed');
+  assert.equal(h.get('.attachment-state').textContent, '上传失败'); assert.deepEqual(h.toasts.at(-1), { message: 'upload failed', kind: 'error' });
   assert.equal(h.get('.capture-screen').disabled, false); assert.equal(h.sent.length, 0);
   h.get('.chat-composer').dispatch('submit'); assert.equal(h.uploads.length, 2);
   assert.equal(h.uploads[1].args[0], attachment.blob); assert.equal(h.uploads[1].args[1], attachment.name);
