@@ -78,6 +78,12 @@ test('状态引擎：自动恒为平静（深夜困倦暂停），手动优先�
   assert.deepEqual(plain(engine.current), { name: 'neutral', manual: null });
   assert.equal(faces.at(-1), null, '回到自动恢复平静脸');
   assert.deepEqual(changes, [['sleepy', 'sleepy'], ['neutral', null]]);
+  // 启动恢复存档的手动状态（安卓悬浮窗与主界面共用同一份），未知名按自动处理。
+  const restoredFaces = [];
+  const restored = new StateEngine({ startExpression: name => { restoredFaces.push(name); return true; } }, () => now, 'shy');
+  assert.deepEqual(plain(restored.current), { name: 'shy', manual: 'shy' });
+  assert.deepEqual(restoredFaces, ['shy']);
+  assert.deepEqual(plain(new StateEngine({ startExpression: () => true }, () => now, 'cheerful').current), { name: 'neutral', manual: null });
 });
 
 test('反应组数据合规：台词必填、表情动作至少一个、引用全部存在，区域都有点击反应', () => {

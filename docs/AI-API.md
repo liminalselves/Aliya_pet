@@ -106,6 +106,8 @@ petAI.gaze(0.3, 0.5);
 - 恢复默认表情 → `tray-action: clear-expression`；
 - 状态按钮 → `tray-action: set-state`（name 为空 = 自动），pet 窗口经 `pet-state`
   事件（Android 为 localStorage `aliya_pet_state`）回推，面板高亮跟随。
+- 手动状态存于 localStorage `aliya_pet_state`，桌宠启动时恢复：重启后保持，
+  Android 主界面与悬浮窗（两个 WebView，同源存储）也因此保持同一状态。
 
 即：**菜单手动控制与 petAI 程序控制共享同一状态源**，互相不冲突、
 界面始终反映真实状态。

@@ -9,8 +9,8 @@ Android 使用共享 TypeScript 前端与 Kotlin 薄壳。聊天与 Windows 复�
   不创建 ChatController/ChatView，不登录、不请求聊天接口，不弹软键盘。
 - **双击悬浮宠进入主界面**。原生按系统双击时间和距离判定；长按、抚摸、
   拖动、多指与取消事件不计作双击。系统限制后台拉起时可从常驻通知进入。
-- **悬浮宠拖动必须长按**：按住不动达到系统长按时长（`getLongPressTimeout`，约 400ms）
-  才由壳接管拖动并震动提示；长按前移出 touchSlop 的手势作废，既不搬窗也不算点击。
+- **悬浮宠按下即可拖**：手指移出 touchSlop 立刻由壳接管拖动，不需要长按；前端声明了抚摸等
+  互动时不拖，手势留给前端。移出 slop 或按满长按时长的手势不算轻点，不参与双击。
   判定在 `OverlayGesturePolicy`（`:app:testOverlayGesturePolicy`）。前端对 Android 触摸
   不再做 5px 拖动判定，只在 16 CSS px 容差内认作轻点，避免快速点按时的手指滚动被吞。
 - **主界面就是完整桌宠**：角色居中，输入框在底部，回复以 GAL 面板向上展开；

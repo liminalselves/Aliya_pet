@@ -36,8 +36,10 @@ export class StateEngine {
   private _name: string;
   private readonly _listeners = new Set<StateListener>();
 
-  constructor(private readonly host: StateHost, private readonly now = () => new Date()) {
-    this._name = autoStateAt(this.now());
+  /** manual：启动时恢复的手动状态（未知名按自动处理）。 */
+  constructor(private readonly host: StateHost, private readonly now = () => new Date(), manual: string | null = null) {
+    this._manual = manual !== null && STATE_BY_NAME.has(manual) ? manual : null;
+    this._name = this._manual ?? autoStateAt(this.now());
     this.host.startExpression(this.definition.expression);
   }
 

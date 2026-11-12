@@ -96,13 +96,6 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragMaxSpeed = 0f
     private var gesturePhase = OverlayGesturePolicy.Phase.VOID
     private var gestureDownTime = 0L
-    /** 按住不动到系统长按时长即接管拖动（手指静止时没有 MOVE，需要定时触发）。 */
-    private val armDrag = Runnable {
-        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING || jsInteracting || displaySettings.ignoresTouch) return@Runnable
-        gesturePhase = OverlayGesturePolicy.Phase.ARMED
-        beginNativeDrag(android.os.SystemClock.uptimeMillis())
-        web.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-    }
     private var windowAttached = false
     /** 贴边归位动画（原生驱动，与 tokens.css --al-ease 同一条曲线）。 */
     private var snapAnimator: ValueAnimator? = null
@@ -251,7 +244,6 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
         if (::web.isInitialized) {
             web.removeCallbacks(restoreTouchable)
-            web.removeCallbacks(armDrag)
             web.destroy()
         }
         super.onDestroy()
@@ -363,8 +355,6 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     tapCandidate = true
                     gesturePhase = OverlayGesturePolicy.Phase.PENDING
                     gestureDownTime = ev.downTime
-                    web.removeCallbacks(armDrag)
-                    web.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout().toLong())
                     dragPointerId = ev.getPointerId(0)
                     dragStartRawX = ev.rawX
                     dragStartRawY = ev.rawY
@@ -384,20 +374,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         val dx = ev.rawX - dragStartRawX
                         val dy = ev.rawY - dragStartRawY
                         val wasPending = gesturePhase == OverlayGesturePolicy.Phase.PENDING
-                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, ev.eventTime - ev.downTime,
-                            dx * dx + dy * dy, touchSlop, ViewConfiguration.getLongPressTimeout().toLong(), !jsInteracting)
-                        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING) web.removeCallbacks(armDrag)
-                        if (gesturePhase == OverlayGesturePolicy.Phase.VOID) {
-                            // 长按前滑开：既不算点击（不参与双击）也不搬窗口，事件照常交给 WebView。
+                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, dx * dx + dy * dy, touchSlop, !jsInteracting)
+                        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING) {
+                            // 移出 slop：不再是轻点（不参与双击）；拖动或交给前端互动。
                             tapCandidate = false
                             lastTapAt = 0L
                         }
-                        // 定时器晚到时由 MOVE 补上接管；拖动从此刻的指针位置起算，不跳。
-                        if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) {
-                            dragLastRawX = ev.rawX
-                            dragLastRawY = ev.rawY
-                            beginNativeDrag(ev.eventTime)
-                        }
+                        // 移出 slop 即接管：从上一采样点起算，不把 slop 那段位移一次性跳过去。
+                        if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) beginNativeDrag(ev.eventTime)
                         val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
                         if (nativeDragging) dragMaxSpeed = maxOf(dragMaxSpeed,
                             kotlin.math.hypot(ev.rawX - dragLastRawX, ev.rawY - dragLastRawY) * 1000f / elapsed)
@@ -423,14 +407,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     tapCandidate = false
                     lastTapAt = 0L
                     // 多指不是拖动：未接管前作废本次手势，已在拖动的继续由首指驱动。
-                    if (gesturePhase == OverlayGesturePolicy.Phase.PENDING) {
-                        gesturePhase = OverlayGesturePolicy.Phase.VOID
-                        web.removeCallbacks(armDrag)
-                    }
+                    if (gesturePhase == OverlayGesturePolicy.Phase.PENDING) gesturePhase = OverlayGesturePolicy.Phase.VOID
                     false
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    web.removeCallbacks(armDrag)
                     val upDx = ev.rawX - dragStartRawX
                     val upDy = ev.rawY - dragStartRawY
                     val tap = ev.actionMasked == MotionEvent.ACTION_UP && tapCandidate && !nativeDragging &&
@@ -550,7 +530,6 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             jsInteracting = false
             tapCandidate = false
             gesturePhase = OverlayGesturePolicy.Phase.VOID
-            web.removeCallbacks(armDrag)
             lastTapAt = 0L
             dragPointerId = -1
         }
