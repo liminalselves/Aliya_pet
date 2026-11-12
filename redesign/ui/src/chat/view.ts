@@ -471,8 +471,11 @@ export class ChatView {
     this.showConnect();
     showToast(this.error(e), { kind: 'error' });
   }
-  /** status 只用于进行中的状态（恢复连接、等待授权），一次性结果走轻提示。 */
-  private showConnect(status = ''): void {
+  /**
+   * status 只用于进行中的状态（恢复连接、等待授权），一次性结果走轻提示。
+   * cancellable：授权流程进行中才可取消；未开始时取消键灰化不可按。
+   */
+  private showConnect(status = '', cancellable = false): void {
     this.screen = 'connect'; this.clearRendering();
     this.syncComposerState();
     this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
@@ -480,7 +483,9 @@ export class ChatView {
     this.get('.authorize').onclick = () => { void this.login(); };
     this.get('.reconnect').hidden = !this.auth.token;
     this.get('.reconnect').onclick = () => { void this.bootstrap(); };
-    this.get('.cancel-auth').onclick = () => { this.operation?.abort(); this.showConnect(); showToast('已取消授权。'); };
+    const cancel = this.get<HTMLButtonElement>('.cancel-auth');
+    cancel.disabled = !cancellable;
+    cancel.onclick = () => { if (cancel.disabled) return; this.operation?.abort(); this.showConnect(); showToast('已取消授权。'); };
     this.get<HTMLFormElement>('.manual').onsubmit = e => { e.preventDefault(); void this.login(this.get<HTMLInputElement>('.manual input').value); };
     this.showPanel('连接');
     this.animateContent('stagger');
@@ -504,7 +509,7 @@ export class ChatView {
     } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
   private async login(token?: string): Promise<void> {
-    const signal = this.reset(); this.showConnect('等待授权……');
+    const signal = this.reset(); this.showConnect('等待授权……', true);
     this.get<HTMLButtonElement>('.authorize').disabled = true;
     try {
       if (token !== undefined) await this.auth.loginManual(token, signal); else await this.auth.loginBrowser(signal);

@@ -127,7 +127,9 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content .btn-primary:active { transform:scale(.96); }
 /* #chat-ui button 的 ID 规则会压过这里的 border/radius，必须 !important。 */
 .gal-content .ghost { height:28px; border:0!important; border-radius:var(--al-r-pill)!important; padding:0 12px!important; background:var(--al-bg-3)!important; font-family:var(--al-font)!important; font-size:12px!important; color:var(--al-text-2); transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
-.gal-content .ghost:hover { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+.gal-content .ghost:hover:not(:disabled) { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+/* 不可用（如未开始授权时的「取消」）：灰字、无悬停与按压反馈 */
+.gal-content .ghost:disabled { color:var(--al-text-4); opacity:.6; pointer-events:none; }
 .reply-error { font-family:var(--al-font); }
 .reply-error p { margin:0 0 10px; color:var(--al-text-2); font-size:12.5px; line-height:1.6; }
 .gal-content .ghost:active { transform:scale(.96); }
