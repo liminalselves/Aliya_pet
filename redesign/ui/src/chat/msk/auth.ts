@@ -14,6 +14,10 @@ export class MskAuth {
     try { this.memoryToken = storage?.getItem(TOKEN_KEY) ?? ''; } catch { /* Memory-only session. */ }
   }
   get token(): string { return this.memoryToken; }
+  /** 存储里的 token（其他页面退出登录后为空）；存储不可用时视为与内存一致。 */
+  storedToken(): string {
+    try { return this.storage?.getItem(TOKEN_KEY) ?? this.memoryToken; } catch { return this.memoryToken; }
+  }
   savedUser(): MskUser | null {
     try { return JSON.parse(this.storage?.getItem(USER_KEY) ?? 'null'); } catch { return null; }
   }

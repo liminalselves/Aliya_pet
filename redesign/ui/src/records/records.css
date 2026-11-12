@@ -75,11 +75,9 @@ button { font: inherit; }
 /* 用户侧：瞳紫淡染，与 Aliya 的腮红名字相对。 */
 /* 用户侧：右对齐，瞳紫淡底，正文黑体（区分谁在说话） */
 .record-user { margin-left: auto; border-radius: var(--al-r-l) var(--al-r-xs) var(--al-r-l) var(--al-r-l); background: var(--al-accent-2-soft); font-family: var(--al-font); font-size: 13.5px; }
-/* 用户消息不占头部行：时间浮在气泡左外侧，悬停才显示 */
-.record-user header { position: absolute; right: calc(100% + 8px); bottom: 6px; min-height: 0; margin: 0; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease); }
-.record-user:hover header, .record-user:focus-within header { opacity: 1; }
+/* 用户消息头部只留时间，右对齐在气泡内（各端一致）。 */
+.record-user header { justify-content: flex-end; }
 .record-user header strong { display: none; }
-@media (hover: none) { .record-user header { position: static; opacity: 1; justify-content: flex-end; margin-bottom: 2px; } }
 
 /* 上下文分界：细线夹文字 */
 .record-system { display: flex; align-items: center; gap: 12px; width: 100%; max-width: none; margin: 18px 0; padding: 0; border-radius: 0; background: none; color: var(--al-text-3); font-family: var(--al-font); font-size: 11.5px; }

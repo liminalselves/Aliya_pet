@@ -98,7 +98,7 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
 }
 
 /**
- * 表演类操作（动作/台词/表情/情绪）。Windows 设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
+ * 表演类操作（动作/台词/表情/状态）。Windows 设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
  * Android 设置页整屏盖住桌宠，发出后先让按钮确认一拍，再滑回主界面让用户看到表演。
  * 桌宠页在设置页下面持续运行，动作在滑出过程中已开始播放。
  */
@@ -859,7 +859,22 @@ if (platform === 'android') {
   const statusSub = document.createElement('span');
   statusSub.className = 'sub';
   statusLab.appendChild(statusSub);
-  statusRow.appendChild(statusLab);
+  // 退出登录：清掉本机 token 与用户资料；聊天页经 storage/focus 事件回到连接屏。
+  const logoutBtn = document.createElement('button');
+  logoutBtn.className = 'act';
+  logoutBtn.textContent = '退出登录';
+  logoutBtn.addEventListener('click', () => {
+    try {
+      localStorage.removeItem(MSK_TOKEN_KEY);
+      localStorage.removeItem(MSK_USER_KEY);
+    } catch {
+      // 存储不可用时本就没有持久登录
+    }
+    agentControls.close();
+    refreshChatInfo();
+    showToast('已退出登录。', { kind: 'success' });
+  });
+  statusRow.append(statusLab, logoutBtn);
   box.appendChild(statusRow);
 
   const sessionRow = document.createElement('div');
@@ -884,6 +899,7 @@ if (platform === 'android') {
     }
     const name = user?.name || user?.username || '';
     statusSub.textContent = token && name ? `已连接：${name}` : '未连接（在聊天窗口中授权）';
+    logoutBtn.hidden = !token;
     let sessionName = '';
     if (user?.id) {
       try {
@@ -1020,9 +1036,9 @@ onStateChanged((s) => {
   refreshStateHighlight();
 });
 
-// Android：桌宠页把状态写入共享 localStorage（跨 WebView 无事件总线），
-// 回到本页/收到 storage 事件时刷新高亮
-if (platform === 'android') {
+// 桌宠页把状态存进共享 localStorage：打开本页即按存档高亮；Android 跨 WebView 无事件总线，
+// 另在回到本页/收到 storage 事件时刷新
+{
   const readState = () => {
     try {
       const s = JSON.parse(localStorage.getItem('aliya_pet_state') ?? 'null') as PetStatePayload | null;

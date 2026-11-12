@@ -2,7 +2,7 @@ import { ChatController, type ChatStorage } from './controller';
 import type { ChatMessage, PerformanceCue } from './types';
 import { Typewriter } from './typewriter';
 import { MskAuth } from './msk/auth';
-import { DEFAULT_MSK_ORIGIN, MSK_BASE, mskSessionKey } from './msk/config';
+import { DEFAULT_MSK_ORIGIN, MSK_BASE, MSK_TOKEN_KEY, mskSessionKey } from './msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from './msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MAX_UPLOAD_BYTES, MskClient, type MskSession } from './msk/client';
 import { MskChatProvider } from './msk/provider';
@@ -213,8 +213,12 @@ export class ChatView {
     this.root.onkeydown = e => { if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); this.hideReply(); } };
     controller.persist = false;
     controller.onChange = () => this.changed();
-    window.addEventListener('storage', e => { if (e.key === CONTROL_REQUEST_KEY) void this.applyControlRequest(); });
+    window.addEventListener('storage', e => {
+      if (e.key === CONTROL_REQUEST_KEY) void this.applyControlRequest();
+      else if (e.key === MSK_TOKEN_KEY) this.syncAuth();
+    });
     window.addEventListener('focus', () => {
+      this.syncAuth();
       // 焦点回归只消化新鲜请求；陈旧的直接清掉，不再补播（见常量注释）。
       const request = readControlRequest(this.storage);
       if (request && Date.now() - request.at > CONTROL_FOCUS_MAX_AGE_MS) {
@@ -559,7 +563,7 @@ export class ChatView {
       const manage = document.createElement('button'); manage.textContent = 'Misskey'; manage.className = 'ghost';
       manage.onclick = () => { void openUrl(`${MSK_BASE}/chat`); }; actions.append(manage);
       const refresh = document.createElement('button'); refresh.textContent = '刷新'; refresh.className = 'ghost'; refresh.onclick = () => { void this.loadSessions(); }; actions.append(refresh);
-      const logout = document.createElement('button'); logout.textContent = '退出账号'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
+      const logout = document.createElement('button'); logout.textContent = '退出登录'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
       this.content.append(actions);
       // 加载占位→列表一次性成型：不换屏只换内容，纯淡入盖住替换帧，不重放面板入场。
       this.animateContent('stagger');
@@ -606,9 +610,15 @@ export class ChatView {
       void this.applyControlRequest();
     } catch (e) { if (!signal.aborted) this.connectFailed(e); }
   }
-  private disconnect(): void {
+  private disconnect(notice = true): void {
     this.reset(); this.auth.logout(); this.activeSession = null;
-    this.controller.replaceHistory([]); this.input.value = ''; this.setAttachment(null); this.showConnect(); showToast('已退出账号。', { kind: 'success' }); this.notify();
+    this.controller.replaceHistory([]); this.input.value = ''; this.setAttachment(null); this.showConnect();
+    if (notice) showToast('已退出登录。', { kind: 'success' });
+    this.notify();
+  }
+  /** 其他页面（设置页）退出登录后对齐：本地存储里的 token 已被清除时回到连接屏。 */
+  syncAuth(): void {
+    if (this.auth.token && !this.auth.storedToken()) this.disconnect(false);
   }
   private attachBlocked(): boolean {
     return this.screen !== 'ready' || this.controller?.busy === true || this.uploading;

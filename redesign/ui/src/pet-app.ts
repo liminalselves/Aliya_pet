@@ -454,7 +454,8 @@ export class PetApp {
     if (this._paused) this._behavior.stop();
 
     // 状态引擎（默认表情 + 待机动作池；手动优先，自动跟随时段）+ AI 对外 API
-    this._stateEngine = new StateEngine(this._model);
+    // 手动状态跨 WebView/重启保持：安卓悬浮窗与主界面是两个页面，共用同一份存档。
+    this._stateEngine = new StateEngine(this._model, undefined, PetApp._savedManualState());
     this._ai = new PetAI({
       model: () => (this._model?.isReady() ? this._model : null),
       stateEngine: () => this._stateEngine,
@@ -586,7 +587,7 @@ export class PetApp {
       void import('@tauri-apps/api/event').then(async events => {
         await events.listen<typeof this._remoteChat>('chat-state', e => {
           this._remoteChat = e.payload; if (e.payload.open) this._bubble?.cancel();
-          // 聊天窗口关闭即结束本轮表演，表情回情绪默认（持久表情不跨会话保留）
+          // 聊天窗口关闭即结束本轮表演，表情回状态默认（持久表情不跨会话保留）
           if (!e.payload.open) this._chatPerformance?.cancel();
           if (this._chatLauncher) {
             this._chatLauncher.classList.toggle('open', e.payload.open);
@@ -1327,13 +1328,21 @@ export class PetApp {
     for (const action of pending) this.onShellAction(action);
   }
 
+  /** 上次保存的手动状态；null = 自动（无存档或存档损坏）。 */
+  private static _savedManualState(): string | null {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('aliya_pet_state') ?? 'null') as { manual?: unknown } | null;
+      return typeof saved?.manual === 'string' && saved.manual ? saved.manual : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** 向设置窗口广播当前状态（「表情与状态」面板高亮同步）。 */
   private _broadcastState(name: string, manual: string | null): void {
     const payload = { state: name, manual };
-    // Android：设置页是另一 WebView，经共享 localStorage 传递（focus/回前台读取）
-    if (platform === 'android') {
-      try { window.localStorage.setItem('aliya_pet_state', JSON.stringify(payload)); } catch { /* 存储不可用则跳过 */ }
-    }
+    // 存档：下次启动与安卓悬浮窗据此恢复手动状态；安卓设置页（另一 WebView）也经它读取高亮。
+    try { window.localStorage.setItem('aliya_pet_state', JSON.stringify(payload)); } catch { /* 存储不可用则跳过 */ }
     if (!this._tauriWindow) return;
     import('@tauri-apps/api/event')
       .then((ev) => {
@@ -1893,7 +1902,7 @@ export class PetApp {
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
 
-      // Android 的触摸拖动只由原生壳长按接管（主界面不可拖）；前端不把短促位移当拖动。
+      // Android 的触摸拖动只由原生壳接管（主界面不可拖）；前端不把短促位移当拖动。
       if (this._dragCandidate && this._leftDown && !handled && !isEmbed && !this._touchClickCandidateActive) {
         if (!this._dragging) {
           const dx = e.screenX - this._downScreenX;
@@ -2216,6 +2225,8 @@ export class PetApp {
       if (this._covered === covered) return;
       this._covered = covered;
       this._syncBackgroundMotion();
+      // 设置页（另一 WebView）可能已退出登录：回到主界面时对齐聊天的连接状态。
+      if (!covered) this._chatView?.syncAuth();
       if (!covered && this._running && !this._paused) {
         this._lastFrameTime = performance.now();
         this._scheduleFrame();

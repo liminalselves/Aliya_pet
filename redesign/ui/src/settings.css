@@ -1,7 +1,7 @@
 /**
  * 设置窗口：系统设置式分组列表。
  * 组题 = 卡片外的小号说明字；卡片内是发线分隔的行；单独操作按钮渲染成带箭头的列表行，
- * 动作/表情/情绪是等宽栅格的轻量按钮。视觉 token 全部取自 styles/tokens.css。
+ * 动作/表情/状态是等宽栅格的轻量按钮。视觉 token 全部取自 styles/tokens.css。
  */
 @import './styles/tokens.css';
 
@@ -78,7 +78,7 @@ h2:first-child { margin-top: 12px; }
 .row { transition: opacity var(--al-t-med) var(--al-ease); }
 .row .sub { display: block; margin-top: 3px; color: var(--al-text-3); font-size: 11.5px; line-height: 1.5; }
 
-/* 卡片内栅格（动作/表情/情绪）与小节说明 */
+/* 卡片内栅格（动作/表情/状态）与小节说明 */
 .card .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
@@ -125,7 +125,7 @@ button.act:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 button.act:disabled { opacity: 0.4; cursor: default; }
 button.act:disabled:hover { background: var(--al-bg-3); }
 
-/* 选中态（当前情绪）：腮红淡底 + 腮红字，比实底更安静 */
+/* 选中态（当前状态）：腮红淡底 + 腮红字，比实底更安静 */
 button.act.active {
   background: var(--al-accent-soft);
   color: var(--al-accent-strong);

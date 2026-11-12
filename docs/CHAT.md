@@ -79,8 +79,8 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   `--al-font`。分区组题用衬线 + 腮红小菱标，不用宽字距灰色小标。
   透明窗口内的面板/输入框保留微透（透出桌面与模型），字号随窗口宽度
   自适应（`.chat-shell` container-type + cqw clamp
-  11.5–13px）；名牌条 25px 高，工具栏保留记录/会话/会话配置/发送/×（退出账号
-  在会话屏内）。按钮分级：主操作 `.btn-primary` 腮红药丸（与发送一致），
+  11.5–13px）；名牌条 25px 高，工具栏保留记录/会话/会话配置/发送/×（退出登录
+  在会话屏内与设置页「聊天 → Misskey 连接」行；设置页退出后聊天页经 storage/focus 回到连接屏）。按钮分级：主操作 `.btn-primary` 腮红药丸（与发送一致），
   次要 `.ghost` 淡边框胶囊（`#chat-ui button` 的 ID 规则会压过类选择器，
   border/radius 需 `!important`）。chat 打开即自动聚焦输入框（仅 tauri，内嵌
   不抢软键盘），composer 有 `:focus-within` 腮红聚焦环；历史角色标签

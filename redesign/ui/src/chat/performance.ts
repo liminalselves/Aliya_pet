@@ -3,7 +3,7 @@ import type { PerformanceCue } from './types';
 export interface PerformanceHost {
   expressions(): string[];
   actions(): string[];
-  /** 当前实际表情（null = 情绪默认）；提供时用于情绪引擎覆盖后重新拿回聊天表情。 */
+  /** 当前实际表情（null = 状态默认）；提供时用于状态切换覆盖后重新拿回聊天表情。 */
   expression?(): string | null;
   express(name: string): void;
   clearExpression(): void;
@@ -45,7 +45,7 @@ export class ChatPerformance {
       this._applied = false;
       return;
     }
-    // host.expression 可用时按实际表情比对：情绪引擎/手动预览覆盖后每帧拿回；
+    // host.expression 可用时按实际表情比对：状态切换/手动预览覆盖后每帧拿回；
     // 不可用时退回 _applied 标记（busy 结束后恢复）。
     const current = this.host.expression?.();
     if (current !== undefined ? current !== this._expression : !this._applied) {
