@@ -306,11 +306,15 @@ mod hit_mask_tests {
 /// 视线跟随不再要求光标悬在窗口上。
 #[cfg(windows)]
 fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, IsWindowVisible};
     std::thread::spawn(move || {
         let mut ignoring: std::collections::HashMap<&str, bool> = Default::default();
         let mut last_emit = (i32::MIN, i32::MIN);
         let mut last_emit_at = std::time::Instant::now();
+        // 窗口句柄在应用生命周期内不变：缓存一次，轮询里直接用 Win32 查询。
+        // tauri 的 is_visible()/hwnd() 每次都要投递到主线程事件循环再等结果，
+        // 60Hz × 2 个窗口的跨线程往返是空闲时主进程 CPU 的主要来源。
+        let mut handles: std::collections::HashMap<&str, isize> = Default::default();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(16));
             let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
@@ -321,7 +325,14 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                 let Some(win) = app.get_webview_window(label) else {
                     continue;
                 };
-                if !win.is_visible().unwrap_or(false) {
+                let hwnd = match handles.get(label) {
+                    Some(&h) => h,
+                    None => match win.hwnd() {
+                        Ok(h) => { handles.insert(label, h.0 as isize); h.0 as isize }
+                        Err(_) => continue,
+                    },
+                };
+                if unsafe { IsWindowVisible(hwnd as _) } == 0 {
                     if ignoring.insert(label, false).unwrap_or(false) {
                         let _ = win.set_ignore_cursor_events(false);
                     }
@@ -338,11 +349,11 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                     }
                 }
                 // pet/chat 均无边框；一次原生快照避免拖动、DPI 切换时依赖过期 IPC 坐标。
-                let rect = win.hwnd().ok().and_then(|hwnd| {
+                let rect = {
                     let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                    (unsafe { GetWindowRect(hwnd.0 as _, &mut r) } != 0)
+                    (unsafe { GetWindowRect(hwnd as _, &mut r) } != 0)
                         .then_some((r.left, r.top, r.right - r.left, r.bottom - r.top))
-                });
+                };
                 let want = {
                     let Ok(map) = state.lock() else { continue };
                     match want_ignore_at(map.get(label), (pt.x, pt.y), rect) {

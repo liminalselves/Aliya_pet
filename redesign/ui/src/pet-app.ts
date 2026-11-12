@@ -2358,20 +2358,38 @@ export class PetApp {
     });
   }
 
-  /** 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。 */
+  /** 当前帧间隔（ms）：画内缩放与互动期间 60fps，其余按帧率上限。 */
+  private _frameIntervalMs(now: number): number {
+    return 1000 / (this._deskScale || this._interactionBoost(now) ? 60 : this._fpsCap);
+  }
+
+  /**
+   * 同一时刻至多一个待执行帧：暂停/遮挡快速切换时不会叠出两条渲染循环。
+   * 帧率上限低于屏幕刷新率时先用定时器睡到下一帧前，再用 rAF 对齐垂直同步：
+   * 不睡的话 144Hz 屏每秒唤醒 144 次、只有 30 次真正渲染，空转的唤醒同样牵动 GPU 进程。
+   */
   private _scheduleFrame(): void {
     if (this._frameQueued) return;
     this._frameQueued = true;
-    requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t); });
+    const now = performance.now();
+    const wait = this._lastFrameTime + this._frameIntervalMs(now) - now - PetApp._frameWakeLeadMs;
+    // 定时器已睡满本帧间隔：醒来后的首个 vsync 直接渲染（rAF 时间戳是帧起点，比当前时刻
+    // 早几毫秒，按它再判一次会多空转一个 vsync）。
+    const due = wait > 1;
+    const run = () => requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t, due); });
+    if (due) setTimeout(run, wait); else run();
   }
+  /** 定时器提前醒来的余量（ms）：覆盖定时器抖动与一个高刷屏的 vsync 间隔。 */
+  private static readonly _frameWakeLeadMs = 6;
 
-  private _frame(t: number): void {
+  private _frame(t: number, due = false): void {
     if (!this._running || this._paused || this._covered) return;
 
     // 画内缩放与互动（拖动/抚摸/点击反应）期间临时升到 60fps，跟手更顺；
     // 结束后回到常规上限。省电模式下互动也不升帧。
-    const minInterval = 1000 / (this._deskScale || this._interactionBoost(t) ? 60 : this._fpsCap);
-    if (t - this._lastFrameTime < minInterval - 1) {
+    const minInterval = this._frameIntervalMs(t);
+    // 节奏由下方 _lastFrameTime 累加维持，定时器提前醒来接收也不会抬高平均帧率。
+    if (!due && t - this._lastFrameTime < minInterval - 1) {
       this._scheduleFrame();
       return;
     }
@@ -2709,8 +2727,11 @@ export class PetApp {
     const interacting = this._isPointerInteracting();
     const geometry = this._hitMaskGeometryKey();
     const now = performance.now();
+    // 采样要把 WebGL 画布读回 CPU（drawImage+getImageData 会等 GPU 完成本帧）：
+    // 互动中 120ms 一次保证跟手，静置时 250ms 一次（待机只有呼吸与动作的细微轮廓变化）。
+    const interval = interacting || this._dragging || this._interaction?.isBusy ? 120 : 250;
     if (
-      now - this._hitMaskLastMs < 120 &&
+      now - this._hitMaskLastMs < interval &&
       interacting === this._hitMaskInteracting &&
       geometry === this._hitMaskGeometry
     ) {
@@ -2810,8 +2831,9 @@ export class PetApp {
 
   private _hitMaskGeometryKey(): string {
     const r = this._hitMaskRect ?? { left: 0, top: 0, width: 0, height: 0 };
+    // 启动提示出现/移除也改变可点区域，计入几何键即可立即重采样，不等低频采样周期。
     return [this._winPhysX, this._winPhysY, window.innerWidth, window.innerHeight, this._scaleFactor,
-      r.left, r.top, r.width, r.height, ...(this._chatLauncherRect() ?? [])].join(':');
+      r.left, r.top, r.width, r.height, this._shellSyncNotice ? 1 : 0, ...(this._chatLauncherRect() ?? [])].join(':');
   }
 
   private static _unionRect(rects: { left: number; top: number; width: number; height: number }[]):
