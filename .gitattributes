@@ -1,0 +1,4 @@
+# 仓库内文本一律以 LF 入库；Windows 批处理脚本保持 CRLF。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

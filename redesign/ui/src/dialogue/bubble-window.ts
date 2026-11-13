@@ -47,9 +47,18 @@ if (typeof document !== 'undefined') {
     document.getElementById('dialogue-bubble') as HTMLDivElement));
   const host = window as unknown as {
     __renderDialogueBubble: typeof render;
+    __replayDialogueBubble: () => void;
     BubbleHost?: { ready(): void };
   };
   host.__renderDialogueBubble = render;
+  // 首次测量时窗口尚未附着，入场动画在看不见的页面里就播完了；附着后由壳调用重播。
+  host.__replayDialogueBubble = () => {
+    const el = document.getElementById('dialogue-bubble');
+    if (!el || el.style.display === 'none') return;
+    el.style.display = 'none';
+    void el.offsetWidth;
+    el.style.display = 'block';
+  };
   // 先加载原字体，再测量文字，避免首次显示发生字体替换与气泡尺寸跳动。
   void document.fonts.load('400 14px "Aliya Serif"').then(() => host.BubbleHost?.ready());
 }

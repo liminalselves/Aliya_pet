@@ -4,6 +4,7 @@ import {test} from 'node:test';
 import {readFileSync,readdirSync} from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { reactionHost, reactionStub } from './reaction-stub.mjs';
 const root=new URL('../',import.meta.url);
 test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const base=new URL('assets/live2d/aliya/',root);
@@ -11,7 +12,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('16.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,10);assert.equal(refs.Expressions.length,12);
+ assert.equal(Object.keys(refs.Motions).length,17);assert.equal(refs.Expressions.length,14);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -19,36 +20,30 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  for(const id of ['Param30','Param31','Param36'])assert.ok(ids.has(id));
 });
 const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
+let catalogCache=null;
+const CATALOG=()=>catalogCache??=load('catalog');
 function load(name,imports={},globals={}){
  const code=ts.transpileModule(readFileSync(new URL(`src/${name}.ts`,root),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2021}}).outputText;
- const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():{}),console,setTimeout,clearTimeout,performance,AbortController,DOMException,...globals});return exports;
+ const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():/(^|\/)catalog$/.test(id)?CATALOG():{}),console,setTimeout,clearTimeout,setInterval:()=>0,clearInterval(){},performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
-const newActionNames=['cheerful_bounce','shy_sway'];
+const newActionNames=['cheerful_bounce','shy_sway','puff','kiss','sob','deadpan','look_around','daydream','notice'];
 const modelBase=new URL('assets/live2d/aliya/',root);
 const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
-test('动作注册、元数据、AI 能力清单集合一致且资源可解析',()=>{
- const {ACTION_LIBRARY}=load('behavior');
- const {PERFORMANCE_ACTIONS,performanceRequestPayload}=load('chat/performance-manifest');
+test('新动作已注册且在平静待机池里低频出现，walk 已删除',()=>{
+ const {MOTION_NAMES,STATE_BY_NAME,ACTION_BY_NAME}=CATALOG();
  const refs=asset('16.model3.json').FileReferences;
- const meta=asset('actions.json').actions;
- const sorted=xs=>Array.from(xs).sort();
- assert.ok(!ACTION_LIBRARY.includes('walk'),'walk 不应出现在动作库');
+ assert.ok(!MOTION_NAMES.includes('walk'),'walk 不应出现在动作库');
  assert.ok(!readdirSync(new URL('motions/',modelBase)).includes('walk.motion3.json'),'walk 资源应已删除');
- for(const names of [Object.keys(refs.Motions),meta.map(a=>a.name),PERFORMANCE_ACTIONS.map(a=>a.name),performanceRequestPayload().actions.map(a=>a.name)]){
-  assert.equal(new Set(names).size,names.length,'动作不应重复');
-  assert.ok(!names.includes('walk'),'walk 不应出现在正式动作或 AI 能力清单');
-  assert.deepEqual(sorted(names),sorted(ACTION_LIBRARY));
- }
+ const neutral=STATE_BY_NAME.get('neutral').idle;
  for(const name of newActionNames){
-  const entry=meta.find(a=>a.name===name);
-  assert.ok(['idle','emotion','reaction'].includes(entry.category));
-  assert.ok(entry.weight>0&&entry.weight<1,'新动作应低频进入日常抽样');
-  assert.ok(Object.values(entry.moods).every(v=>Number.isFinite(v)&&v>0));
-  assert.ok(PERFORMANCE_ACTIONS.find(a=>a.name===name)?.hint);
+  assert.ok(ACTION_BY_NAME.get(name)?.hint,name);
   assert.equal(refs.Motions[name].length,1);
   assert.ok(asset(refs.Motions[name][0].File).Curves.length>0);
+  // 视线类只在指针静止后抽取、notice 只由事件触发；其余新动作低频进入日常抽样。
+  if(name==='notice')assert.equal(neutral[name],undefined);
+  else if(!ACTION_BY_NAME.get(name).gaze)assert.ok(neutral[name]>0&&neutral[name]<1,`${name} 应低频进入日常抽样`);
  }
 });
 
@@ -72,7 +67,7 @@ test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；�
    assert.ok(s.every(Number.isFinite));
    const neutral=/^ParamEye[LR]Open$/.test(Id)?1:0;
    assert.equal(s[0],0);assert.equal(s[1],neutral,`${name}: ${Id} 起点`);
-   if(/^ParamArm/.test(Id)&&!['shy_sway','cheerful_bounce'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 不改变既有手臂表演，只主动复位`);
+   if(/^ParamArm/.test(Id)&&['wave','look_around','daydream'].includes(name))assert.deepEqual(s,[0,0,0,Meta.Duration,0],`${name}: 手臂只主动复位（挥手由专用通道驱动）`);
    let t=s[0],v=s[1],lastChangingTime=0;points++;
    const [min,max]=limits(Id);
    for(let i=2;i<s.length;){
@@ -102,8 +97,9 @@ test('新动作通过 AI 指令和 PetAI 单次播放，互动限频、未知动
  const {ChatPerformance}=load('chat/performance');
  const events=[],calls=[];
  const {PetAI}=load('pet-ai',{},{window:{dispatchEvent:e=>events.push(e)},CustomEvent:class{constructor(type,init){this.type=type;this.detail=init.detail}}});
- const {ACTION_LIBRARY}=load('behavior');
- const ai=new PetAI({model:()=>({actionManifest:asset('actions.json').actions,getExpressionNames:()=>[],getCurrentExpression:()=>null}),moodEngine:()=>null,playAction:name=>{if(!ACTION_LIBRARY.includes(name))return false;calls.push(name);return true}});
+ const {MOTION_NAMES}=CATALOG();
+ const ai=new PetAI({model:()=>({getExpressionNames:()=>[],getCurrentExpression:()=>null}),stateEngine:()=>null,
+  actionNames:()=>[...MOTION_NAMES],playAction:name=>{if(!MOTION_NAMES.includes(name))return false;calls.push(name);return true}});
  let now=0,busy=false;
  const p=new ChatPerformance({expressions:()=>[],actions:()=>ai.state().actions,express(){},clearExpression(){},play:name=>ai.play(name),busy:()=>busy},()=>now);
  for(const name of newActionNames){
@@ -121,29 +117,20 @@ test('shy_sway 的害羞表情联动走既有 cue，取消和互动不补播动�
  const {parseCueSegment}=load('chat/performance-manifest');
  const {ChatPerformance}=load('chat/performance');
  const events=[];let busy=false;
- const p=new ChatPerformance({expressions:()=>['shy'],actions:()=>asset('actions.json').actions.map(a=>a.name),
+ const p=new ChatPerformance({expressions:()=>['shy'],actions:()=>[...CATALOG().MOTION_NAMES],
   express:name=>events.push(['express',name]),clearExpression:()=>events.push(['clear']),play:name=>events.push(['play',name]),busy:()=>busy},()=>0);
  const cue=parseCueSegment('[[agent_cue express=shy play=shy_sway]]');
  assert.equal(cue.expression,'shy');assert.equal(cue.action,'shy_sway');p.cue(cue);
  assert.deepEqual(events,[['play','shy_sway'],['express','shy']]);
  busy=true;p.tick();busy=false;p.tick();p.cancel();
  assert.deepEqual(events,[['play','shy_sway'],['express','shy'],['clear'],['express','shy'],['clear']]);
- assert.ok(!asset('actions.json').actions.some(a=>a.name==='sajiao'),'不注册第二个调用名');
- const meta=asset('actions.json').actions.find(a=>a.name==='shy_sway');
- assert.ok(meta.moods.shy>1&&meta.moods.happy>1);
+ assert.ok(!CATALOG().ACTION_BY_NAME.has('sajiao'),'不注册第二个调用名');
+ const pools=CATALOG().STATE_BY_NAME;
+ assert.ok(pools.get('shy').idle.shy_sway>pools.get('neutral').idle.shy_sway&&pools.get('happy').idle.shy_sway>pools.get('neutral').idle.shy_sway);
  const physicsOutputs=new Set(asset('16.physics3.json').PhysicsSettings.flatMap(s=>s.Output.map(o=>o.Destination.Id)));
  for(const c of asset('motions/shy_sway.motion3.json').Curves)assert.ok(!physicsOutputs.has(c.Id),`${c.Id} 是物理输出，不能由动作接管`);
 });
 
-test('设置页全部动作使用中文标签，资源目录与正式清单一致',()=>{
- const source=readFileSync(new URL('src/settings-page.ts',root),'utf8');
- const labels=source.match(/const ACTION_LABELS[^=]*=\s*\{([\s\S]*?)\n\};/)[1];
- const entries=new Map([...labels.matchAll(/(\w+):\s*'([^']+)'/g)].map(m=>[m[1],m[2]]));
- const {ACTION_LIBRARY}=load('behavior');
- for(const name of ACTION_LIBRARY)assert.match(entries.get(name)??'以ID回退',/[\u4e00-\u9fff]/,name);
- assert.equal(entries.get('shy_sway'),'撒娇');
- assert.deepEqual(readdirSync(new URL('motions/',modelBase)).filter(n=>n.endsWith('.motion3.json')).sort(),Array.from(ACTION_LIBRARY,n=>`${n}.motion3.json`).sort());
-});
 
 const {CheekChannel}=load('overlay');
 function cheekHarness(){
@@ -232,12 +219,12 @@ test('按优先级播放及随机播放同样触发挥手，被拒绝的动作�
  assert.equal(m.startMotion('missing',0,2),-1);assert.equal(released,1);
 });
 test('受击和无语恢复专用眼型，切换与清除始终互斥且无中间值',()=>{
- const {applyFaceVariant,FACE_VARIANT_PARAMETERS}=load('face-variant');
+ const {applyFaceVariant,expressionEye,FACE_VARIANT_PARAMETERS}=load('face-variant');
  const values=new Map();
  const model={setParameterValueById:(id,value)=>values.set(id,value)};
  for(const [expression,want] of [['hit',[1,0,0]],['speechless',[0,0,1]],['sad',[0,1,0]],['hit',[1,0,0]],['hit',[1,0,0]],[null,[0,0,0]],['worried',[0,0,0]],['speechless',[0,0,1]],['neutral',[0,0,0]]]){
   for(const name of FACE_VARIANT_PARAMETERS) values.set(name,.6);
-  applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expression);
+  applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expressionEye(expression));
   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(0,3).map(id=>values.get(id)),want);
   if(['hit','speechless','sad'].includes(expression)) {
    assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(3,7).map(id=>values.get(id)),[1,1,0,0]);
@@ -248,12 +235,16 @@ test('受击和无语恢复专用眼型，切换与清除始终互斥且无中�
  }
 });
 function gaze(){const values=new Map();return {controller:new GazeController({updateParameters(){}},'x','y'),model:{getParameterValueById:id=>values.get(id)??0,setParameterValueById:(id,v)=>values.set(id,v),addParameterValueById:(id,v)=>values.set(id,(values.get(id)??0)+v)},values}}
-test('动作期间持续跟随；交接不会叠加动作残值',()=>{
- const {controller,model,values}=gaze();controller.setTarget(1,.5);
- for(let i=0;i<120;i++){values.set('x',-18);values.set('y',0);controller.update(model,1/30,{motionActive:true,reduction:1})}
- assert.ok(values.get('x')>17);assert.ok(Math.abs(values.get('y'))<.01);
- controller.clearTarget();for(let i=0;i<120;i++){values.set('x',-10);controller.update(model,1/30,{motionActive:true,reduction:1})}
- assert.ok(Math.abs(values.get('x')+10)<.01);
+test('动作期间眼部完全交给动作（有指针目标与表情偏移也不推偏），播完平滑淡回跟随',()=>{
+ const {controller,model,values}=gaze();controller.setTarget(1,.5);controller.setExpression('shy');
+ for(let i=0;i<120;i++){values.set('x',-14);values.set('y',4);controller.update(model,1/30,{motionActive:true,reduction:1})}
+ assert.ok(Math.abs(values.get('x')+14)<.01&&Math.abs(values.get('y')-4)<.01,`动作眼球原样保留 ${values.get('x')},${values.get('y')}`);
+ // 正式动作曲线播完前都回到中性（见「完整默认复位」测试），这里同样先回中再结束动作。
+ for(let i=1;i<=30;i++){values.set('x',-14*(1-i/30));values.set('y',4*(1-i/30));controller.update(model,1/30,{motionActive:true,reduction:1})}
+ let prev=values.get('x');
+ for(let i=0;i<120;i++){values.set('x',0);values.set('y',0);controller.update(model,1/30,{motionActive:false,reduction:1});
+  assert.ok(Math.abs(values.get('x')-prev)<4,'交接不跳变');prev=values.get('x')}
+ assert.ok(values.get('x')>17,'动作结束后恢复跟随');
 });
 test('全部表情角落注视受径向行程限制；非法输入不污染后续帧',()=>{
  for(const name of readdirSync(new URL('assets/live2d/aliya/expressions/',root))){
@@ -282,6 +273,29 @@ test('动作中的特殊眼睛参数只允许零值复位，哈欠不再叠加�
   }
  }
 });
+test('光标静止释放视线、视线类动作只在释放后抽取、久静再动先回神再跟随',()=>{
+ let now=0,target,played=[];
+ const host={playAction:n=>(played.push(n),true),setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null};
+ const {BehaviorService,GAZE_RELEASE_SECONDS,NOTICE_AFTER_SECONDS}=load('behavior',{},{performance:{now:()=>now}});
+ const b=new BehaviorService(()=>host,()=>now);b.autoActions=false;b.autoActions=true;
+ const draw=()=>{const seen=new Set();for(let i=0;i<400;i++)seen.add(b.randomActionName());return seen};
+ b.updateLookTarget(.3,.4);assert.ok(target);
+ let seen=draw();assert.ok(!seen.has('look_around')&&!seen.has('daydream')&&!seen.has('notice'),'跟随中不抽视线类/反应类');
+ // 每帧重复上报同一坐标不算移动
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now=t;b.updateLookTarget(.3,.4)}
+ assert.equal(b.gazeReleased,true);assert.equal(target,null,'静止后交还视线');
+ seen=draw();assert.ok(seen.has('look_around')&&seen.has('daydream'));assert.ok(!seen.has('notice'));
+ // 未达久静阈值：只恢复跟随，不回神
+ now+=1000;b.updateLookTarget(.6,.4);assert.ok(target);assert.deepEqual(played,[]);
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.6,.4)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.6,.4);
+ now+=16;b.updateLookTarget(.9,.2);assert.deepEqual(played,['notice']);assert.ok(target,'回神同时恢复跟随');
+ // 冷却内再次久静不重复回神；拖动/互动中不回神
+ for(let t=0;t<=GAZE_RELEASE_SECONDS*1000;t+=500){now+=500;b.updateLookTarget(.9,.2)}
+ now+=NOTICE_AFTER_SECONDS*1000;b.updateLookTarget(.9,.2);now+=16;b.updateLookTarget(.1,.1);
+ assert.deepEqual(played,['notice'],'冷却内不重复');
+ b.stop();
+});
 test('镜像坐标只翻转一次；拖动时回中，松手后恢复',()=>{
  let target;const {BehaviorService}=load('behavior');const b=new BehaviorService(()=>({setLookTarget:(x,y)=>target=[x,y],clearLookTarget:()=>target=null}));
  b.mirrorX=true;b.updateLookTarget(.8,.25);assert.ok(Math.abs(target[0]-.2)<1e-9);assert.equal(target[1],.75);
@@ -292,7 +306,7 @@ test('镜像画布使用可见坐标而非已被CSS反转的offsetX',()=>{
  const p=app._eventNorm({clientX:260,clientY:150,offsetX:40,offsetY:100});assert.equal(p.nx,.8);assert.equal(p.ny,.25);
 });
 const settleWindow=()=>new Promise(r=>setImmediate(r));
-function snapHarness(pos=[40,300],snap=true) {
+function snapHarness(pos=[40,300],snap=true,phys={width:300,height:400}) {
  let now=0,rafQ=[],reduced=false;
  const positions=[],saved=[],animations=[];
  const mon={scaleFactor:1.5,workArea:{position:{x:-1920,y:0},size:{width:1920,height:1040}}};
@@ -309,12 +323,12 @@ function snapHarness(pos=[40,300],snap=true) {
  const api={currentMonitor:async()=>mon,PhysicalPosition:class{constructor(x,y){this.x=x;this.y=y}}};
  const {PetApp}=load('pet-app',{'@tauri-apps/api/window':api,'./settings':{saveSettings:s=>saved.push({...s})}},{
   KeyframeEffect,Animation,document:{body,documentElement:{},timeline:{}},
-  window:{matchMedia:()=>({matches:reduced})},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
+  window:{matchMedia:()=>({matches:reduced}),innerWidth:phys.width/1.5,innerHeight:phys.height/1.5},getComputedStyle:()=>({getPropertyValue:()=> 'cubic-bezier(0.22, 0.8, 0.32, 1)'}),
   requestAnimationFrame:fn=>rafQ.push(fn),
  });
  const app=Object.create(PetApp.prototype);
  Object.assign(app,{_tauriWindow:{outerPosition:async()=>({x:pos[0],y:pos[1]}),scaleFactor:async()=>1.5,
-  outerSize:async()=>({width:300,height:400}),setPosition:async p=>{pos[0]=p.x;pos[1]=p.y;positions.push([...pos])}},
+  outerSize:async()=>({width:phys.width,height:phys.height}),setPosition:async p=>{pos[0]=p.x;pos[1]=p.y;positions.push([...pos])}},
   _snapAnimToken:0,_snapAnimation:null,_snapHintTimer:null,_windowMoveTask:null,_settings:{snapEdges:snap},
   _winPhysX:pos[0],_winPhysY:pos[1],_scaleFactor:1.5,_metricsSynced:true,_syncChatAnchor(){},_showSnapHint(){}});
  return {app,positions,saved,animations,pos,mon,PetApp,
@@ -336,6 +350,22 @@ test('松手贴边：副屏负坐标、DPI、越界归位与关闭贴边',async(
   const h=snapHarness([...pos],snap);h.app._onDragFinished();await settleWindow();await h.finish();
   assert.deepEqual([h.saved.at(-1).posX,h.saved.at(-1).posY],want,`pos=${pos} snap=${snap}`);
   if(want.join()!==pos.join()) assert.deepEqual(h.positions.at(-1),want);
+ }
+});
+test('贴边以舞台边对齐工作区边：缩小后舞台贴紧屏幕边，外窗边留在屏幕外',async()=>{
+ const phys={width:900,height:1200};
+ for(const edge of ['left','right']){
+  const h=snapHarness([0,-300],true,phys);
+  Object.assign(h.app,{_deskCapacityReady:true,_refreshDesktopCapacity(){},_settings:{snapEdges:true,scale:.5,mirror:false},
+   _model:{isReady:()=>true,boundsAspect:.688,boundsH:2,getStaticBounds:()=>({minX:-.69,maxX:.69,minY:-1,maxY:1})}});
+  const r=h.app._physStageRect(phys),work=h.mon.workArea,gap=30; // 感应带 = 48 CSS px × 1.5
+  assert.ok(r.left>0&&r.width<phys.width,'舞台应小于固定容量的外窗');
+  const workRight=work.position.x+work.size.width;
+  h.pos[0]=Math.round(edge==='left'?work.position.x+gap-r.left:workRight-gap-r.left-r.width);h.app._winPhysX=h.pos[0];
+  h.app._onDragFinished();await settleWindow();await h.finish();
+  const stageEdge=edge==='left'?h.pos[0]+r.left:h.pos[0]+r.left+r.width;
+  assert.ok(Math.abs(stageEdge-(edge==='left'?work.position.x:workRight))<=1,`${edge}: 舞台边未贴紧工作区边`);
+  assert.equal(h.pos[1],-300,'纵向不在感应带内，保持不变');
  }
 });
 test('贴边开启时拖动仍完全跟手：从边缘拉开无阻力，越界不钳制，小数位移不丢失',async()=>{
@@ -434,15 +464,16 @@ function interactionHarness() {
  };
  let speaking=false;
  const lines=[],actions=[],reactions=[];
+ // 与正式数据同形：各区域与通用连点组存在，连点递进的 repeat 组带 doubt 动作。
+ const known=['click.face','click.body','click.head','click.ear_left','click.ear_right','click.tie','click.repeat','click.annoyed'];
  const service = new InteractionService({
   hitAreas:{isInHeadPetZone:()=>true,hitAreaAt:()=> 'face'},getTarget:()=>target,
-  dialogue:{resolveSceneTag:(_scene,tag)=>({entryId:tag,pages:[{text:tag}]})},
-  pettingHost:{isDialogueActive:()=>speaking,playPettingDialogue:r=>lines.push(r.entryId)},
-  playCharacterAction:action=>{actions.push(action);return true},
+  reactions:reactionStub({known:[...known,'drag.fast','drag.slow'],actionFor:key=>({'click.repeat':'doubt','click.face':'blush'})[key]}),
+  host:reactionHost({actions,canSpeak:()=>!speaking,speak:line=>lines.push(line.entryId)}),
+  pettingHost:{isDialogueActive:()=>speaking},
  });
  const apply=service.procedural.apply.bind(service.procedural);
- service.procedural.apply=reaction=>{reactions.push({...reaction});apply(reaction)};
- service.playClickDialogue=tag=>lines.push(tag);
+ service.procedural.apply=reaction=>{reactions.push(JSON.parse(JSON.stringify(reaction)));apply(reaction)};
  const ctx=(x=400,secondary=true,dt=1/60)=>({normX:.5,normY:.2,pxX:x,pxY:200,dtSeconds:dt,leftPressed:!secondary,isSecondary:secondary});
  return {service,writes,lines,actions,reactions,ctx,globals,recognizer,procedural,
   speaking(v){speaking=v},advance(ms){now+=ms;service.tick(ms)},setTime(ms){now=ms},
@@ -465,14 +496,14 @@ test('耳朵连点仅同侧眨眼并偏头，不写耳动、不升级双眼疑�
    s.onClick(h.ctx(400,false),false);
    for(let j=0;j<30;j++){h.advance(16);if(h.writes.eyes[0]){assert.equal(h.writes.eyes[3],area==='ear_left'?'right':'left');minEye=Math.min(minEye,h.writes.eyes[1])}maxTilt=Math.max(maxTilt,Math.abs(h.writes.offsets[2]));assert.equal(h.writes.ears[1],0);assert.equal(h.writes.ears[2],0)}
   }
-  assert.equal(minEye,0);assert.ok(maxTilt>0);assert.ok(h.lines.every(tag=>tag===area));assert.equal(h.writes.eyes[0],false);
+  assert.equal(minEye,0);assert.ok(maxTilt>0);assert.ok(h.lines.every(tag=>tag===`click.${area}`));assert.equal(h.writes.eyes[0],false);
  }
  const h=interactionHarness();h.service.onClick(h.ctx(400,false),false);h.advance(16);assert.equal(h.writes.eyes[0],false);
 });
 
 test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也不能重置历史',()=>{
  const h=interactionHarness(),s=h.service;
- const normal=['face','face','click_doubt','click_doubt','click_comment','click_comment','click_comment'];
+ const normal=['click.face','click.face','click.repeat','click.repeat','click.annoyed','click.annoyed','click.annoyed'];
  for(let i=0;i<8;i++){
   h.setTime(i*500);s.hitAreas.hitAreaAt=()=> 'face';
   const before=h.lines.length;assert.equal(s.onClick(h.ctx(400,false),false),true);
@@ -480,10 +511,19 @@ test('普通与耳朵交替保留普通3/5/8次递进，耳朵不计入疑惑也
   else {assert.equal(h.lines.length,before);assert.equal(s.clickSequence.isInCooldown,true)}
   h.setTime(i*500+100);const area=i%2?'ear_right':'ear_left';s.hitAreas.hitAreaAt=()=>area;
   const earBefore=h.lines.length;s.onClick(h.ctx(400,false),false);
-  if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),area);assert.equal(h.reactions.at(-1).type,'earBlink')}
+  if(i<7){assert.equal(h.lines.length,earBefore+1);assert.equal(h.lines.at(-1),`click.${area}`);assert.equal(h.reactions.at(-1).type,'ear_blink')}
   else assert.equal(h.lines.length,earBefore,'第八次普通点击后的耳朵也必须服从全局冷却');
  }
- assert.deepEqual(h.actions,Array(5).fill('doubt'));
+ assert.deepEqual(h.actions,['doubt'],'疑惑动作演出期间连点不从头重启');
+});
+
+test('疑惑只启动一次完整动作，不接管眼睛，演完后再连点可重新疑惑',()=>{
+ const h=interactionHarness(),s=h.service;
+ for(let i=0;i<3;i++){h.setTime(i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt']);assert.equal(h.lines.at(-1),'click.repeat');
+ for(let i=0;i<30;i++){h.advance(16);assert.notEqual(h.writes.eyes?.[0],true,'眨眼和眯眼交给动作曲线')}
+ for(let i=0;i<3;i++){h.setTime(4000+i*300);s.onClick(h.ctx(400,false),false)}
+ assert.deepEqual(h.actions,['doubt','doubt']);
 });
 
 test('左右耳高频点击不重复台词或动作启动，节流结束仍保留另一侧单眼反馈',()=>{
@@ -494,12 +534,12 @@ test('左右耳高频点击不重复台词或动作启动，节流结束仍保�
   assert.equal(s.onClick(h.ctx(400,false),false),true);
   assert.equal(h.writes.eyes[3],'right','被节流的另一侧不能切换眼睛');
  }
- assert.deepEqual(h.lines,['ear_left']);
- assert.deepEqual(h.reactions,[{type:'earBlink',strength:.8,areaId:'ear_left'}]);
+ assert.deepEqual(h.lines,['click.ear_left']);
+ assert.deepEqual(h.reactions,[{type:'ear_blink',strength:.8,areaId:'ear_left',side:1}]);
  assert.deepEqual(h.actions,[]);
  for(let i=0;i<7;i++)h.advance(16);
  s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);h.advance(16);
- assert.deepEqual(h.lines,['ear_left','ear_right']);assert.equal(h.reactions.length,2);
+ assert.deepEqual(h.lines,['click.ear_left','click.ear_right']);assert.equal(h.reactions.length,2);
  assert.equal(h.writes.eyes[3],'left');assert.equal(s.clickSequence.isInCooldown,false);
 });
 
@@ -516,11 +556,11 @@ test('全局冷却期间左右耳与普通点击只给低幅反馈，不解除�
    for(const reaction of h.reactions.slice(starts)){assert.equal(reaction.type,'acknowledge');assert.equal(reaction.strength,.35)}
  }
  h.setTime(3700);s.hitAreas.hitAreaAt=()=> 'ear_right';s.onClick(h.ctx(400,false),false);
- assert.equal(s.clickSequence.isInCooldown,false);assert.equal(h.lines.at(-1),'ear_right');
- assert.equal(h.reactions.at(-1).type,'earBlink');assert.equal(h.reactions.length,starts+4);
+ assert.equal(s.clickSequence.isInCooldown,false);assert.equal(h.lines.at(-1),'click.ear_right');
+ assert.equal(h.reactions.at(-1).type,'ear_blink');assert.equal(h.reactions.length,starts+4);
  for(let i=0;i<3;i++){
   h.setTime(3700+i*100);s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);
-  assert.equal(h.lines.at(-1),i===2?'click_doubt':'face','冷却内点击和耳朵均不能计入新一轮普通计数');
+  assert.equal(h.lines.at(-1),i===2?'click.repeat':'click.face','冷却内点击和耳朵均不能计入新一轮普通计数');
  }
 });
 
@@ -528,15 +568,15 @@ test('连续耳朵反馈不累积普通疑惑，已有台词不重启，生命�
  const h=interactionHarness(),s=h.service;
  for(let i=0;i<10;i++){h.setTime(i*500);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';s.onClick(h.ctx(400,false),false)}
  assert.equal(h.reactions.length,10);assert.deepEqual(h.actions,[]);
- s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);assert.equal(h.lines.at(-1),'face');
- h.setTime(5000);s.hitAreas.hitAreaAt=()=> 'ear_left';s.isDialogueActive=()=>true;
+ s.hitAreas.hitAreaAt=()=> 'face';s.onClick(h.ctx(400,false),false);assert.equal(h.lines.at(-1),'click.face');
+ h.setTime(5000);s.hitAreas.hitAreaAt=()=> 'ear_left';h.speaking(true);
  const before=h.lines.length;s.onClick(h.ctx(400,false),false);
  assert.equal(h.lines.length,before,'已有台词播放时不能重新请求耳朵台词');
- s.isDialogueActive=()=>false;
+ h.speaking(false);
  for(const reset of ['cancel','onModelReloaded','onWindowClosed']){
   const starts=h.reactions.length;s[reset]();s.onClick(h.ctx(400,false),false);
   assert.equal(h.reactions.length,starts+1,`${reset}之后首次耳朵点击不能被旧节流阻挡`);
-  assert.equal(h.lines.at(-1),'ear_left');
+  assert.equal(h.lines.at(-1),'click.ear_left');
  }
 });
 
@@ -607,9 +647,18 @@ test('拖动与点击独立：取消不回应，快速拖动只回应一次',()=
  const h=interactionHarness();const s=h.service;
  s.onPointerDown(h.ctx(400,false));assert.equal(s.dragReaction.isDragging,false);
  s.dragReaction.beginDrag();s.dragReaction.onDragMove(400);s.onClick(h.ctx(),true);s.onClick(h.ctx(),true);
- assert.deepEqual(h.lines,['drag_fast']);
+ assert.deepEqual(h.lines,['drag.fast']);
  s.dragReaction.beginDrag();s.dragReaction.onDragMove(500);s.cancel();s.onClick(h.ctx(),true);
- assert.deepEqual(h.lines,['drag_fast']);
+ assert.deepEqual(h.lines,['drag.fast']);
+});
+
+test('气得发抖属于生气状态：生气时经常自动播，平静时抽到的概率远低于生气时',()=>{
+ const {BehaviorService}=load('behavior');
+ const b=new BehaviorService(()=>null,()=>0);
+ const rate=state=>{let n=0;for(let i=0;i<4000;i++){b.setState(state);if(b.randomActionName()==='fume')n++}return n/4000};
+ const angry=rate('angry'),calm=rate('neutral');
+ assert.ok(angry>0.1,`生气情绪下应经常抽到生气，实际 ${angry}`);
+ assert.ok(angry>calm*2,`生气情绪下的概率应明显高于平静时：${angry} vs ${calm}`);
 });
 
 test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留安静间隔',()=>{
@@ -622,17 +671,36 @@ test('统一调度阻止随机行为抢占互动/说话/暂停，结束后保留
  now=2500;assert.equal(c.canIdle(),true);state.paused=true;assert.equal(c.canSpeak('interaction'),false);
 });
 
-function randomSpeechHarness() {
+test('聊天回复展示期间（含读完前）阻止待机动作，避免动作表情盖掉聊天表演',()=>{
  const {PetApp}=load('pet-app');
  const {InteractionCoordinator}=load('interaction/coordination');
- const {DialogueStore}=load('dialogue/dialogue');
+ // 构造器依赖 DOM/台词库；用原型实例跑真实的 _coordinationState 汇总逻辑。
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_running:true,_paused:false,_leftDown:false,_dragging:false,_nativeDragging:false,
+  _remoteChat:{open:false,busy:false,typing:false,replying:false}});
+ const c=new InteractionCoordinator(()=>app._coordinationState(),()=>1e9);
+ const idle=()=>c.canIdle();
+ assert.equal(idle(),true);
+ // 原生聊天窗：壳广播的 chat-state.replying
+ app._remoteChat={open:true,busy:false,typing:false,replying:true};assert.equal(idle(),false,'独立聊天窗回复中');
+ app._remoteChat={open:true,busy:false,typing:false,replying:false};assert.equal(idle(),true,'读完收起后恢复');
+ // 内嵌聊天（Android/网页）：ChatView.replying
+ app._chatView={typing:false,replying:true};assert.equal(idle(),false,'内嵌聊天回复中');
+ app._chatView={typing:false,replying:false};assert.equal(idle(),true);
+});
+
+function randomSpeechHarness() {
+ const dialogue=load('dialogue/dialogue');
+ const {PetApp}=load('pet-app',{'./dialogue/dialogue':dialogue});
+ const {InteractionCoordinator}=load('interaction/coordination');
+ const {ReactionLibrary}=load('interaction/reactions',{'../dialogue/dialogue':dialogue});
  const app=Object.create(PetApp.prototype),played=[];
  const state={interacting:false,speaking:false,paused:false};let now=0,draws=0;
- const dialogue=new DialogueStore();dialogue._files.set('user_click',{entries:[{id:'manual-line',text:'预设台词'}]});
- const resolveRandom=dialogue.resolveRandom.bind(dialogue);
- dialogue.resolveRandom=()=>{draws++;return resolveRandom()};
+ const reactions=new ReactionLibrary(()=>0);reactions.setData({groups:[{id:'g',expression:'happy',lines:[{id:'manual-line',text:'预设台词'}]}],triggers:{random:['g']}});
+ const pick=reactions.pick.bind(reactions);
+ reactions.pick=(...a)=>{draws++;return pick(...a)};
   Object.assign(app,{_remoteChat:{open:false},_chatView:{isOpen:false},_touchPetting:false,_running:true,_shellActionsReady:true,_pendingShellActions:[],
-  _interaction:{cancel(){}},_dialogue:dialogue,_coordination:new InteractionCoordinator(()=>state,()=>now),
+  _interaction:{cancel(){}},_reactions:reactions,_playAction(){},_expressForReaction(){},_coordination:new InteractionCoordinator(()=>state,()=>now),
   _bubble:{play(resolved){played.push(resolved);state.speaking=true}}});
  return {app,state,played,get draws(){return draws},setNow(value){now=value}};
 }
@@ -656,7 +724,7 @@ test('手动随机台词保留暂停、互动和聊天防抢话规则，不积�
  h.app._remoteChat.open=true;h.app.onShellAction({action:'random-speech'});h.app._remoteChat.open=false;
  Object.assign(h.app._chatView,{isOpen:true,panelVisible:true});h.app.onShellAction({action:'random-speech'});Object.assign(h.app._chatView,{isOpen:false,panelVisible:false});
  assert.equal(h.draws,0);assert.equal(h.played.length,0);
-  h.app._dialogue._files.clear();h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
+  h.app._reactions.setData({groups:[],triggers:{}});h.app.onShellAction({action:'random-speech'});assert.equal(h.played.length,0,'空资源不显示空泡');
  });
 
 test('安卓主界面只剩输入框时照常说台词，回复面板显示时让位',()=>{
@@ -689,18 +757,18 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
   async listen(name,handler){registrations++;if(registrations===3)listening.resolve();await ipc.promise;listeners.set(name,handler);return ()=>listeners.delete(name)},
   async emitTo(target,name,payload){assert.equal(target,'pet');listeners.get(name)?.({payload})},
  };
- class Model{async loadFromSetting(){modelStarted.resolve();await modelGate.promise}isReady(){return true}actionManifest=[]}
- class Behavior{setActionMeta(){}start(){}}
- class Mood{onMoodChanged(){}}
- class AI{play(name){calls.push(name)}express(name){calls.push(name)}clearExpression(){}setMood(name){calls.push(name)}}
+ class Model{async loadFromSetting(){modelStarted.resolve();await modelGate.promise}isReady(){return true}getMotionNames(){return []}}
+ class Behavior{setState(){}start(){}}
+ class StateEngine{current={name:'neutral',manual:null};onChanged(){}}
+ class AI{play(name){calls.push(name)}express(name){calls.push(name)}clearExpression(){}setState(name){calls.push(name)}emitState(){}}
  const {PetApp}=load('pet-app',{
   './platform':{platform:'tauri'},'./settings':load('settings'),'@tauri-apps/api/event':events,'./pet-model':{PetModel:Model},
   './dialogue/bubble':{DialogueBubble:class{}},'./interaction/interaction':{InteractionService:class{}},
-  './behavior':{BehaviorService:Behavior},'./emotion':{MoodEngine:Mood},'./pet-ai':{PetAI:AI},
+  './behavior':{BehaviorService:Behavior},'./state':{StateEngine},'./pet-ai':{PetAI:AI},
  },{document:{getElementById:()=>({})},window:{},fetch:async()=>{fetchStarted.resolve();await fetchGate.promise;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
  const app=Object.create(PetApp.prototype);
  Object.assign(app,{_pendingShellActions:[],_shellActionsReady:false,_settingsSyncTask:null,_settings:{mirror:false},
-  _dialogue:{loadAll:()=>{dialogueStarted.resolve();return dialogueGate.promise}},_hitAreas:{load:()=>hitGate.promise},
+  _reactions:{load:()=>{dialogueStarted.resolve();return dialogueGate.promise}},_hitAreas:{load:()=>hitGate.promise},
   _initializeChat(){this._chatView={setOpen:()=>calls.push('open-chat')}},_wirePointerEvents(){},_startLoop(){this._running=true},
   applySettings(settings,initial){this._settings=settings;applied.push(initial)},
   _playRandom(source){assert.ok(this._bubble&&this._interaction&&this._running);assert.equal(source,'manual');calls.push('random-speech')},
@@ -715,7 +783,7 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
  await events.emitTo('pet','tray-action',{action:'random-speech'});
  await events.emitTo('pet','tray-action',{action:'express',name:'shy'});
  modelGate.resolve();await dialogueStarted.promise;
- await events.emitTo('pet','tray-action',{action:'set-mood',name:'happy'});
+ await events.emitTo('pet','tray-action',{action:'set-state',name:'happy'});
  dialogueGate.resolve();await Promise.resolve();
  await events.emitTo('pet','tray-action',{action:'open-chat'});
  assert.deepEqual(calls,[],'命中区域尚未就绪也不能提前补发');
@@ -730,7 +798,7 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
 test('Tauri监听失败降级加载模型，可见提示重试只补装失败项且不重建模型',async()=>{
  const attempts=new Map(),listeners=new Map(),notices=[],errors=[];let failing=true,fetches=0,clicks=0,random=0;
  const notice={remove(){this.removed=true}};
- class Model{async loadFromSetting(){}isReady(){return true}actionManifest=[]}
+ class Model{async loadFromSetting(){}isReady(){return true}getMotionNames(){return []}}
  const {PetApp}=load('pet-app',{
   './platform':{platform:'tauri'},'@tauri-apps/api/event':{async listen(name,handler){
    attempts.set(name,(attempts.get(name)??0)+1);
@@ -740,13 +808,13 @@ test('Tauri监听失败降级加载模型，可见提示重试只补装失败项
   './settings':load('settings'),'./startup-notice':{showStartupNotice(...args){notices.push(args);return notice}},
   './pet-model':{PetModel:Model},'./dialogue/bubble':{DialogueBubble:class{}},
   './interaction/interaction':{InteractionService:class{onClick(){clicks++}}},
-  './behavior':{BehaviorService:class{setActionMeta(){}start(){}}},
-  './emotion':{MoodEngine:class{onMoodChanged(){}}},'./pet-ai':{PetAI:class{}},
+  './behavior':{BehaviorService:class{setState(){}start(){}}},
+  './state':{StateEngine:class{current={name:'neutral',manual:null};onChanged(){}}},'./pet-ai':{PetAI:class{}},
  },{console:{...console,error:(...args)=>errors.push(args)},document:{getElementById:()=>({})},window:{},
   fetch:async()=>{fetches++;return {arrayBuffer:async()=>new ArrayBuffer(0)}}});
  const app=Object.create(PetApp.prototype);
  Object.assign(app,{_pendingShellActions:[],_settingsSyncTask:null,_settings:{},
-  _dialogue:{async loadAll(){}},_hitAreas:{async load(){}},_initializeChat(){},_wirePointerEvents(){},
+  _reactions:{async load(){}},_hitAreas:{async load(){}},_initializeChat(){},_wirePointerEvents(){},
   _startLoop(){this._running=true},applySettings(s){this._settings=s},_playRandom(){random++}});
  await app.loadModel('/model.json');
  assert.equal(fetches,1);assert.equal(app._model.isReady(),true);assert.equal(app._running,true);
@@ -809,10 +877,17 @@ for(const failure of ['construct','initialize-throw','initialize-false','load'])
  await notices[0][3]();assert.equal(window.location.reloaded,true);
 });
 
-test('闲聊不抽取抚摸/点击反应或其他时段的台词',()=>{
- const {DialogueStore,timeScene}=load('dialogue/dialogue');const d=new DialogueStore();const current=timeScene(new Date());
- for(const scene of ['user_click','interaction','head_petting','morning','deep_night',current])d._files.set(scene,{entries:[{id:scene,text:scene}]});
- for(let i=0;i<100;i++)assert.ok(['user_click',current].includes(d.selectRandom().id));
+test('闲聊只抽通用与当前时段的反应组，不抽点击、抚摸或其他时段',()=>{
+ const dialogue=load('dialogue/dialogue');const current=`time.${dialogue.timeScene(new Date())}`;
+ const {PetApp}=load('pet-app',{'./dialogue/dialogue':dialogue});
+ const picked=[];
+ const app=Object.assign(Object.create(PetApp.prototype),{
+  _chatHoldsSpeech:()=>false,_coordination:{canSpeak:()=>true},_speak(){},_playAction(){},_expressForReaction(){},
+  _reactions:{lineCount:key=>['random',current,'click.face','petting.start','time.morning','time.deep_night'].includes(key)?5:0,
+   pick:key=>{picked.push(key);return null}}});
+ for(let i=0;i<100;i++)app._playRandom();
+ assert.ok(picked.length===100&&picked.every(k=>k==='random'||k===current),picked.join());
+ assert.ok(picked.includes('random')&&picked.includes(current),'两类都有机会');
 });
 
 test('气泡取消立即释放说话状态，旧异步回调不影响新会话',async()=>{
@@ -862,7 +937,7 @@ test('触屏头部轻点有反馈，未识别的大幅移动不误报为轻点',
 test('自动行为计时器实际遵守调度且不截断现有动作',()=>{
  const timers=new Map();let next=0,actions=0,speech=0;let allowed=false;
  const {BehaviorService}=load('behavior',{}, {setTimeout:fn=>{timers.set(++next,fn);return next},clearTimeout:id=>timers.delete(id)});
- const host={playAction(){actions++;return true},isActionPlaying:false};
+ const host={playAction(){actions++;return true},isActionPlaying:false,setLookTarget(){},clearLookTarget(){}};
  const b=new BehaviorService(()=>host);b.canIdle=()=>allowed;b.randomSpeechEnabled=true;b.onRandomSpeech=()=>speech++;b.start();
  function round(){const pending=[...timers.values()];timers.clear();for(const fn of pending)fn()}
  round();assert.equal(actions,0);assert.equal(speech,0);
@@ -1155,3 +1230,72 @@ test('MSK 验权：手动 token 验证保存与登出清理，web 整页跳转�
  assert.equal(resumed?.token,'tk2');assert.equal(auth2.token,'tk2');
  assert.equal(mem._m['aliya_miauth_pending'],undefined);
 });
+
+test('正式反应组：每个区域点击都同时触发台词、表情和动作，连点不连续重复同一组',()=>{
+ const dialogue=load('dialogue/dialogue');
+ const {ReactionLibrary}=load('interaction/reactions',{'../dialogue/dialogue':dialogue});
+ const {InteractionService}=load('interaction/interaction',{
+  './petting-controller':load('interaction/petting-controller',{'./petting-recognizer':load('interaction/petting-recognizer')}),
+  './procedural':load('interaction/procedural')});
+ const data=JSON.parse(readFileSync(new URL('assets/interaction/reactions.json',root),'utf8'));
+ const lib=new ReactionLibrary();lib.setData(data);
+ const byId=new Map(data.groups.map(g=>[g.id,g]));
+ const lines=[],faces=[],motions=[],target={getInteractionParamInfo:()=>null,setInteractionOffsets(){},setEyeOverride(){},setPettingLookAtReduction(){},setEarInteraction(){},setFaceCheek(){}};
+ let area='body';
+ const s=new InteractionService({hitAreas:{hitAreaAt:()=>area,isInHeadPetZone:()=>false,mirrored:false},getTarget:()=>target,reactions:lib,
+  host:{canSpeak:()=>true,speak:l=>lines.push(l),express:n=>faces.push(n),playMotion:n=>{motions.push(n);return true}},pettingHost:{isDialogueActive:()=>false}});
+ const applied=[];const apply=s.procedural.apply.bind(s.procedural);s.procedural.apply=r=>{applied.push(r.type);apply(r)};
+ const groupOf=line=>data.groups.find(g=>g.lines.some(l=>l.id===line.entryId));
+ const areas=JSON.parse(readFileSync(new URL('assets/interaction/aliya_hit_areas.json',root),'utf8')).areas.map(a=>a.id).filter(id=>id!=='head_pet_zone');
+ for(const id of areas){
+  area=id;let last=null;
+  for(let i=0;i<4;i++){
+   s.clickSequence.reset();s._earClickUntilMs=0;s._motionUntilMs=0;
+   const n=[lines.length,faces.length,motions.length,applied.length];
+   s.onClick({normX:.3,normY:.5,pxX:0,pxY:0,dtSeconds:1/60,leftPressed:true,isSecondary:false},false);
+   assert.equal(lines.length,n[0]+1,`${id} 必须说一句`);
+   const g=groupOf(lines.at(-1));assert.ok(data.triggers[`click.${id}`].includes(g.id),`${id} 台词来自本区域的组`);
+   if(g.expression)assert.equal(faces.at(-1),g.expression,`${g.id} 表情同步`);
+   if(g.action)assert.ok(motions.at(-1)===g.action||applied.at(-1)===g.action,`${g.id} 动作同步`);
+   assert.ok(applied.length>n[3]||motions.length>n[2],`${id} 必须有身体反馈`);
+   assert.notEqual(g.id,last,`${id} 不连续重复同一组`);last=g.id;
+  }
+ }
+ assert.ok(byId.size>=60);
+});
+
+test('互动 Live2D 动作 3 秒内不重启，连点能把动作演完',()=>{
+ let now=0;const globals={performance:{now:()=>now}};
+ const procedural=load('interaction/procedural',{},globals);
+ const petting=load('interaction/petting-controller',{'./petting-recognizer':load('interaction/petting-recognizer',{},globals)},globals);
+ const {InteractionService}=load('interaction/interaction',{'./petting-controller':petting,'./procedural':procedural},globals);
+ const actions=[];const target={getInteractionParamInfo:()=>null,setInteractionOffsets(){},setEyeOverride(){},setPettingLookAtReduction(){},setEarInteraction(){},setFaceCheek(){}};
+ const s=new InteractionService({hitAreas:{hitAreaAt:()=> 'tie',isInHeadPetZone:()=>false,mirrored:false},getTarget:()=>target,
+  reactions:reactionStub({actionFor:()=> 'puff'}),host:reactionHost({actions}),pettingHost:{isDialogueActive:()=>false}});
+ const ctx={normX:.5,normY:.6,pxX:0,pxY:0,dtSeconds:1/60,leftPressed:true,isSecondary:false};
+ s.onClick(ctx,false);assert.deepEqual(actions,['puff']);
+ now=1000;s.clickSequence.reset();s.onClick(ctx,false);assert.deepEqual(actions,['puff'],'保护期内不重启');
+ now=3100;s.clickSequence.reset();s.onClick(ctx,false);assert.deepEqual(actions,['puff','puff']);
+});
+
+test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快甩仍走睁眼台词，取消完整释放',()=>{
+ for(const ending of ['slow','fast','cancel']){
+  const h=interactionHarness(),s=h.service;
+  s.dragReaction.beginDrag();s.beginHold();
+  for(let i=0;i<40;i++)h.advance(16);
+  assert.equal(s.procedural.isPlaying,true,'拎起姿态在相位结束后仍保持');
+  assert.ok(h.writes.offsets[1]>2.5,'拎起时微抬头');assert.ok(h.writes.eyes[1]>1.05,'拎起时睁大眼');
+  s.updateHoldVelocity(1200);for(let i=0;i<10;i++)h.advance(16);
+  assert.ok(h.writes.offsets[2]<-2,'向右快移时头向左甩');
+  for(let i=0;i<120;i++)h.advance(16);
+  assert.ok(Math.abs(h.writes.offsets[2])<.5,'停手后摆动自然回正');
+  if(ending==='cancel'){s.cancel()}
+  else{s.dragReaction.onDragMove(ending==='fast'?600:100);s.onClick(h.ctx(),true);
+   assert.equal(h.reactions.at(-1).type,ending==='fast'?'eyes_widen':'landing');
+   if(ending==='fast')assert.deepEqual(h.lines,['drag.fast'])}
+  for(let i=0;i<120;i++)h.advance(16);
+  assert.equal(s.procedural.isPlaying,false,ending);assert.equal(s.isBusy,false);
+  assert.deepEqual(h.writes.offsets,[0,0,0,0]);assert.equal(h.writes.eyes[0],false);
+ }
+});
+

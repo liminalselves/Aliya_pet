@@ -20,16 +20,18 @@ if (platform === 'tauri') {
   // chat-state 会随 busy/typing 变化全量重播，只在 open 跳变时动作；
   // 窗口重现时视图本就在打开态（boot 已 setOpen(true)），走 playEnter 补入场动画。
   let windowOpen = false;
+  const relayHitMask = startHitMaskRelay(() => windowOpen);
   await listen<{ open: boolean }>('chat-state', e => {
     if (e.payload.open === windowOpen) return;
     windowOpen = e.payload.open;
     if (view.isOpen !== e.payload.open) view.setOpen(e.payload.open);
     else if (e.payload.open) view.playEnter();
+    // 隐藏期间轮询暂停，重新出现时立即补报一次掩码（窗口可能已随桌宠移动）。
+    if (e.payload.open) relayHitMask();
   });
   // 表演提示经壳广播（chat-cue 全局事件），保证 pet 即使未聚焦也能收到。
   controller.onCue = cue => { void invoke('send_chat_cue', { cue }).catch(() => {}); };
   controller.onCancelPerformance = () => { void emitTo('pet', 'chat-cancel', {}); };
-  const relayHitMask = startHitMaskRelay();
   // 卡片随角色显示大小逐帧变化（pet 前端上报，壳换算）：首个布局不补间，之后 CSS 短过渡平滑相邻帧。
   type Layout = { zoom: number; width: number };
   let layoutApplied = false;
@@ -56,8 +58,9 @@ if (platform === 'tauri') {
  * 透明区点击穿透：把 GAL 面板与输入框的矩形栅格化为命中掩码上报给壳，
  * 面板外的透明区域点击穿透到下层窗口（chat 外窗高度固定，面板上方的透明区覆盖着 pet）。
  * 面板显隐/伸缩由 ResizeObserver 即时触发，另以 500ms 轮询兜底窗口移动与 DPI 变化；几何未变不发送。
+ * 窗口隐藏时轮询跳过（每次都要两次跨进程窗口查询），重新打开时由 chat-layout/ResizeObserver 补报。
  */
-function startHitMaskRelay(): () => void {
+function startHitMaskRelay(isOpen: () => boolean): () => void {
   const COLS = 64;
   let lastKey = '';
   let pending = false;
@@ -101,6 +104,6 @@ function startHitMaskRelay(): () => void {
   };
   const observer = new ResizeObserver(schedule);
   for (const el of document.querySelectorAll<HTMLElement>('.gal-panel, .chat-composer')) observer.observe(el);
-  setInterval(schedule, 500);
+  setInterval(() => { if (isOpen()) schedule(); }, 500);
   return schedule;
 }

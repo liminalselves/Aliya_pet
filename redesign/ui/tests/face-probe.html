@@ -21,7 +21,7 @@ if(options.has('expressions')) {
  for(const name of pet.getExpressionNames()) {
   reset();pet.startExpression(name);
   for(let i=0;i<60;i++){pet.update(1/30);app._render();}
-  capture(({neutral:'中性',happy:'开心',angry:'生气',sad:'难过（流泪）',surprised:'惊讶',shy:'害羞',sleepy:'困倦',smug:'得意',speechless:'无语',worried:'担忧',serious:'认真',hit:'受击'})[name] ?? name);
+  capture(({neutral:'中性',happy:'开心',angry:'生气',annoyed:'不爽（只有怒气符号）',gloomy:'阴沉（只有黑脸）',sad:'难过（流泪）',surprised:'惊讶',shy:'害羞',sleepy:'困倦',smug:'得意',speechless:'无语',worried:'担忧',serious:'认真',hit:'受击'})[name] ?? name);
  }
 } else if(options.has('transition')) {
  for(const target of ['hit','speechless','sad']) {

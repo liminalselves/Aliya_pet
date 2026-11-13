@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod chat_window;
+mod screen_capture;
 mod miauth;
 
 use serde_json::json;
@@ -26,6 +27,12 @@ struct HitMask {
     data: Vec<u8>,
     /// 指针按下期间（拖动/抚摸）强制可交互，防止穿透打断事件流。
     interacting: bool,
+    /// 持久覆盖仅供 pet；不受动态掩码更新、手势锁或 TTL 影响。
+    full_click_through: bool,
+    /// 关闭覆盖后若没有新鲜剪影，安全穿透直到下一份真实 Alpha 掩码到达。
+    awaiting_alpha: bool,
+    /// 聊天入口的归一化客户区矩形，与人物 Alpha 分离；完全穿透时仅此按钮可点击。
+    launcher_rect: Option<[f64; 4]>,
     /// 静态界面（chat）：掩码长期有效，不做陈旧回退；动态剪影（pet）陈旧即回退可交互。
     sticky: bool,
     win_x: i32,
@@ -45,6 +52,9 @@ impl Default for HitMask {
             rows: 0,
             data: Vec::new(),
             interacting: false,
+            full_click_through: false,
+            awaiting_alpha: false,
+            launcher_rect: None,
             sticky: false,
             win_x: 0,
             win_y: 0,
@@ -58,6 +68,9 @@ impl Default for HitMask {
 }
 
 /// 按窗口标签区分的命中掩码表（pet / chat）。
+/// 托盘「置顶显示」勾选项；与穿透项同为 CheckMenuItem，需包一层才能分别注册为 managed state。
+struct TopMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
 type HitMaskState = Arc<Mutex<std::collections::HashMap<String, HitMask>>>;
 
 #[tauri::command]
@@ -78,6 +91,7 @@ fn update_hit_mask(
     region_y: Option<i32>,
     region_w: Option<i32>,
     region_h: Option<i32>,
+    launcher_rect: Option<[f64; 4]>,
 ) {
     if let Ok(mut map) = state.lock() {
         let m = map
@@ -87,6 +101,7 @@ fn update_hit_mask(
         m.rows = rows;
         m.data = data;
         m.interacting = interacting;
+        m.launcher_rect = launcher_rect.filter(|r| r.iter().all(|v| v.is_finite()) && r[2] > 0.0 && r[3] > 0.0);
         m.sticky = sticky.unwrap_or(false);
         m.win_x = win_x;
         m.win_y = win_y;
@@ -97,6 +112,30 @@ fn update_hit_mask(
             _ => None,
         };
         m.updated = std::time::Instant::now();
+        if m.cols > 0 && m.rows > 0 && m.data.len() == (m.cols as usize) * (m.rows as usize) {
+            m.awaiting_alpha = false;
+        }
+    }
+}
+
+/// 仅人物窗口的持久覆盖。关闭时不调用 set_ignore_cursor_events(false)：
+/// 由原来的 Alpha 命中线程决定光标处状态，绝不恢复为整个 Canvas 矩形命中。
+#[tauri::command]
+fn set_pet_click_through(state: tauri::State<HitMaskState>, enabled: bool) -> Result<(), String> {
+    let mut map = state.lock().map_err(|e| e.to_string())?;
+    let pet = map.entry("pet".to_string()).or_default();
+    pet.set_full_click_through(enabled);
+    Ok(())
+}
+
+impl HitMask {
+    fn set_full_click_through(&mut self, enabled: bool) {
+        if !enabled && self.full_click_through {
+            self.awaiting_alpha = self.cols == 0 || self.rows == 0
+                || self.updated.elapsed() > std::time::Duration::from_millis(1500);
+        }
+        self.full_click_through = enabled;
+        if enabled { self.interacting = false; }
     }
 }
 
@@ -105,6 +144,25 @@ fn update_hit_mask(
 fn want_ignore_at(mask: Option<&HitMask>, pt: (i32, i32), rect: Option<(i32, i32, i32, i32)>) -> Option<bool> {
     let m = mask?;
     let (x, y, w, h) = rect.unwrap_or((m.win_x, m.win_y, m.win_w, m.win_h));
+    if m.full_click_through || m.awaiting_alpha {
+        // 原生仍仅放行聊天按钮，绝不把人物剪影或 Canvas 矩形恢复为命中区。
+        // 归一化边界跟随当前原生窗口移动、缩放和 DPI，不依赖旧 IPC 屏幕坐标。
+        let lx = (pt.0 - x) as f64;
+        let ly = (pt.1 - y) as f64;
+        let over_launcher = w > 0 && h > 0 && lx >= 0.0 && ly >= 0.0
+            && lx < w as f64 && ly < h as f64
+            && m.launcher_rect.is_some_and(|[rx, ry, rw, rh]| {
+                let (bw, bh) = (rw * w as f64, rh * h as f64);
+                let (px, py) = (lx - rx * w as f64, ly - ry * h as f64);
+                if px < 0.0 || py < 0.0 || px >= bw || py >= bh { return false; }
+                // chat-launcher 是胶囊按钮；透明圆角也不拦截后方应用。
+                let radius = bw.min(bh) / 2.0;
+                let dx = px - px.clamp(radius, bw - radius);
+                let dy = py - py.clamp(radius, bh - radius);
+                dx * dx + dy * dy <= radius * radius
+            });
+        return Some(!over_launcher);
+    }
     let stale = !m.sticky && m.updated.elapsed() > std::time::Duration::from_millis(1500);
     // 指针按下期间整窗接收，拖动/抚摸的事件流不被穿透打断。
     if m.interacting { return Some(false); }
@@ -180,6 +238,57 @@ mod hit_mask_tests {
     }
 
     #[test]
+    fn full_override_survives_stale_gesture_and_restores_same_alpha() {
+        let mut pet = mask();
+        let chat = mask();
+        pet.updated -= std::time::Duration::from_secs(20);
+        pet.interacting = true;
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (-500, -500), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&chat), (70, 30), None), Some(false));
+        assert!(!pet.interacting);
+        pet.set_full_click_through(false);
+        pet.set_full_click_through(false);
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(true), "陈旧剪影不得恢复矩形拦截");
+        pet.updated = std::time::Instant::now();
+        pet.awaiting_alpha = false; // update_hit_mask 收到有效真实剪影后解除等待
+        assert_eq!(want_ignore_at(Some(&pet), (20, 30), None), Some(true));
+        assert_eq!(want_ignore_at(Some(&pet), (70, 30), None), Some(false));
+    }
+
+    #[test]
+    fn full_override_keeps_only_chat_launcher_clickable_across_dpi_and_restore() {
+        let mut pet = mask();
+        pet.launcher_rect = Some([0.2, 0.6, 0.6, 0.2]);
+        pet.set_full_click_through(true);
+        for (x, y, size) in [(10, 20, 100), (321, -123, 200)] {
+            let rect = Some((x, y, size, size));
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 2, y + size * 7 / 10), rect), Some(false), "按钮中心可点击");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 5, y + size * 6 / 10), rect), Some(true), "按钮透明圆角穿透");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size * 7 / 10, y + size / 10), rect), Some(true), "人物本体仍穿透");
+            assert_eq!(want_ignore_at(Some(&pet), (x + size / 10, y + size / 10), rect), Some(true), "原透明区仍穿透");
+        }
+        pet.updated -= std::time::Duration::from_secs(20);
+        pet.set_full_click_through(false);
+        assert!(pet.awaiting_alpha);
+        assert_eq!(want_ignore_at(Some(&pet), (60, 90), None), Some(false), "等候真实剪影时按钮不失效");
+        assert_eq!(want_ignore_at(Some(&pet), (80, 30), None), Some(true));
+        pet.launcher_rect = None;
+        assert_eq!(want_ignore_at(Some(&pet), (60, 90), None), Some(true), "隐藏后不保留不可见命中区");
+    }
+
+    #[test]
+    fn full_override_before_first_mask_stays_safe_on_restore() {
+        let mut pet = HitMask::default();
+        pet.set_full_click_through(true);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
+        pet.set_full_click_through(false);
+        assert!(pet.awaiting_alpha);
+        assert_eq!(want_ignore_at(Some(&pet), (0, 0), None), Some(true));
+    }
+
+    #[test]
     fn missing_cells_are_opaque_and_outside_keeps_state() {
         let mut m = mask();
         m.data.clear();
@@ -197,11 +306,15 @@ mod hit_mask_tests {
 /// 视线跟随不再要求光标悬在窗口上。
 #[cfg(windows)]
 fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, IsWindowVisible};
     std::thread::spawn(move || {
         let mut ignoring: std::collections::HashMap<&str, bool> = Default::default();
         let mut last_emit = (i32::MIN, i32::MIN);
         let mut last_emit_at = std::time::Instant::now();
+        // 窗口句柄在应用生命周期内不变：缓存一次，轮询里直接用 Win32 查询。
+        // tauri 的 is_visible()/hwnd() 每次都要投递到主线程事件循环再等结果，
+        // 60Hz × 2 个窗口的跨线程往返是空闲时主进程 CPU 的主要来源。
+        let mut handles: std::collections::HashMap<&str, isize> = Default::default();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(16));
             let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
@@ -212,7 +325,14 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                 let Some(win) = app.get_webview_window(label) else {
                     continue;
                 };
-                if !win.is_visible().unwrap_or(false) {
+                let hwnd = match handles.get(label) {
+                    Some(&h) => h,
+                    None => match win.hwnd() {
+                        Ok(h) => { handles.insert(label, h.0 as isize); h.0 as isize }
+                        Err(_) => continue,
+                    },
+                };
+                if unsafe { IsWindowVisible(hwnd as _) } == 0 {
                     if ignoring.insert(label, false).unwrap_or(false) {
                         let _ = win.set_ignore_cursor_events(false);
                     }
@@ -229,11 +349,11 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                     }
                 }
                 // pet/chat 均无边框；一次原生快照避免拖动、DPI 切换时依赖过期 IPC 坐标。
-                let rect = win.hwnd().ok().and_then(|hwnd| {
+                let rect = {
                     let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                    (unsafe { GetWindowRect(hwnd.0 as _, &mut r) } != 0)
+                    (unsafe { GetWindowRect(hwnd as _, &mut r) } != 0)
                         .then_some((r.left, r.top, r.right - r.left, r.bottom - r.top))
-                });
+                };
                 let want = {
                     let Ok(map) = state.lock() else { continue };
                     match want_ignore_at(map.get(label), (pt.x, pt.y), rect) {
@@ -386,6 +506,28 @@ fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), St
     show_settings_window(&app, target.as_deref())
 }
 
+/// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
+/// CheckMenuItem 注册进 managed state，命令只同步展示值，不反向改设置。
+/// pet 前端回写置顶设置（设置页改动时同步托盘勾选）；窗口置顶由前端自行应用。
+#[tauri::command]
+fn sync_top_menu(app: tauri::AppHandle, checked: bool) -> Result<(), String> {
+    if let Some(item) = app.try_state::<TopMenuItem>() {
+        item.0.set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_click_through_menu(
+    app: tauri::AppHandle,
+    checked: bool,
+) -> Result<(), String> {
+    if let Some(item) = app.try_state::<tauri::menu::CheckMenuItem<tauri::Wry>>() {
+        item.inner().set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     let win = app
@@ -446,16 +588,83 @@ fn toggle_pet_visibility(app: &tauri::AppHandle) {
                 chat_window::on_pet_hidden(app);
                 let _ = w.hide();
             }
-            _ => {
-                let _ = w.show();
-                let _ = w.unminimize();
-                chat_window::on_pet_shown(app);
-            }
+            _ => show_pet(app),
         }
     }
 }
 
+/// 显示桌宠并带回之前开着的 chat；已可见时不动。
+fn show_pet(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("pet") {
+        if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
+            return;
+        }
+        let _ = w.show();
+        let _ = w.unminimize();
+        chat_window::on_pet_shown(app);
+    }
+}
+
+/// 单实例结果：首个实例持有命名事件并等待唤醒；后来者已通知首个实例，应直接退出。
+#[cfg(windows)]
+enum SingleInstance {
+    Primary(Option<isize>),
+    Secondary,
+}
+
+/// 单实例：按用户会话创建命名自动复位事件。事件已存在说明桌宠在运行，
+/// 置位它让首个实例显示桌宠。首个实例的句柄刻意不关闭，随进程退出由系统释放。
+#[cfg(windows)]
+fn acquire_single_instance() -> SingleInstance {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent};
+    // 开发构建单独命名，不与已安装的正式版互斥。
+    let name = if cfg!(debug_assertions) {
+        "Local\\top.liminalselves.aliyapet.single-instance.dev"
+    } else {
+        "Local\\top.liminalselves.aliyapet.single-instance"
+    };
+    let name: Vec<u16> = name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+    // 创建失败时不阻止启动，避免事件异常让桌宠完全打不开。
+    if handle.is_null() {
+        return SingleInstance::Primary(None);
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe {
+            SetEvent(handle);
+            CloseHandle(handle);
+        }
+        return SingleInstance::Secondary;
+    }
+    SingleInstance::Primary(Some(handle as isize))
+}
+
+/// 首个实例等待后来者的唤醒信号，收到后在主线程显示桌宠。
+#[cfg(windows)]
+fn spawn_activation_listener(app: tauri::AppHandle, event: isize) {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    std::thread::spawn(move || loop {
+        if unsafe { WaitForSingleObject(event as _, INFINITE) } != WAIT_OBJECT_0 {
+            return;
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || show_pet(&handle));
+    });
+}
+
 fn main() {
+    // 快捷方式连点会并发拉起多个进程，后来者唤醒首个实例后直接退出。
+    #[cfg(windows)]
+    let activation_event = match acquire_single_instance() {
+        SingleInstance::Primary(event) => event,
+        SingleInstance::Secondary => return,
+    };
+
     let hit_mask: HitMaskState = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let hit_mask_for_setup = hit_mask.clone();
 
@@ -471,8 +680,11 @@ fn main() {
             get_auto_start,
             open_url,
             update_hit_mask,
+            set_pet_click_through,
             set_pet_bounds,
             show_settings,
+            sync_click_through_menu,
+            sync_top_menu,
             show_records,
             show_update,
             current_update_payload,
@@ -484,7 +696,8 @@ fn main() {
             chat_window::chat_layout,
             chat_window::set_chat_layout,
             miauth::miauth_begin,
-            miauth::miauth_end
+            miauth::miauth_end,
+            screen_capture::capture_screen
         ])
         // pet 移动/缩放时让已打开的 chat 跟随；settings/records 关闭时隐藏复用。
         .on_window_event(|window, event| {
@@ -518,24 +731,38 @@ fn main() {
             chat_window::setup(app.handle())?;
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
+            #[cfg(windows)]
+            if let Some(event) = activation_event {
+                spawn_activation_listener(app.handle().clone(), event);
+            }
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）
             let menu_main = MenuItem::with_id(app, "menu", "主菜单", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "显示 / 隐藏桌宠", true, None::<&str>)?;
+            // 聊天按钮可在设置中隐藏，托盘保留固定入口。
+            let chat = MenuItem::with_id(app, "chat", "打开聊天", true, None::<&str>)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
             let cycle = MenuItem::with_id(app, "cycle_size", "切换尺寸", true, None::<&str>)?;
             // 默认勾选（与 tauri.conf.json alwaysOnTop:true 一致）
             let top =
                 CheckMenuItem::with_id(app, "top", "置顶显示", true, true, None::<&str>)?;
             let reset = MenuItem::with_id(app, "reset_pos", "重置位置", true, None::<&str>)?;
+            // 托盘不依赖人物命中，可切换穿透、恢复可见度或打开设置。
+            let click_through =
+                CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
+            let reset_opacity =
+                MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
             let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出桌宠", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
-                    &menu_main, &show, &sep1, &cycle, &top, &reset, &sep2, &about, &quit,
+                    &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
+                    &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
+            app.manage(click_through.clone());
+            app.manage(TopMenuItem(top.clone()));
 
             let icon = app
                 .default_window_icon()
@@ -543,6 +770,7 @@ fn main() {
                 .clone();
 
             let top_item = top.clone();
+            let click_through_item = click_through.clone();
             TrayIconBuilder::new()
                 .icon(icon)
                 .tooltip("Aliya Pet")
@@ -554,6 +782,9 @@ fn main() {
                         let _ = show_settings_window(app, None);
                     },
                     "show" => toggle_pet_visibility(app),
+                    "chat" => {
+                        let _ = chat_window::show_chat(app.clone(), app.state(), app.state());
+                    }
                     "cycle_size" => {
                         let _ = app.emit_to(
                             "pet",
@@ -563,9 +794,9 @@ fn main() {
                     }
                     "top" => {
                         if let Some(w) = app.get_webview_window("pet") {
-                            let new_val = !top_item.is_checked().unwrap_or(true);
+                            // muda 在派发事件前已切换勾选：读到的就是目标值，不能再次反转。
+                            let new_val = top_item.is_checked().unwrap_or(true);
                             let _ = w.set_always_on_top(new_val);
-                            let _ = top_item.set_checked(new_val);
                             // 同步给前端更新 localStorage 与设置窗口控件
                             let _ = app.emit_to(
                                 "pet",
@@ -579,6 +810,23 @@ fn main() {
                             "pet",
                             "tray-action",
                             json!({ "action": "reset-position" }),
+                        );
+                    }
+                    "click_through" => {
+                        // muda 在派发事件前已切换勾选；转发目标值给 pet 保存和应用，
+                        // 再由 pet 同步菜单。不能再次反转，否则每次点击都会被撤销。
+                        let new_val = click_through_item.is_checked().unwrap_or(false);
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "full-click-through", "value": new_val }),
+                        );
+                    }
+                    "reset_opacity" => {
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "reset-opacity" }),
                         );
                     }
                     "about" => {

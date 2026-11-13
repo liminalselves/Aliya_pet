@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 import ts from 'typescript';
+import { reactionHost, reactionStub } from './reaction-stub.mjs';
 
 function load(name, imports = {}, globals = {}) {
   const code = ts.transpileModule(readFileSync(new URL(`../src/${name}.ts`, import.meta.url), 'utf8'), {
@@ -15,7 +16,7 @@ function load(name, imports = {}, globals = {}) {
   return exports;
 }
 
-function harness({ platform = 'browser', touchDevice = false } = {}) {
+function harness({ platform = 'browser', touchDevice = false, invoke = async () => {} } = {}) {
   let now = 0, area = 'body', speaking = false;
   const globals = { performance: { now: () => now } };
   const recognizer = load('interaction/petting-recognizer', {}, globals);
@@ -24,7 +25,7 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
   const { InteractionService } = load('interaction/interaction', {
     './petting-controller': petting, './procedural': procedural,
   }, globals);
-  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], actions = [];
+  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], displayCalls = [], actions = [];
   const target = {
     getInteractionParamInfo: () => ({ angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
       angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
@@ -35,24 +36,30 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     setEarInteraction(...v) { writes.ears = v; }, setFaceCheek(...v) { writes.cheek = v; },
   };
   const hitAreas = { hitAreaAt: () => area, isInHeadPetZone: () => area === 'head' };
-  const service = new InteractionService({ hitAreas, getTarget: () => target,
-    dialogue: { resolveSceneTag: (_scene, tag) => ({ entryId: tag, pages: [{ text: tag }] }) },
-    pettingHost: { isDialogueActive: () => speaking, playPettingDialogue() {} }, playCharacterAction: name => { actions.push(name); return true; } });
+  let app = null;
+  const service = new InteractionService({ hitAreas, getTarget: () => target, reactions: reactionStub(),
+    host: reactionHost({ actions,
+      canSpeak: () => !app._chatHoldsSpeech() && app._coordination.canSpeak('interaction'),
+      speak: line => app._speak(line, 'interaction') }),
+    pettingHost: { isDialogueActive: () => speaking } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
-  const { PetApp } = load('pet-app', { './platform': { platform, isTouchDevice: touchDevice,
+  const { PetApp } = load('pet-app', { './settings': load('settings'), '@tauri-apps/api/core': { invoke },
+    './platform': { platform, isTouchDevice: touchDevice,
     androidShell: () => ({ setInteracting: value => shellCalls.push(value),
+      setPetDisplay: (opacity, full) => displayCalls.push({ opacity, full }),
       setHitMask: (cols, rows, data) => androidMasks.push({ cols, rows, data }) }) } }, { ...globals, window });
   const { InteractionCoordinator } = load('interaction/coordination', {}, globals);
-  const app = Object.create(PetApp.prototype);
+  app = Object.create(PetApp.prototype);
   Object.assign(app, {
-    _canvas: { width: 800, addEventListener: (name, fn) => { canvasEvents[name] = fn; },
-      setPointerCapture: id => captures.push(id), getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 800 }) },
+    _canvas: { width: 800, style: {}, addEventListener: (name, fn) => { canvasEvents[name] = fn; },
+      setPointerCapture: id => captures.push(id), hasPointerCapture: id => captures.includes(id),
+      releasePointerCapture: id => captures.splice(captures.indexOf(id), 1),
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 800 }) },
     _interaction: service, _hitAreas: hitAreas,
     _coordination: new InteractionCoordinator(() => ({ interacting: service.isBusy, speaking, paused: false }), () => now),
     _behavior: { updateLookTarget() {}, clearLookTarget() {}, isDragging: false },
     _remoteChat: { open: false }, _chatView: { isOpen: false, pointerActive: false },
-    _dialogue: { resolveSceneTag: (_scene, tag) => ({ pages: [{ text: tag }] }) },
     _bubble: { play: r => lines.push(r.pages[0].text), cancel: () => assert.fail('点击不能取消现有气泡') },
     _activePointerId: null, _leftDown: false, _touchPetting: false, _touchTapCandidate: false,
     _dragCandidate: false, _dragging: false, _wrapWindow: false, _scaleFactor: 1,
@@ -61,15 +68,13 @@ function harness({ platform = 'browser', touchDevice = false } = {}) {
     _hitMaskSend: args => masks.push(args), _settings: { mirror: false },
     _syncWindowMetrics() {}, _cancelSnapAnimation() {}, _moveWindowBy() {}, _onDragFinished() {},
   });
-  service.playClickDialogue = tag => app._playInteraction(tag);
-  service.isDialogueActive = () => speaking;
   app._wirePointerEvents();
   const event = (overrides = {}) => ({ pointerId: 1, pointerType: 'mouse', isPrimary: true,
     button: 0, buttons: 1, clientX: 400, clientY: 200, screenX: 400, screenY: 200, ...overrides });
   const ctx = (x = 400, secondary = true) => ({ normX: .5, normY: .2, pxX: x, pxY: 200,
     dtSeconds: 1 / 60, leftPressed: !secondary, isSecondary: secondary });
   const advance = ms => { now += ms; service.tick(ms); };
-  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
+  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, displayCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
     area: value => { area = value; }, speaking: value => { speaking = value; }, setTime: value => { now = value; },
     click(overrides = {}) { canvasEvents.pointerdown(event(overrides)); canvasEvents.pointerup(event({ ...overrides, buttons: 0 })); },
     stroke() { for (let i = 1; i <= 90; i++) { now += 1000 / 60;
@@ -302,4 +307,144 @@ test('监听降级提示区域加入Windows命中掩码，成功移除提示后�
   assert.deepEqual(fills, [[12, 6, 25, 13]]);assert.equal(h.masks.at(-1).data[8 * 96 + 14], 1);
   h.app._shellSyncNotice = null; h.setTime(400); h.app._maybeSendHitMask();
   assert.ok(h.masks.at(-1).data.every(v => v === 0));
+});
+
+test('人物合成透明度与原始Alpha剪影分离，五档显示均不修改命中阈值', async () => {
+  const h = harness({ platform: 'tauri' });
+  const pixels = new Uint8ClampedArray(96 * 96 * 4);
+  for (let i = 0; i < 96 * 96; i++) pixels[i * 4 + 3] = i % 2 ? 255 : 0;
+  Object.assign(h.app, { _model: { isReady: () => true }, _chatView: { hitRects: () => [] },
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
+      clearRect() {}, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {}, fillRect() {},
+      getImageData: () => ({ data: pixels }),
+    },
+  });
+  for (const [i, opacity] of [100, 75, 50, 25, 0].entries()) {
+    h.app._applyPetDisplay({ petOpacity: opacity, fullClickThrough: false });
+    h.setTime((i + 1) * 1200); h.app._maybeSendHitMask();
+    assert.equal(h.app._canvas.style.opacity, String(opacity / 100));
+    assert.ok(h.masks.at(-1).data.every((v, j) => v === j % 2));
+    assert.equal(h.app._fullClickThrough, opacity === 0, '0%自动安全穿透，不改变显式开关');
+  }
+  await h.app._displaySync;
+});
+
+test('完全穿透结束真实手势并释放capture，关闭后保留透明格并立即恢复互动', async () => {
+  const h = harness({ platform: 'tauri' });
+  h.app._hitMaskData[0] = 0;
+  const original = h.app._hitMaskData;
+  h.canvasEvents.pointerdown(h.event());
+  h.canvasEvents.pointermove(h.event({ clientX: 420, screenX: 420 }));
+  assert.equal(h.app._dragging, true); assert.deepEqual(h.captures, [1]);
+  h.app._applyPetDisplay({ petOpacity: 50, fullClickThrough: true });
+  assert.deepEqual(h.captures, []); assert.equal(h.app._activePointerId, null);
+  assert.equal(h.app._dragging, false); assert.equal(h.app._leftDown, false);
+  const lines = h.lines.length;
+  h.click(); h.windowEvents.blur();
+  assert.equal(h.lines.length, lines, 'full时不触发点击');
+  assert.equal(h.app._hitMaskData, original, '不能清空或替换真实剪影');
+  h.app._applyPetDisplay({ petOpacity: 50, fullClickThrough: false });
+  assert.equal(h.masks.at(-1).data[0], 0); assert.equal(h.masks.at(-1).data[1], 1);
+  h.click(); assert.equal(h.lines.length, lines + 1, '半透明人物恢复真实点击路径');
+  await h.app._displaySync;
+});
+
+test('人物完全穿透及0%仍发布聊天按钮边界，移动和隐藏不被相同Alpha去重吞掉', async () => {
+  const h = harness({ platform: 'tauri' });
+  let rect = { left: 300, top: 600, width: 120, height: 40 };
+  const pixels = new Uint8ClampedArray(96 * 96 * 4);
+  const launcher = { hidden: false, getBoundingClientRect: () => rect };
+  Object.assign(h.app, { _chatLauncher: launcher, _model: { isReady: () => true },
+    _chatView: { hitRects: () => [] },
+    _hitMaskCanvas: { width: 96, height: 96 }, _hitMaskCtx: {
+      clearRect() {}, save() {}, translate() {}, scale() {}, drawImage() {}, restore() {}, fillRect() {},
+      getImageData: () => ({ data: pixels }),
+    },
+  });
+  for (const opacity of [100, 0]) {
+    h.app._applyPetDisplay({ petOpacity: opacity, fullClickThrough: true });
+    h.setTime(200); h.app._maybeSendHitMask();
+    assert.deepEqual(Array.from(h.masks.at(-1).launcherRect), [300 / 800, 600 / 800, 120 / 800, 40 / 800]);
+    const before = h.lines.length; h.click();
+    assert.equal(h.lines.length, before, '保留按钮边界不应恢复人物互动');
+  }
+  const sent = h.masks.length;
+  rect = { ...rect, left: 301 };
+  h.setTime(240); h.app._maybeSendHitMask();
+  assert.equal(h.masks.length, sent + 1, '按钮几何变化绕过120ms节流及相同Alpha去重');
+  assert.equal(h.masks.at(-1).launcherRect[0], 301 / 800);
+  launcher.hidden = true;
+  h.setTime(260); h.app._maybeSendHitMask();
+  assert.equal(h.masks.at(-1).launcherRect, null, '隐藏按钮后删除原生命中例外');
+  await h.app._displaySync;
+});
+
+test('快速切换通过串行IPC收敛最后状态，只调用pet专属命令', async () => {
+  const calls = []; let active = 0, maximum = 0, release;
+  const h = harness({ platform: 'tauri', invoke: async (command, args) => {
+    active++; maximum = Math.max(maximum, active);
+    if (!calls.length) await new Promise(resolve => { release = resolve; });
+    calls.push([command, args]); active--;
+  } });
+  h.app._applyPetDisplay({ petOpacity: 100, fullClickThrough: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  for (let i = 0; i < 20; i++) h.app._applyPetDisplay({ petOpacity: 50, fullClickThrough: i % 2 === 0 });
+  assert.equal(calls.length, 0, '首个请求未完成前不得发送更新的模式');
+  release(); await h.app._displaySync;
+  assert.equal(maximum, 1); assert.equal(h.app._fullClickThrough, false);
+  assert.equal(calls.at(-2)[0], 'set_pet_click_through'); assert.equal(calls.at(-2)[1].enabled, false);
+  assert.equal(calls.at(-1)[0], 'sync_click_through_menu'); assert.equal(calls.at(-1)[1].checked, false);
+  assert.ok(calls.every(([name]) => ['set_pet_click_through', 'sync_click_through_menu'].includes(name)));
+});
+
+test('Android主界面始终可交互，悬浮窗0%与完全穿透通过独立桥接恢复', () => {
+  const main = harness({ platform: 'android' });
+  main.app._applyPetDisplay({ petOpacity: 0, fullClickThrough: true });
+  assert.equal(main.app._fullClickThrough, false, '不能禁用含聊天的Activity');
+  const overlay = harness({ platform: 'android' }); overlay.app._wrapWindow = true;
+  overlay.app._applyPetDisplay({ petOpacity: 0, fullClickThrough: false });
+  assert.equal(overlay.app._fullClickThrough, true);
+  overlay.app._applyPetDisplay({ petOpacity: 100, fullClickThrough: false });
+  assert.equal(overlay.app._fullClickThrough, false);
+  assert.deepEqual(overlay.displayCalls, [{ opacity: 0, full: false }, { opacity: 100, full: false }]);
+  overlay.click(); assert.equal(overlay.lines.length, 1);
+});
+
+test('旧配置升级及非法透明度安全回退，显示与穿透持久化独立于聊天设置', () => {
+  let raw = null;
+  const settings = load('settings', {}, { localStorage: { getItem: () => raw, setItem: (_key, value) => { raw = value; } } });
+  raw = JSON.stringify({ mirror: true, chatBackgroundDim: .2 });
+  assert.equal(settings.loadSettings().petOpacity, 100); assert.equal(settings.loadSettings().fullClickThrough, false);
+  for (const value of [null, '', '0', 'bad', Infinity]) assert.equal(settings.clampPetOpacity(value), 100);
+  assert.equal(settings.clampPetOpacity(-10), 0); assert.equal(settings.clampPetOpacity(130), 100);
+  assert.equal(settings.clampPetOpacity(52), 50);
+  const saved = { ...settings.loadSettings(), petOpacity: 25, fullClickThrough: true };
+  settings.saveSettings(saved); const restored = settings.loadSettings();
+  assert.equal(restored.petOpacity, 25); assert.equal(restored.fullClickThrough, true);
+  assert.equal(restored.mirror, true); assert.equal(restored.chatBackgroundDim, .2);
+});
+
+test('Android身体触摸：手指轻微滚动仍算点击且不触发前端拖动，长距离轻扫既不点击也不拖动', () => {
+  for (const wrap of [true, false]) {
+    const h = harness({ platform: 'android' }); h.app._wrapWindow = wrap; h.area('body');
+    const moved = [];
+    h.app._moveWindowBy = (...d) => moved.push(d);
+    h.canvasEvents.pointerdown(h.event({ pointerType: 'touch' }));
+    h.canvasEvents.pointermove(h.event({ pointerType: 'touch', clientX: 410, screenX: 410 }));
+    assert.equal(h.app._dragging, false, '10px 手指滚动不是拖动');
+    h.canvasEvents.pointerup(h.event({ pointerType: 'touch', buttons: 0, clientX: 410, screenX: 410 }));
+    h.advance(100);
+    assert.equal(h.service.procedural.isPlaying, true, '容差内仍是一次点击');
+    for (let i = 0; i < 80; i++) h.advance(16);
+    const lines = h.lines.length;
+    h.advance(4000);
+    h.canvasEvents.pointerdown(h.event({ pointerType: 'touch' }));
+    h.canvasEvents.pointermove(h.event({ pointerType: 'touch', clientX: 480, screenX: 480 }));
+    h.canvasEvents.pointerup(h.event({ pointerType: 'touch', buttons: 0, clientX: 480, screenX: 480 }));
+    h.advance(100);
+    assert.equal(h.app._dragging, false); assert.deepEqual(moved, []);
+    assert.equal(h.service.procedural.isPlaying, false, '轻扫不算点击');
+    assert.equal(h.lines.length, lines);
+    assert.equal(h.app._dragCandidate, false); assert.equal(h.app._touchClickCandidateActive, false);
+  }
 });

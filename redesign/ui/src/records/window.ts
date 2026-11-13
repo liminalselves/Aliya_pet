@@ -8,6 +8,7 @@ import { MskMessageRenderer, type MskRendered } from '../chat/rendering/renderer
 import { normalizeRegexRules } from '../chat/rendering/rules';
 import type { MskApiCaller } from '../chat/rendering/types';
 import './records.css';
+import { hideToast, showToast } from '../toast';
 
 const HISTORY_FETCH_LIMIT = 100;
 const HISTORY_ROUND_LIMIT = 50;
@@ -94,7 +95,6 @@ class RecordsView {
   private readonly meta: HTMLElement;
   private readonly refreshButton: HTMLButtonElement;
   private readonly list: HTMLElement;
-  private readonly status: HTMLElement;
   private readonly toBottom: HTMLButtonElement;
   private operation: AbortController | null = null;
   private renderer: MskMessageRenderer | null = null;
@@ -104,7 +104,6 @@ class RecordsView {
   private signature = '';
   private loading = false;
   private hasContent = false;
-  private statusTimer = 0;
   private pinFrame = 0;
   private lastFocusLoad = 0;
 
@@ -114,7 +113,6 @@ class RecordsView {
         <div class="records-brand"><span class="records-logo">${ICON_LOGO}</span><div class="records-heading"><span class="records-kicker">ALIYA ARCHIVE</span><h1>聊天记录</h1></div></div>
         <div class="records-side"><div class="records-session"><span class="records-title"></span><span class="records-meta"></span></div><button type="button" class="records-refresh" title="刷新" aria-label="刷新">${ICON_REFRESH}</button></div>
       </header>
-      <div class="records-status" role="status" aria-live="polite"></div>
       <section class="records-list" aria-label="聊天记录"></section>
       <button type="button" class="records-tobottom" title="回到底部" aria-label="回到底部">${ICON_DOWN}</button>
     </main>`;
@@ -122,7 +120,6 @@ class RecordsView {
     this.meta = this.app.querySelector('.records-meta')!;
     this.refreshButton = this.app.querySelector('.records-refresh')!;
     this.list = this.app.querySelector('.records-list')!;
-    this.status = this.app.querySelector('.records-status')!;
     this.toBottom = this.app.querySelector('.records-tobottom')!;
     this.refreshButton.onclick = () => { void this.load('manual'); };
     this.toBottom.onclick = () => { this.list.scrollTo({ top: this.list.scrollHeight, behavior: 'smooth' }); };
@@ -158,7 +155,7 @@ class RecordsView {
     this.loading = true;
     this.refreshButton.disabled = true;
     this.refreshButton.classList.add('loading');
-    this.setStatus('');
+    hideToast();
     // 无闪烁刷新：已有内容保留到本次数据落地再整体替换，只有空列表才上骨架屏。
     const animate = !this.hasContent;
     if (!this.hasContent) this.showSkeleton();
@@ -206,7 +203,7 @@ class RecordsView {
         return;
       }
       if (mode === 'manual' && signature === this.signature && this.hasContent) {
-        this.setStatus('已是最新', 'info', true);
+        showToast('已是最新');
         if (stickToBottom) this.pinBottom();
         return;
       }
@@ -224,7 +221,7 @@ class RecordsView {
       this.afterRender(stickToBottom ? 'bottom' : 'preserve', prevScroll);
     } catch (error) {
       if (operation.signal.aborted) return;
-      if (this.hasContent) this.setStatus(error instanceof Error ? error.message : '记录读取失败，请稍后重试。', 'error', true);
+      if (this.hasContent) showToast(error instanceof Error ? error.message : '记录读取失败，请稍后重试。', { kind: 'error' });
       else this.showEmpty('记录读取失败', error instanceof Error ? error.message : '请稍后重试。');
     } finally {
       if (this.operation === operation) {
@@ -332,7 +329,7 @@ class RecordsView {
       void this.list.offsetWidth;
       this.list.classList.add('swap-in');
     }
-    if (!target && options.targetId) this.setStatus('目标消息已删除或不在可见记录中。', 'error', true);
+    if (!target && options.targetId) showToast('目标消息已删除或不在可见记录中。', { kind: 'error' });
     return count;
   }
 
@@ -387,16 +384,6 @@ class RecordsView {
     this.toBottom.classList.toggle('show', !this.isAtBottom());
   }
 
-  private setStatus(text: string, kind: 'info' | 'error' = 'info', transient = false): void {
-    window.clearTimeout(this.statusTimer);
-    // 收起时保留旧文字直到淡出结束：先清空会让胶囊在淡出帧里塌成空壳。
-    this.status.classList.toggle('show', text !== '');
-    if (!text) return;
-    this.status.textContent = text;
-    this.status.dataset.kind = kind;
-    if (transient && text) this.statusTimer = window.setTimeout(() => this.setStatus(''), 4200);
-  }
-
   private showSkeleton(): void {
     const frag = document.createDocumentFragment();
     for (const [width, side, lines] of [[46, 'left', 2], [30, 'right', 1], [58, 'left', 3], [36, 'right', 1], [42, 'left', 2]] as const) {
@@ -423,7 +410,7 @@ class RecordsView {
       button.classList.add('done');
       window.setTimeout(() => { button.textContent = '重新播放'; button.classList.remove('done'); }, 1600);
     } catch (error) {
-      this.setStatus(error instanceof Error ? error.message : '重新播放失败，请重试。', 'error', true);
+      showToast(error instanceof Error ? error.message : '重新播放失败，请重试。', { kind: 'error' });
     } finally {
       button.disabled = false;
       button.classList.remove('busy');
@@ -467,7 +454,7 @@ class RecordsView {
       empty.append(action);
     }
     this.list.append(empty);
-    this.setStatus('');
+    hideToast();
   }
 
   private clearRendering(): void {

@@ -107,19 +107,24 @@ fn run_listener(
             return;
         }
         match listener.accept() {
-            Ok((mut stream, _)) => match serve_connection(&mut stream, &session) {
-                ConnResult::Authorized(query) => {
-                    // 仅发往 chat 窗口：token 不进入全局事件。
-                    let _ = app.emit_to(
-                        "chat",
-                        "miauth-callback",
-                        json!({ "ok": true, "query": query, "session": session }),
-                    );
-                    take_if_current(&shared, &listener);
-                    return;
+            Ok((mut stream, _)) => {
+                // Windows 上 accept 出的连接继承监听 socket 的非阻塞模式，需复位，
+                // 否则 read_request_head 的 3 秒读超时失效，拆包的请求头会被当成 400。
+                let _ = stream.set_nonblocking(false);
+                match serve_connection(&mut stream, &session) {
+                    ConnResult::Authorized(query) => {
+                        // 仅发往 chat 窗口：token 不进入全局事件。
+                        let _ = app.emit_to(
+                            "chat",
+                            "miauth-callback",
+                            json!({ "ok": true, "query": query, "session": session }),
+                        );
+                        take_if_current(&shared, &listener);
+                        return;
+                    }
+                    ConnResult::Ignored => {} // favicon / 其他路径 / session 不符：继续等待
                 }
-                ConnResult::Ignored => {} // favicon / 其他路径 / session 不符：继续等待
-            },
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(ACCEPT_POLL);
             }
@@ -430,6 +435,38 @@ mod tests {
             classify_request(&head, SESSION),
             RequestOutcome::Authorized(q) if q == format!("session={SESSION}")
         ));
+    }
+
+    #[test]
+    fn serve_connection_waits_for_delayed_head_on_nonblocking_listener() {
+        // 生产监听 socket 是非阻塞的，Windows 上 accept 出的连接会继承该模式：
+        // 不复位的话读超时失效，请求头晚到几十毫秒就会被回 400。
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sender = std::thread::spawn(move || {
+            let mut client = TcpStream::connect(addr).unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+            client
+                .write_all(format!("GET /miauth/callback?session={SESSION} HTTP/1.1
+Host: x
+
+").as_bytes())
+                .unwrap();
+            let mut sink = String::new();
+            let _ = std::io::Read::read_to_string(&mut client, &mut sink);
+        });
+        let mut server = loop {
+            match listener.accept() {
+                Ok((s, _)) => break s,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(5)),
+                Err(e) => panic!("{e}"),
+            }
+        };
+        server.set_nonblocking(false).unwrap();
+        assert!(matches!(serve_connection(&mut server, SESSION), ConnResult::Authorized(_)));
+        drop(server);
+        sender.join().unwrap();
     }
 
     #[test]

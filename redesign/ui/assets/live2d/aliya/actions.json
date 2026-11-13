@@ -1,15 +1,9 @@
 {
-  "_comment": "动作清单元数据：自动动作抽取权重与情绪亲和。category: idle=待机演出, emotion=情绪表达, reaction=互动反应。moods: 情绪下抽取倍率（缺省 1）。weight: 基础权重。修改后重新构建即可（随模型目录分发）。",
+  "_comment": "动作资源附加数据：只放动作播放期间的整套眼型/替换嘴型时间轴（face，见 src/face-cue.ts）。动作名、分类、待机权重在 src/catalog.ts。",
   "actions": [
-    { "name": "nod",     "category": "idle",    "weight": 1.0, "moods": { "happy": 1.5, "shy": 2.5 } },
-    { "name": "sway",    "category": "idle",    "weight": 1.2, "moods": { "happy": 1.6, "sad": 2.0, "smug": 2.0 } },
-    { "name": "shake",   "category": "idle",    "weight": 0.8, "moods": { "angry": 2.5 } },
-    { "name": "stretch", "category": "idle",    "weight": 0.9, "moods": { "sleepy": 2.5 } },
-    { "name": "wave",    "category": "emotion", "weight": 0.7, "moods": { "happy": 2.5, "shy": 1.2 } },
-    { "name": "doubt",   "category": "emotion", "weight": 0.8, "moods": { "curious": 3.0, "speechless": 2.0 } },
-    { "name": "angry",   "category": "emotion", "weight": 0.6, "moods": { "angry": 3.5 } },
-    { "name": "yawn",    "category": "idle",    "weight": 0.7, "moods": { "sleepy": 3.5 } },
-    { "name": "cheerful_bounce", "category": "emotion", "weight": 0.45, "moods": { "happy": 3.0, "smug": 1.5, "sad": 0.2, "sleepy": 0.2, "angry": 0.2 } },
-    { "name": "shy_sway", "category": "emotion", "weight": 0.4, "moods": { "shy": 4.0, "happy": 2.0, "angry": 0.2, "sad": 0.4, "sleepy": 0.4 } }
+    { "name": "puff", "face": [{ "from": 0.32, "to": 2.55, "mouth": "puff" }] },
+    { "name": "kiss", "face": [{ "from": 0.42, "to": 1.45, "mouth": "pucker" }] },
+    { "name": "sob", "face": [{ "from": 0.62, "to": 2.75, "eye": "sad" }] },
+    { "name": "deadpan", "face": [{ "from": 0.38, "to": 2.6, "eye": "speechless" }] }
   ]
 }

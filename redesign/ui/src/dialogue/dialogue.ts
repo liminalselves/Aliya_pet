@@ -1,12 +1,10 @@
 /**
- * 台词系统（移植自 Flutter 版，逻辑等价）：
- *   - 场景文件加载（/dialogue/*.json）
+ * 台词工具（移植自 Flutter 版）：
  *   - 动态变量：{player_year}/{aliya_year}（Aliya 与玩家相差 1000 年）等
  *   - 分页：反斜杠人工分页符优先，否则按标点/词智能分页
- *   - 抽取：shuffle_bag 洗牌袋（一轮内不重复）、tag 分组袋、minRepeatDays 冷却
+ *   - 抽取：按场景洗牌袋（一轮内不重复）、minRepeatDays 冷却、标签屏蔽
+ * 台词数据随互动反应组一起存放（assets/interaction/reactions.json）。
  */
-
-import { assetUrl } from '../embed';
 
 export interface DialogueEntry {
   id?: string;
@@ -20,9 +18,6 @@ export interface DialogueEntry {
 }
 
 export interface DialogueFile {
-  characterId: string;
-  scene: string;
-  selectionMode?: string;
   singlePageMaxChars?: number;
   maxPages?: number;
   entries: DialogueEntry[];
@@ -212,52 +207,47 @@ export function paginate(
   return texts.map((t, i) => ({ index: i, text: t }));
 }
 
-// ---------- 仓库 + 抽取 ----------
-
-const SCENE_URLS: Record<string, string> = {
-  user_click: assetUrl('/dialogue/user_click.json'),
-  interaction: assetUrl('/dialogue/interaction.json'),
-  head_petting: assetUrl('/dialogue/head_petting.json'),
-  morning: assetUrl('/dialogue/time/morning.json'),
-  forenoon: assetUrl('/dialogue/time/forenoon.json'),
-  lunch: assetUrl('/dialogue/time/lunch.json'),
-  afternoon: assetUrl('/dialogue/time/afternoon.json'),
-  dinner: assetUrl('/dialogue/time/dinner.json'),
-  evening: assetUrl('/dialogue/time/evening.json'),
-  late_night: assetUrl('/dialogue/time/late_night.json'),
-  deep_night: assetUrl('/dialogue/time/deep_night.json'),
-};
+// ---------- 台词袋 ----------
 
 const DAY_MS = 24 * 3600 * 1000;
 
+/**
+ * 按场景抽台词：洗牌袋（一轮内不重复）、可选权重、minRepeatDays 冷却、标签屏蔽。
+ * 场景由上层注册（互动反应的每个触发键一个场景，见 interaction/reactions.ts）。
+ */
 export class DialogueStore {
   private _files = new Map<string, DialogueFile>();
   private _bags = new Map<string, DialogueEntry[]>();
-  private _tagBags = new Map<string, DialogueEntry[]>();
 
-  async loadAll(): Promise<void> {
-    const entries = Object.entries(SCENE_URLS);
-    await Promise.all(
-      entries.map(async ([scene, url]) => {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) return;
-          const file = (await res.json()) as DialogueFile;
-          this._files.set(scene, file);
-        } catch {
-          // 场景文件缺失：该场景静默无台词
-        }
-      })
-    );
+  /** 注册/替换一个场景的台词。 */
+  setScene(scene: string, file: DialogueFile): void {
+    this._files.set(scene, file);
+    this._bags.delete(scene);
   }
 
   findScene(scene: string): DialogueFile | undefined {
     return this._files.get(scene);
   }
 
+  private _excludedTags = new Set<string>();
+
+  /** 停用带指定标签的台词（如隐藏猫耳时的 ears）；变化时清空洗牌袋立即生效。 */
+  setExcludedTags(tags: Iterable<string>): void {
+    const next = new Set(tags);
+    if (next.size === this._excludedTags.size && [...next].every((t) => this._excludedTags.has(t))) return;
+    this._excludedTags = next;
+    this._bags.clear();
+  }
+
+  /** 当前可用（启用、非空、未被标签屏蔽）的台词。 */
+  candidates(scene: string): DialogueEntry[] {
+    return this._candidates(scene);
+  }
+
   private _candidates(scene: string): DialogueEntry[] {
     return (this._files.get(scene)?.entries ?? []).filter(
-      (e) => e.enabled !== false && !!e.text?.trim()
+      (e) => e.enabled !== false && !!e.text?.trim() &&
+        !(this._excludedTags.size > 0 && e.tags?.some((t) => this._excludedTags.has(t)))
     );
   }
 
@@ -309,98 +299,30 @@ export class DialogueStore {
     return result;
   }
 
-  /** 按场景抽取一条（洗牌袋 / 加权）。 */
-  select(scene: string): DialogueEntry {
-    const candidates = this._candidates(scene);
-    const now = Date.now();
-    if (candidates.length === 0) {
-      return { id: 'fallback', text: '今天也一起加油吧。', enabled: true };
-    }
-    const available = this._applyCooldown(candidates, now);
-
-    let entry: DialogueEntry;
-    if (this._files.get(scene)?.selectionMode?.toLowerCase() === 'shuffle_bag') {
-      let bag = this._bags.get(scene);
-      if (!bag || bag.length === 0) {
-        bag = this._buildBag(available);
-        this._bags.set(scene, bag);
-      }
-      entry = bag.shift()!;
-    } else {
-      entry = this._weightedPick(available);
-    }
-    entry.lastSelectedDate = now;
-    return entry;
-  }
-
-  /** 按场景 + tag 抽取（抚摸台词分组）。 */
-  selectByTag(
-    scene: string,
-    tag: string,
-    excludeIds?: Set<string>,
-    weightBoost = 0
-  ): DialogueEntry | null {
-    let entries = this._candidates(scene).filter((e) =>
-      e.tags?.includes(tag)
-    );
+  /**
+   * 从场景洗牌袋抽一条；场景为空（或全部被屏蔽）返回 null。
+   * excludeIds 尽量避开最近播过的（全被排除时忽略该限制）；
+   * weightBoost 放大所有条目的权重差异（仅重建袋时生效）。
+   */
+  select(scene: string, excludeIds?: Set<string>, weightBoost = 0): DialogueEntry | null {
+    let entries = this._candidates(scene);
     if (entries.length === 0) return null;
     if (excludeIds && excludeIds.size > 0) {
-      const filtered = entries.filter(
-        (e) => !e.id || !excludeIds.has(e.id)
-      );
+      const filtered = entries.filter((e) => !e.id || !excludeIds.has(e.id));
       if (filtered.length > 0) entries = filtered;
     }
     const now = Date.now();
-    const available = this._applyCooldown(entries, now);
-
-    const bagKey = `${scene}:${tag}`;
-    let bag = this._tagBags.get(bagKey);
+    let bag = this._bags.get(scene);
+    // 袋内条目可能已被屏蔽或冷却：取到不可用的就丢弃，袋空再重建。
+    const usable = new Set(this._applyCooldown(entries, now));
+    while (bag && bag.length > 0 && !usable.has(bag[0])) bag.shift();
     if (!bag || bag.length === 0) {
-      bag = this._buildBag(available, weightBoost);
-      this._tagBags.set(bagKey, bag);
+      bag = this._buildBag([...usable], weightBoost);
+      this._bags.set(scene, bag);
     }
     const entry = bag.shift()!;
     entry.lastSelectedDate = now;
     return entry;
-  }
-
-  private _weightedPick(available: DialogueEntry[]): DialogueEntry {
-    const hasWeight = available.some((e) => (e.weight ?? 0) > 0);
-    if (!hasWeight) {
-      return available[Math.floor(Math.random() * available.length)];
-    }
-    const total = available.reduce(
-      (s, e) => s + Math.max(0.01, e.weight ?? 1.0),
-      0
-    );
-    const roll = Math.random() * total;
-    let acc = 0;
-    for (const e of available) {
-      acc += Math.max(0.01, e.weight ?? 1.0);
-      if (roll <= acc) return e;
-    }
-    return available[available.length - 1];
-  }
-
-  /** 闲聊仅使用通用台词与当前时段，不抽取触摸/拖动等事件台词。 */
-  selectRandom(): DialogueEntry | null {
-    const all: DialogueEntry[] = [];
-    for (const scene of ['user_click', timeScene(new Date())]) {
-      all.push(...this._candidates(scene));
-    }
-    if (all.length === 0) return null;
-    const now = Date.now();
-    const available = this._applyCooldown(all, now);
-    const entry = this._weightedPick(available);
-    entry.lastSelectedDate = now;
-    return entry;
-  }
-
-  /** 随机解析一条（默认分页配置）。 */
-  resolveRandom(): ResolvedDialogue | null {
-    const entry = this.selectRandom();
-    if (!entry) return null;
-    return this.resolveEntry(entry);
   }
 
   /** 解析一条完整台词：变量替换 + 分页。 */
@@ -418,19 +340,8 @@ export class DialogueStore {
     return { entryId: entry.id ?? '', finalText, pages };
   }
 
-  resolveScene(scene: string): ResolvedDialogue | null {
-    const entry = this.select(scene);
-    const file = this._files.get(scene);
-    return this.resolveEntry(entry, file?.singlePageMaxChars, file?.maxPages);
-  }
-
-  resolveSceneTag(
-    scene: string,
-    tag: string,
-    excludeIds?: Set<string>,
-    weightBoost = 0
-  ): ResolvedDialogue | null {
-    const entry = this.selectByTag(scene, tag, excludeIds, weightBoost);
+  resolveScene(scene: string, excludeIds?: Set<string>, weightBoost = 0): ResolvedDialogue | null {
+    const entry = this.select(scene, excludeIds, weightBoost);
     if (!entry) return null;
     const file = this._files.get(scene);
     return this.resolveEntry(entry, file?.singlePageMaxChars, file?.maxPages);

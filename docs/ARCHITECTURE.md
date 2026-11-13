@@ -28,8 +28,15 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 - **Framework**（TypeScript）+ **Core** 6.0.1（wasm，内嵌于
   `live2dcubismcore.js`），取自 `third_party/cubism-web-sdk/`。
 - Vite 别名 `@framework/*` 指向 `third_party/cubism-web-sdk/Framework/src`。
-- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调），
+- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调）；拖动、抚摸、点击反应期间及结束后 400ms
+  临时 60fps（省电模式不升），实测单帧 update≈1ms、render≈0.07ms（Chromium，126 网格），
   Windows `preserveDrawingBuffer: true` 消除窗口缩放闪烁（Android 关闭，见 `ANDROID.md`）。
+- 帧调度（`PetApp._scheduleFrame`）：帧率上限低于屏幕刷新率时先 `setTimeout` 睡到下一帧前
+  6ms，再用 rAF 对齐垂直同步，醒来的首个 vsync 直接渲染。不能只靠 rAF 空转判间隔：144Hz 屏
+  每秒会唤醒 144 次而只渲染 30 次，rAF 时间戳又比当前时刻早几毫秒，按它判间隔会再多空转一帧。
+- Windows 穿透掩码要把画布读回 CPU：互动中 120ms 采样一次，静置 250ms；几何变化立即重采。
+  Rust 光标轮询线程（16ms）缓存窗口句柄、直接调 Win32 `IsWindowVisible`/`GetWindowRect`，
+  不走 tauri 的 `is_visible()`/`hwnd()`（每次都要投递到主线程再等结果）。chat 窗隐藏时掩码轮询暂停。
 - 渲染暂停：后台/熄屏时停止渲染循环（`PetApp.setPaused`）。
 
 ## 布局与适配（与旧版对齐的两个关键算法）
@@ -104,9 +111,9 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - 存储：localStorage（`aliya_pet_settings_v1`），同一 Android App 的多个
   WebView 共享 → `posX/posY`（CSS px）、scale、镜像、贴边、省电等。
 - Windows 跨窗口同步：设置窗口 → pet 走 `settings-changed`，托盘 → pet 走
-  `tray-action`，pet 广播回设置窗口（`pet-mood` 情绪同理）。Android 设置页
+  `tray-action`，pet 广播回设置窗口（`pet-state` 状态同理）。Android 设置页
   与桌宠页是两个 WebView：设置经壳桥 `notifySettings` 实时转发，动作试放/
-  表情/情绪经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；情绪
+  表情/状态经 `notifyPetAction` 转发到 `window.__pet.onShellAction`；状态
   高亮由 pet 写共享 localStorage、设置页回前台刷新。
 
 ## 双端差异（壳层职责）
@@ -119,3 +126,4 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 聊天            | `chat` 跟随 pet；`records` 为独立窗          | 主界面 ChatView + 记录/设置页面栈；悬浮无聊天 |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
 | 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |
+| 单实例          | 会话级命名事件，后启动的进程唤醒首个实例显示桌宠后退出（main.rs `acquire_single_instance`） | 主 Activity `singleTask` |

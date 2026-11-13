@@ -16,9 +16,11 @@ import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
-import { applyFaceVariant, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
-import { ACTION_LIBRARY, PetBehaviorHost } from './behavior';
+import type { PetBehaviorHost } from './behavior';
+import { MOTION_NAMES } from './catalog';
 import { GazeController } from './gaze';
 import {
   OverlayLayer,
@@ -27,7 +29,11 @@ import {
   EarChannel,
   CheekChannel,
   HandRaiseChannel,
+  AngerMarkSplit,
 } from './overlay';
+
+/** 只显示怒气符号 / 只显示黑脸的表情（都借用 Param32，见 AngerMarkSplit）。 */
+const ANGER_SPLIT_MODES: Record<string, 'mark' | 'shade'> = { annoyed: 'mark', gloomy: 'shade' };
 import { assetUrl } from './embed';
 
 /** 动作优先级（与官方 LAppDefine 一致）。 */
@@ -38,12 +44,11 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
-/** 动作清单元数据（assets/live2d/aliya/actions.json）。 */
-export interface ActionManifestEntry {
+/** 动作资源附加数据（assets/live2d/aliya/actions.json）。 */
+interface ActionAssetEntry {
   name: string;
-  category?: 'idle' | 'emotion' | 'reaction';
-  weight?: number;
-  moods?: Record<string, number>;
+  /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
+  face?: unknown;
 }
 
 const INVALID_MOTION_HANDLE = -1;
@@ -88,9 +93,6 @@ export class PetModel
   private readonly _expressions = new Map<string, CubismExpressionMotion>();
   private _currentExpression: string | null = null;
 
-  // 动作清单元数据（可选，缺省时均匀抽取）
-  private _actionManifest: ActionManifestEntry[] | null = null;
-
   // 眨眼参数 ID（覆盖写入用）
   private _eyeBlinkIds: CubismIdHandle[] = [];
 
@@ -102,7 +104,14 @@ export class PetModel
   private _chEar: EarChannel = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  private _angerSplit: AngerMarkSplit | null = null;
+  private _idAngerShadow: CubismIdHandle = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
+  // 猫耳显隐：部件不透明度逐帧逼近目标（部件不进 saveParameters，每帧显式写入）。
+  private _earPartIndex = -1;
+  private _earsVisible = true;
+  private _earOpacity = 1;
+  private static readonly _earFadeSeconds = 0.18;
   private static readonly _lookReductionScale = 0.25;
 
   // 热路径参数句柄缓存（配置探测后填充）
@@ -118,6 +127,11 @@ export class PetModel
   /** 会切换整套特殊眼睛、无法安全交叉淡化的模型参数。 */
   private _unsafeFaceVariantIds: CubismIdHandle[] = [];
   private _faceVariantIds: CubismIdHandle[] = [];
+  private _faceMouthIds: CubismIdHandle[] = [];
+  /** 动作名 → 脸部提示时间轴（actions.json face 字段）。 */
+  private readonly _faceCues = new Map<string, FaceCueSpan[]>();
+  private readonly _faceTrack = new FaceCueTrack();
+  private _face: FaceState = { eye: null, mouth: null };
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -193,6 +207,13 @@ export class PetModel
     );
     // 与 _loadTexture 的预乘上传一致，让图层透明度同时作用于 RGB。
     this.getRenderer().setIsPremultipliedAlpha(true);
+    // 提高裁剪遮罩缓冲区到 512：默认 256 对当前显示尺寸偏小，
+    // 遮罩贴图放大后边缘锯齿明显。需在 startUp 前设置，
+    // 使 FBO 首次创建即按目标尺寸分配，避免二次重建。
+    const renderer = this.getRenderer();
+    if (typeof renderer.setClippingMaskBufferSize === 'function') {
+      renderer.setClippingMaskBufferSize(512);
+    }
     // renderer.initialize 刻意不碰 WebGL（官方设计），gl 必须经 startUp 注入
     this.getRenderer().startUp(this._gl);
     for (let i = 0; i < textureCount; i++) {
@@ -276,7 +297,13 @@ export class PetModel
     this._idEyeBallX = id('ParamEyeBallX');
     this._idEyeBallY = id('ParamEyeBallY');
     this._unsafeFaceVariantIds = [id('Param33'), id('Param34'), id('Param35')];
+    // 猫耳父部件（cdi3「猫耳」）；缺失的模型不提供显隐开关。
+    {
+      const index = this._model.getPartIndex(id('Part21'));
+      this._earPartIndex = index >= 0 && index < this._model.getPartCount() ? index : -1;
+    }
     this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
+    this._faceMouthIds = FACE_MOUTH_PARAMETERS.map(id);
 
     // 按真实参数探测新版挥手能力；缺少参数时保留旧模型的五段链。
     // 不向 SDK 创建的虚拟参数写入，两个版本均在物理后统一控制。
@@ -309,16 +336,25 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
+    const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
+    const markIndex = this._model.getDrawableIndex(id('ArtMesh12'));
+    this._idAngerShadow = id('Param32');
+    this._angerSplit = shadeIndex >= 0 && markIndex >= 0
+      ? new AngerMarkSplit(shadeIndex, markIndex) : null;
 
     // 动作库（tools/gen-motions.py 为 Aliya 生成的自编动作）
     await this._preloadMotions();
 
-    // 动作清单元数据（可选：情绪亲和权重；缺失时行为层均匀抽取）
+    // 动作脸部时间轴（可选：缺失时替换脸动作只播普通曲线）
     try {
       const buf = await this._fetchArrayBuffer('actions.json');
       const parsed = JSON.parse(new TextDecoder().decode(buf));
       if (Array.isArray(parsed.actions)) {
-        this._actionManifest = parsed.actions;
+        for (const entry of parsed.actions as ActionAssetEntry[]) {
+          const spans = parseFaceCues(entry.face);
+          if (spans.length > 0) this._faceCues.set(entry.name, spans);
+        }
       }
     } catch {
       // 可选文件，缺失不阻塞
@@ -381,6 +417,7 @@ export class PetModel
       }
       this._currentExpression = null;
       this._gaze.setExpression(null);
+      this._angerSplit?.setMode(null);
       return true;
     }
     const expr = this._expressions.get(name);
@@ -390,6 +427,7 @@ export class PetModel
     this._currentExpression = name;
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
     this._gaze.setExpression(name);
+    this._angerSplit?.setMode(ANGER_SPLIT_MODES[name] ?? (name === 'angry' ? 'both' : null));
     return true;
   }
 
@@ -397,9 +435,9 @@ export class PetModel
     return this._ready;
   }
 
-  /** 动作清单元数据（actions.json；null = 未提供）。 */
-  public get actionManifest(): ActionManifestEntry[] | null {
-    return this._actionManifest;
+  /** 已加载可播放的 Live2D 动作名。 */
+  public getMotionNames(): string[] {
+    return MOTION_NAMES.filter(name => this._motions.has(`${name}_0`));
   }
 
   /** 模型静态包围盒宽（模型坐标单位） */
@@ -453,6 +491,8 @@ export class PetModel
       minY = 1e9,
       maxY = -1e9;
     for (let i = 0; i < dc; i++) {
+      // 隐藏的网格（如关掉的猫耳）不算剪影，气泡贴着可见头顶。
+      if (this._model.getDrawableOpacity(i) < 0.01) continue;
       const v = this._model.getDrawableVertices(i);
       for (let j = 0; j < v.length; j += 2) {
         if (v[j] < minX) minX = v[j];
@@ -468,7 +508,7 @@ export class PetModel
   // ---------- 动作播放 ----------
 
   private async _preloadMotions(): Promise<void> {
-    for (const group of ACTION_LIBRARY) {
+    for (const group of MOTION_NAMES) {
       const count = this._setting.getMotionCount(group);
       for (let i = 0; i < count; i++) {
         const name = `${group}_${i}`;
@@ -529,8 +569,21 @@ export class PetModel
       else this._chHand.release();
       if (group === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
       else this._chCheek.releaseAction();
+      this._startFaceCue(group);
     }
     return handle;
+  }
+
+  /** 新动作接管脸部时间轴；没有提示的动作会清掉被打断动作的眼型/嘴型。 */
+  private _startFaceCue(name: string): void {
+    const spans = this._faceCues?.get(name);
+    if (spans) this._faceTrack.start(spans);
+    else this._faceTrack?.stop();
+  }
+
+  /** 当前动作脸部提示（调试/测试用）。 */
+  public get faceCue(): FaceState {
+    return this._face;
   }
 
   get isActionPlaying(): boolean {
@@ -562,6 +615,7 @@ export class PetModel
     // 只附加脸红包络，不调用 startExpression，原表情继续按自己的生命周期求值。
     if (name === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
     else this._chCheek.releaseAction();
+    this._startFaceCue(name);
     return true;
   }
 
@@ -671,6 +725,17 @@ export class PetModel
     this._chCheek.value = value;
   }
 
+  /** 模型是否有可隐藏的猫耳部件。 */
+  public get hasCatEars(): boolean {
+    return this._earPartIndex >= 0;
+  }
+
+  /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
+  public setCatEarsVisible(visible: boolean, immediate = false): void {
+    this._earsVisible = visible;
+    if (immediate) this._earOpacity = visible ? 1 : 0;
+  }
+
   public setPettingLookAtReduction(enabled: boolean): void {
     this._lookAtReduction = enabled;
   }
@@ -700,9 +765,12 @@ export class PetModel
     for (const id of this._unsafeFaceVariantIds) {
       model.setParameterValueById(id, 0);
     }
+    // 动作脸部提示优先于表情眼型：动作结束后回到表情自己的眼睛。
+    this._face = this._faceTrack.advance(deltaTimeSeconds);
+    const eye = this._face.eye ?? expressionEye(this._currentExpression);
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
     this._chEye.apply(model, deltaTimeSeconds);
-    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
+    applyFaceVariant(model, this._faceVariantIds, eye);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
@@ -720,11 +788,25 @@ export class PetModel
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
 
-    // 在动作、表情淡化、物理和互动之后独占写入整套眼型。
+    // 在动作、表情淡化、物理和互动之后独占写入整套眼型与替换嘴型。
     // 受击/无语保留原生表现，但不经历会产生重影的中间值。
-    applyFaceVariant(model, this._faceVariantIds, this._currentExpression);
+    applyFaceVariant(model, this._faceVariantIds, eye);
+    applyFaceMouth(model, this._faceMouthIds, this._face.mouth, eye);
+
+    if (this._earPartIndex >= 0) {
+      const target = this._earsVisible ? 1 : 0;
+      if (this._earOpacity !== target) {
+        const step = Math.max(0, deltaTimeSeconds) / PetModel._earFadeSeconds;
+        this._earOpacity = target > this._earOpacity
+          ? Math.min(target, this._earOpacity + step) : Math.max(target, this._earOpacity - step);
+      }
+      model.setPartOpacityByIndex(this._earPartIndex, this._earOpacity);
+    }
 
     model.update();
+    // 拆分只改已求值的网格不透明度，必须在 update 之后、绘制之前。
+    this._angerSplit?.apply(model.getModel().drawables.opacities, deltaTimeSeconds,
+      model.getParameterValueById(this._idAngerShadow));
   }
 
   public draw(matrix: CubismMatrix44): void {
@@ -765,6 +847,12 @@ export class PetModel
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
       gl.generateMipmap(gl.TEXTURE_2D);
+      // 显式设定采样参数：三线性过滤让 mipmap 层级切换连续，
+      // CLAMP_TO_EDGE 避免边缘混合到透明区污染色。
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.bindTexture(gl.TEXTURE_2D, null);
       return texture;
     } finally {

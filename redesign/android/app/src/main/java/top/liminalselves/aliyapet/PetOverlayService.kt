@@ -94,6 +94,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragLastRawX = 0f
     private var dragLastRawY = 0f
     private var dragMaxSpeed = 0f
+    private var gesturePhase = OverlayGesturePolicy.Phase.VOID
+    private var gestureDownTime = 0L
     private var windowAttached = false
     /** 贴边归位动画（原生驱动，与 tokens.css --al-ease 同一条曲线）。 */
     private var snapAnimator: ValueAnimator? = null
@@ -104,6 +106,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     @Volatile private var hitMask: HitMask? = null
     /** Android 12L 及以下兼容路径：穿透期间忽略 DOWN 命中测试。 */
     @Volatile private var passThrough = false
+    private var displaySettings = PetDisplaySettings()
+    private var maximumObscuringOpacity: Float? = null
+    private val restoreTouchable = Runnable {
+        passThrough = false
+        applyDisplayToWindow()
+    }
     /** 窗外触摸上报节流（视线跟随）。 */
     private var lastOutsideTouchMs = 0L
 
@@ -145,6 +153,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         var w = (winWCss * density).roundToInt()
         var h = (winHCss * density).roundToInt()
 
+        // Restore before addView: a restarted 0%/click-through pet must never briefly intercept.
+        displaySettings = ShellPrefs.getPetDisplay(this)
+        if (Build.VERSION.SDK_INT >= 31) {
+            maximumObscuringOpacity = try {
+                getSystemService(android.hardware.input.InputManager::class.java)
+                    ?.maximumObscuringOpacityForTouch
+            } catch (error: RuntimeException) {
+                android.util.Log.w("PetOverlayService", "Cannot read overlay touch opacity limit; pass-through pet will be hidden", error)
+                null
+            }
+        }
         web = PetWebViewFactory.create(this, ShellBridge(this))
         attachNativeDrag()
         params = WindowManager.LayoutParams(
@@ -174,6 +193,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
         w = w.coerceAtMost(screenW); h = h.coerceAtMost(screenH)
         params.width = w; params.height = h
+        applyDisplayToWindow()
         try {
             wm.addView(web, params)
             windowAttached = true
@@ -222,7 +242,10 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             wm.removeView(web)
         } catch (_: Exception) {
         }
-        if (::web.isInitialized) web.destroy()
+        if (::web.isInitialized) {
+            web.removeCallbacks(restoreTouchable)
+            web.destroy()
+        }
         super.onDestroy()
     }
 
@@ -315,6 +338,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
      */
     private fun attachNativeDrag() {
         web.setOnTouchListener listener@{ _, ev ->
+            // Also reject already-queued events while WindowManager applies the new flag.
+            if (displaySettings.ignoresTouch) return@listener true
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     tapCandidate = false
@@ -322,14 +347,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         lastTapAt = 0L
                         // 旧系统兼容：短暂放行后续触摸；已收到的 DOWN 无法重新分发给下层。
                         passThrough = true
-                        setTouchable(false)
-                        web.postDelayed({
-                            passThrough = false
-                            setTouchable(true)
-                        }, PASS_THROUGH_MS)
+                        applyDisplayToWindow()
+                        web.removeCallbacks(restoreTouchable)
+                        web.postDelayed(restoreTouchable, PASS_THROUGH_MS)
                         return@listener true
                     }
                     tapCandidate = true
+                    gesturePhase = OverlayGesturePolicy.Phase.PENDING
+                    gestureDownTime = ev.downTime
                     dragPointerId = ev.getPointerId(0)
                     dragStartRawX = ev.rawX
                     dragStartRawY = ev.rawY
@@ -348,33 +373,15 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     } else {
                         val dx = ev.rawX - dragStartRawX
                         val dy = ev.rawY - dragStartRawY
-                        if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                        val wasPending = gesturePhase == OverlayGesturePolicy.Phase.PENDING
+                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, dx * dx + dy * dy, touchSlop, !jsInteracting)
+                        if (gesturePhase != OverlayGesturePolicy.Phase.PENDING) {
+                            // 移出 slop：不再是轻点（不参与双击）；拖动或交给前端互动。
                             tapCandidate = false
                             lastTapAt = 0L
                         }
-                        if (!nativeDragging &&
-                            !jsInteracting &&
-                            dx * dx + dy * dy > touchSlop * touchSlop
-                        ) {
-                            // 抢走手势前补发 CANCEL 给 WebView：DOWN 已透传给前端，
-                            // 若不补 CANCEL，JS 的 pointerdown（抚摸按下）永远收不到
-                            // 配对结束，petting/interacting 状态卡死。须在 nativeDragging
-                            // 置 true 之前发——否则后续分支返回 true 会把 CANCEL 也吞掉。
-                            val cancel = MotionEvent.obtain(ev)
-                            cancel.action = MotionEvent.ACTION_CANCEL
-                            web.dispatchTouchEvent(cancel)
-                            cancel.recycle()
-                            // 归位途中被抓起：停在当前位置，拖动从此刻的窗口与指针接着算，不跳。
-                            if (snapAnimator != null) {
-                                cancelSnapAnimation(notify = true)
-                                dragStartParamX = params.x
-                                dragStartParamY = params.y
-                                dragStartRawX = ev.rawX
-                                dragStartRawY = ev.rawY
-                            }
-                            nativeDragging = true
-                            evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
-                        }
+                        // 移出 slop 即接管：从上一采样点起算，不把 slop 那段位移一次性跳过去。
+                        if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) beginNativeDrag(ev.eventTime)
                         val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
                         if (nativeDragging) dragMaxSpeed = maxOf(dragMaxSpeed,
                             kotlin.math.hypot(ev.rawX - dragLastRawX, ev.rawY - dragLastRawY) * 1000f / elapsed)
@@ -399,13 +406,18 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                 MotionEvent.ACTION_POINTER_DOWN -> {
                     tapCandidate = false
                     lastTapAt = 0L
+                    // 多指不是拖动：未接管前作废本次手势，已在拖动的继续由首指驱动。
+                    if (gesturePhase == OverlayGesturePolicy.Phase.PENDING) gesturePhase = OverlayGesturePolicy.Phase.VOID
                     false
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val upDx = ev.rawX - dragStartRawX
+                    val upDy = ev.rawY - dragStartRawY
                     val tap = ev.actionMasked == MotionEvent.ACTION_UP && tapCandidate && !nativeDragging &&
-                        ev.eventTime - ev.downTime < ViewConfiguration.getLongPressTimeout() &&
-                        kotlin.math.hypot(ev.rawX - dragStartRawX, ev.rawY - dragStartRawY) <= touchSlop
+                        OverlayGesturePolicy.isTap(gesturePhase, ev.eventTime - ev.downTime, upDx * upDx + upDy * upDy,
+                            touchSlop, ViewConfiguration.getLongPressTimeout().toLong())
                     tapCandidate = false
+                    gesturePhase = OverlayGesturePolicy.Phase.VOID
                     if (tap) {
                         val slop = ViewConfiguration.get(this).scaledDoubleTapSlop
                         if (lastTapAt > 0 && ev.eventTime - lastTapAt <= ViewConfiguration.getDoubleTapTimeout() &&
@@ -445,6 +457,26 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         }
     }
 
+    /**
+     * 壳接管拖动：先补发 CANCEL 给 WebView——DOWN 已透传给前端，若不补 CANCEL，
+     * JS 的 pointerdown 永远收不到配对结束，按下/互动状态卡死。须在 nativeDragging
+     * 置 true 之前发，否则后续分支返回 true 会把 CANCEL 也吞掉。
+     */
+    private fun beginNativeDrag(eventTime: Long) {
+        val cancel = MotionEvent.obtain(gestureDownTime, eventTime, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+        web.dispatchTouchEvent(cancel)
+        cancel.recycle()
+        // 拖动从接管时的窗口与指针起算；归位途中被抓起则停在当前位置接着拖，不跳。
+        if (snapAnimator != null) cancelSnapAnimation(notify = true)
+        dragStartParamX = params.x
+        dragStartParamY = params.y
+        dragStartRawX = dragLastRawX
+        dragStartRawY = dragLastRawY
+        dragLastAt = eventTime
+        nativeDragging = true
+        evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
+    }
+
     /** 事件坐标（窗口内物理 px）是否落在角色透明像素上。无掩码时保守视为不透明。 */
     private fun isTransparentAt(xPhys: Float, yPhys: Float): Boolean {
         if (passThrough) return false
@@ -463,7 +495,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         if (Build.VERSION.SDK_INT < 33 || !windowAttached) return
         val region = Region()
         val mask = hitMask
-        if (mask != null && params.width > 0 && params.height > 0) {
+        if (!displaySettings.ignoresTouch && mask != null && params.width > 0 && params.height > 0) {
             for (row in 0 until mask.rows) {
                 val top = row * params.height / mask.rows
                 val bottom = ((row + 1) * params.height + mask.rows - 1) / mask.rows
@@ -485,20 +517,44 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         web.rootSurfaceControl?.setTouchableRegion(region)
     }
 
-    /** Android 12L 及以下兼容：收到透明 DOWN 后暂时切换整窗可触摸性。 */
-    private fun setTouchable(touchable: Boolean) {
-        if (!windowAttached) return
-        val f = if (touchable) {
-            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
+    override fun setPetDisplay(opacity: Float, fullClickThrough: Boolean) {
+        val next = PetDisplaySettings.normalized(opacity, fullClickThrough)
+        ShellPrefs.setPetDisplay(this, next)
+        if (next.ignoresTouch && !displaySettings.ignoresTouch && windowAttached) {
+            // Finish an existing WebView/native gesture before suppressing all further events.
+            val now = android.os.SystemClock.uptimeMillis()
+            val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+            web.dispatchTouchEvent(cancel)
+            cancel.recycle()
+            nativeDragging = false
+            jsInteracting = false
+            tapCandidate = false
+            gesturePhase = OverlayGesturePolicy.Phase.VOID
+            lastTapAt = 0L
+            dragPointerId = -1
+        }
+        displaySettings = next
+        // A stale legacy transparent-DOWN timeout must never turn a fully passive pet back on.
+        web.removeCallbacks(restoreTouchable)
+        passThrough = false
+        applyDisplayToWindow()
+        applyTouchableRegion()
+    }
+
+    /** Only this character window receives NOT_TOUCHABLE and the Android 12 security cap. */
+    private fun applyDisplayToWindow() {
+        if (!::params.isInitialized) return
+        val flags = if (PetDisplayPolicy.notTouchable(displaySettings, passThrough)) {
             params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         }
-        if (f == params.flags) return
-        params.flags = f
-        try {
-            updatePetWindow()
-        } catch (_: Exception) {
-        }
+        val alpha = PetDisplayPolicy.windowAlpha(displaySettings, passThrough,
+            Build.VERSION.SDK_INT, maximumObscuringOpacity)
+        val changed = flags != params.flags || alpha != params.alpha
+        params.flags = flags
+        params.alpha = alpha
+        if (windowAttached && changed) updatePetWindow()
     }
 
     override fun metricsJson(): String {

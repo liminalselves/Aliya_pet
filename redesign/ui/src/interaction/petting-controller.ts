@@ -11,11 +11,11 @@
  *   - 静止姿态：短暂停手（<0.45s）保留最后方向 25~35% + 轻微低头
  *   - 抚摸闭眼 180~320ms、结束睁眼 280~500ms，完成后恢复自动眨眼
  *
- * 台词触发：petting_start 40%（当日次数加成 repeat）/ fast(>250px/s 持续 0.8s) /
- *   long(10s) / soft·active(2~4s 起，最多 2 条间隔 4s，60%) / end(>1s 主动结束 30%)
+ * 反应组触发（reactions.json 的 petting.* 触发键）：start 40%（当日次数多时改 repeat）/
+ *   fast(>250px/s 持续 0.8s) / long(10s) / soft·active(2~4s 起，最多 2 条间隔 4s，60%) /
+ *   end(>1s 主动结束 30%)
  */
 
-import { DialogueStore, ResolvedDialogue } from '../dialogue/dialogue';
 import { HitAreas } from './hit-areas';
 import {
   PettingGestureRecognizer,
@@ -38,13 +38,14 @@ export type PettingEndReason =
   // 触摸手势被系统/壳层截断（pointercancel / 原生拖动接管）：非用户主动松手
   | 'gestureCanceled';
 
-/** 抚摸台词宿主（由上层实现：取消当前会话并播放）。 */
+/** 抚摸台词宿主（由上层实现）。 */
 export interface PettingDialogueHost {
-  /** 当前是否正在播放高优先级台词（抚摸开始台词不打断它）。 */
+  /** 当前是否正在播放台词（抚摸反应不打断它）。 */
   isDialogueActive(): boolean;
-  /** 播放一条抚摸台词（会取消之前的台词会话）。 */
-  playPettingDialogue(resolved: ResolvedDialogue): void;
 }
+
+/** 播放触发键下的反应组；返回说出的台词 id（没说话为 null）。 */
+export type PettingReact = (trigger: string, excludeIds: Set<string>) => string | null;
 
 type EyeState = 'idle' | 'closing' | 'opening';
 
@@ -104,7 +105,7 @@ export class PettingController {
 
   private readonly _hitAreas: HitAreas;
   private readonly _getTarget: () => InteractionTarget | null;
-  private readonly _dialogue: DialogueStore;
+  private readonly _react: PettingReact;
   private readonly _host: PettingDialogueHost;
 
   // 会话计时
@@ -179,13 +180,13 @@ export class PettingController {
   constructor(deps: {
     hitAreas: HitAreas;
     getTarget: () => InteractionTarget | null;
-    dialogue: DialogueStore;
     host: PettingDialogueHost;
+    react: PettingReact;
   }) {
     this._hitAreas = deps.hitAreas;
     this._getTarget = deps.getTarget;
-    this._dialogue = deps.dialogue;
     this._host = deps.host;
+    this._react = deps.react;
   }
 
   get isPettingModeActive(): boolean {
@@ -312,7 +313,7 @@ export class PettingController {
       Math.random() < 0.3
     ) {
       this._endDialogueTriggered = true;
-      this._playTag('petting_end');
+      this._playTag('petting.end');
     }
 
     this._finishingStartMs = performance.now();
@@ -581,14 +582,14 @@ export class PettingController {
       this._fastElapsedMs >= 800
     ) {
       this._fastTriggered = true;
-      this._playTag('petting_fast');
+      this._playTag('petting.fast');
       return;
     }
 
     // 持续约 10 秒：每次会话最多一条 petting_long
     if (!this._longTriggered && this._sessionElapsedMs >= 10000) {
       this._longTriggered = true;
-      this._playTag('petting_long');
+      this._playTag('petting.long');
       return;
     }
 
@@ -602,8 +603,7 @@ export class PettingController {
     ) {
       this._softActiveCount++;
       this._lastSoftOrActiveMs = this._sessionElapsedMs;
-      const tag = Math.random() < 0.5 ? 'petting_soft' : 'petting_active';
-      this._playTag(tag);
+      this._playTag(Math.random() < 0.5 ? 'petting.soft' : 'petting.active');
     }
   }
 
@@ -614,23 +614,13 @@ export class PettingController {
     const count = this.dailyState.headPettingCountToday;
     const repeatChance =
       count >= 2 ? Math.min(0.8, 0.25 + 0.15 * (count - 2)) : 0.0;
-    const tag =
-      Math.random() < repeatChance ? 'petting_repeat' : 'petting_start';
-    const boost = tag === 'petting_repeat' ? count : 0.0;
-    this._playTag(tag, boost);
+    this._playTag(Math.random() < repeatChance ? 'petting.repeat' : 'petting.start');
   }
 
-  private _playTag(tag: string, boost = 0): void {
+  private _playTag(trigger: string): void {
     if (this._host.isDialogueActive()) return;
-    const resolved = this._dialogue.resolveSceneTag(
-      'head_petting',
-      tag,
-      new Set(this.dailyState.lastPettingDialogueIds),
-      boost
-    );
-    if (!resolved) return;
-    this.dailyState.recordDialogueId(resolved.entryId);
-    this._host.playPettingDialogue(resolved);
+    const id = this._react(trigger, new Set(this.dailyState.lastPettingDialogueIds));
+    if (id) this.dailyState.recordDialogueId(id);
   }
 
   private _ensureConfigured(target: InteractionTarget): void {

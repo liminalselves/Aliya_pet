@@ -119,7 +119,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 /* 连接屏标题与说明：控件语境用黑体，台词才用衬线 */
 .gal-content h2 { font-family:var(--al-font); font-weight:600; }
 .gal-content .muted-note, .gal-content details, .gal-content .auth-status { font-family:var(--al-font); }
-.gal-content .auth-status:not(:empty) { margin-top:6px; color:var(--al-danger); font-size:11.5px; }
+.gal-content .auth-status:not(:empty) { margin-top:6px; color:var(--al-text-3); font-size:11.5px; }
 
 /* 按钮分级：主操作玉绿色药丸（与发送一致），次要 ghost 淡边框，避免满屏裸文字按钮。 */
 .gal-content .btn-primary { height:28px; background:var(--al-accent)!important; color:var(--al-on-accent)!important; border-radius:var(--al-r-pill)!important; padding:0 14px!important; font-family:var(--al-font)!important; font-size:12px!important; font-weight:600; transition:background var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
@@ -127,7 +127,9 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content .btn-primary:active { transform:scale(.96); }
 /* #chat-ui button 的 ID 规则会压过这里的 border/radius，必须 !important。 */
 .gal-content .ghost { height:28px; border:0!important; border-radius:var(--al-r-pill)!important; padding:0 12px!important; background:var(--al-bg-3)!important; font-family:var(--al-font)!important; font-size:12px!important; color:var(--al-text-2); transition:background var(--al-t-fast) var(--al-ease),border-color var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
-.gal-content .ghost:hover { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+.gal-content .ghost:hover:not(:disabled) { background:var(--al-bg-4)!important; color:var(--al-text-1); }
+/* 不可用（如未开始授权时的「取消」）：灰字、无悬停与按压反馈 */
+.gal-content .ghost:disabled { color:var(--al-text-4); opacity:.6; pointer-events:none; }
 .reply-error { font-family:var(--al-font); }
 .reply-error p { margin:0 0 10px; color:var(--al-text-2); font-size:12.5px; line-height:1.6; }
 .gal-content .ghost:active { transform:scale(.96); }
@@ -168,6 +170,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
    上行 = 输入框 + 停止/发送（手指/视线落点一致）；下行 = 导航链接 + 状态 + 关闭。 */
 .chat-composer { position:relative; width:100%; flex:none; padding:6px 6px 4px 12px; border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-bg-2); pointer-events:auto; box-shadow:var(--al-shadow-2); transition:border-color var(--al-t-fast) var(--al-ease); }
 .chat-composer:focus-within { border-color:color-mix(in srgb, var(--al-accent) 60%, var(--al-line-strong)); }
+.chat-composer.drop-target { border-color:var(--al-accent); border-style:dashed; }
 /* 独立透明窗底部只有 6px 留白，外投影会被原生窗口裁成方形黑边，桌面卡片只靠描边分层。 */
 body.chat-window .gal-panel,
 body.chat-window .chat-composer { box-shadow:none; }
@@ -222,7 +225,6 @@ body.chat-window .chat-composer { box-shadow:none; }
 .composer-toolbar svg { display:block; }
 .chat-status { flex:1; min-width:0; margin:0 4px 0 6px; overflow:hidden; color:var(--al-text-3); font-size:11px; text-align:right; white-space:nowrap; text-overflow:ellipsis; }
 .chat-status:not(:empty) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
-.chat-composer.errored .chat-status { color:var(--al-danger); }
 #chat-ui .close-window { display:grid; place-items:center; flex:none; width:22px; height:22px; padding:0!important; border-radius:50%; }
 
 /* Windows 独立 chat 窗：外窗尺寸恒定（chat_window.rs CHAT_WINDOW_W/H_CSS），pet 前端逐帧按角色显示大小

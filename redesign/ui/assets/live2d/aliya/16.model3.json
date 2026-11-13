@@ -50,9 +50,9 @@
           "FadeOutTime": 1.0
         }
       ],
-      "angry": [
+      "fume": [
         {
-          "File": "motions/angry.motion3.json",
+          "File": "motions/fume.motion3.json",
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }
@@ -77,6 +77,55 @@
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }
+      ],
+      "look_around": [
+        {
+          "File": "motions/look_around.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "daydream": [
+        {
+          "File": "motions/daydream.motion3.json",
+          "FadeInTime": 0.8,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "notice": [
+        {
+          "File": "motions/notice.motion3.json",
+          "FadeInTime": 0.15,
+          "FadeOutTime": 0.6
+        }
+      ],
+      "puff": [
+        {
+          "File": "motions/puff.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "kiss": [
+        {
+          "File": "motions/kiss.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "sob": [
+        {
+          "File": "motions/sob.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "deadpan": [
+        {
+          "File": "motions/deadpan.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
       ]
     },
     "Expressions": [
@@ -91,6 +140,14 @@
       {
         "Name": "angry",
         "File": "expressions/angry.exp3.json"
+      },
+      {
+        "Name": "annoyed",
+        "File": "expressions/annoyed.exp3.json"
+      },
+      {
+        "Name": "gloomy",
+        "File": "expressions/gloomy.exp3.json"
       },
       {
         "Name": "sad",

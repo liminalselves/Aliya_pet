@@ -108,7 +108,7 @@ test('real Aliya eye geometry matches ear hit areas, procedural masks and mirror
     const hitAreas = new HitAreas();
     await hitAreas.load();
     let now = 0;
-    const { ProceduralReactionService, ProceduralReactions } = loadSource('interaction/procedural', {
+    const { ProceduralReactionService, proceduralReaction } = loadSource('interaction/procedural', {
       performance: { now: () => now },
     });
     const { EyeOverrideChannel } = loadSource('overlay');
@@ -139,9 +139,9 @@ test('real Aliya eye geometry matches ear hit areas, procedural masks and mirror
         },
       };
       const procedural = new ProceduralReactionService({
-        getTarget: () => target, isPettingActive: () => false, playCharacterAction: () => true,
+        getTarget: () => target, isPettingActive: () => false,
       });
-      procedural.apply(ProceduralReactions.earBlink(1, hit));
+      procedural.apply(proceduralReaction('ear_blink', { strength: 1, areaId: hit }));
       now += 120;
       procedural.tick();
       const baseline = snapshot(model, 1, 1);

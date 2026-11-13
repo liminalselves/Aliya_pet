@@ -1,7 +1,7 @@
 """Build the small serif subset used by the web embed (docs/EMBED.md).
 
 The embed only shows Aliya's local lines, so instead of the 2.7MB common-glyph subset it ships
-the characters that actually appear in ui/assets/dialogue/ plus ASCII and CJK punctuation,
+the characters that actually appear in ui/assets/interaction/reactions.json plus ASCII and CJK punctuation,
 pinned to the 400 weight the bubble uses. Run after build:embed (npm run build:embed does it):
 
     python scripts/subset-embed-font.py ui/dist-embed
@@ -27,12 +27,9 @@ FULL = os.path.join(UI, 'assets', 'fonts', 'NotoSerifSC-var.ttf')
 
 
 def dialogue_text() -> str:
-    parts = []
-    for path in glob.glob(os.path.join(UI, 'assets', 'dialogue', '**', '*.json'), recursive=True):
-        with open(path, encoding='utf-8') as f:
-            doc = json.load(f)
-        parts.extend(str(e.get('text', '')) for e in doc.get('entries', []))
-    return ''.join(parts)
+    with open(os.path.join(UI, 'assets', 'interaction', 'reactions.json'), encoding='utf-8') as f:
+        doc = json.load(f)
+    return ''.join(str(line.get('text', '')) for group in doc.get('groups', []) for line in group.get('lines', []))
 
 
 def main() -> None:

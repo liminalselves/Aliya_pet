@@ -43,6 +43,21 @@ object ShellPrefs {
             .apply()
     }
 
+    internal fun getPetDisplay(ctx: Context): PetDisplaySettings {
+        val prefs = sp(ctx)
+        return PetDisplaySettings.normalized(
+            prefs.getString("opacity", "100")?.toFloatOrNull() ?: 100f,
+            prefs.getString("fullClickThrough", "false").let { it == "true" || it == "1" }
+        )
+    }
+
+    internal fun setPetDisplay(ctx: Context, settings: PetDisplaySettings) {
+        sp(ctx).edit()
+            .putString("opacity", settings.opacity.toString())
+            .putString("fullClickThrough", settings.fullClickThrough.toString())
+            .apply()
+    }
+
     /** 前端通用键值通道（目前 petX/petY 以字符串形式写入，兼容字符串读取）。 */
     fun getPref(ctx: Context, key: String): String {
         val sp = sp(ctx)
@@ -50,6 +65,8 @@ object ShellPrefs {
             "autoStart" -> if (sp.getBoolean(K_AUTO_START, false)) "1" else "0"
             "overlayOnExit" -> if (sp.getString(K_OVERLAY_ON_EXIT, "1") == "1") "1" else "0"
             "petX", "petY" -> if (sp.contains(key)) sp.getFloat(key, 0f).toString() else ""
+            "opacity" -> getPetDisplay(ctx).opacity.toString()
+            "fullClickThrough" -> getPetDisplay(ctx).fullClickThrough.toString()
             else -> sp.getString(key, "") ?: ""
         }
     }

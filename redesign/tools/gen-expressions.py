@@ -36,7 +36,7 @@ def P(pid, value):
         return {"Id": pid, "Value": min(1.0, max(0.0, 1.0 + value)), "Blend": "Multiply"}
     return {"Id": pid, "Value": value, "Blend": "Add"}
 
-# ---------- 12 个表情 ----------
+# ---------- 14 个表情 ----------
 # FadeIn/FadeOut 单位秒；注视偏移见 gaze.ts EXPRESSION_GAZE。
 
 EXPRESSIONS = {
@@ -59,6 +59,27 @@ EXPRESSIONS = {
         P("ParamBrowLY", -0.85), P("ParamBrowRY", -0.85),
         P("ParamMouthForm", -1.0), P("ParamMouthOpenY", 0.25),
         P("ParamEyeLOpen", -0.2), P("ParamEyeROpen", -0.2),
+    ]},
+
+    # 不爽【签名：只有怒气符号（无黑脸）+ 轻怒眉 + 抿嘴；视线别开（gaze +4,-2）】
+    # Param32 同时驱动黑脸与符号，运行时 AngerMarkSplit 按表情名隐藏黑脸网格。
+    "annoyed": {"fade": (0.2, 0.45), "params": [
+        P("Param32", 1.0),
+        P("ParamAngleZ", 4),
+        P("ParamBrowLAngle", 0.5), P("ParamBrowRAngle", 0.5),
+        P("ParamBrowLY", -0.35), P("ParamBrowRY", -0.35),
+        P("ParamMouthForm", -0.6),
+        P("ParamEyeLOpen", -0.12), P("ParamEyeROpen", -0.12),
+    ]},
+
+    # 阴沉【签名：只有黑脸（无怒气符号）+ 低头 + 压眉半垂眼；视线下压（gaze 0,-5）】
+    "gloomy": {"fade": (0.5, 0.7), "params": [
+        P("Param32", 1.0),
+        P("ParamAngleY", -6),
+        P("ParamBrowLAngle", 0.35), P("ParamBrowRAngle", 0.35),
+        P("ParamBrowLY", -0.6), P("ParamBrowRY", -0.6),
+        P("ParamMouthForm", -0.45),
+        P("ParamEyeLOpen", -0.35), P("ParamEyeROpen", -0.35),
     ]},
 
     # 难过【签名：原生流泪眼型（face-variant.ts 独占）+ 深忧愁眉 + 下撇嘴】

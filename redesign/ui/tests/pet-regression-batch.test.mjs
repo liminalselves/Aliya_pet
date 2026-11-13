@@ -26,10 +26,21 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   let decodePremultiplied = false, closed = false, bound = false;
   const stopAfterBinding = new Error('texture binding reached');
   const gl = { drawingBufferWidth: 200, drawingBufferHeight: 300,
-    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, createTexture: () => ({}), bindTexture() {},
+    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 37440, TEXTURE_2D: 3553,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243,
+    LINEAR_MIPMAP_LINEAR: 9987, LINEAR: 9729, CLAMP_TO_EDGE: 33071,
+    RGBA: 6408, UNSIGNED_BYTE: 5121,
+    createTexture: () => ({}), bindTexture() {},
     // ImageBitmap 上传时 WebGL 忽略预乘标志，预乘只能在解码时完成；这里钉死不二次预乘。
     pixelStorei: (key, value) => { assert.equal(key, 37440); assert.equal(value, 0); },
     texImage2D() {}, generateMipmap() {},
+    texParameteri(target, pname, param) {
+      // 验证三线性过滤与边缘钳制已设置（修复纹理采样锯齿）。
+      if (pname === 10241) assert.equal(param, 9987, 'MIN_FILTER 应为 LINEAR_MIPMAP_LINEAR');
+      if (pname === 10240) assert.equal(param, 9729, 'MAG_FILTER 应为 LINEAR');
+      if (pname === 10242 || pname === 10243) assert.equal(param, 33071, 'WRAP 应为 CLAMP_TO_EDGE');
+    },
   };
   renderer.startUp = () => assert.equal(renderer.isPremultipliedAlpha(), true);
   renderer.bindTexture = () => {
@@ -537,7 +548,7 @@ test('Android 气泡复用画布顶部余量：外窗收紧但人物位置、大
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
-    const baseH = 675 * 1.18 * scale, contentScale = baseH / 1.30 / 1.1;
+    const baseH = 675 * 1.18 * scale, contentScale = baseH / PetApp._renderMarginRatio / 1.1;
     const app = Object.assign(Object.create(PetApp.prototype), {
       _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr,
       _originCssX: -120, _originCssY: 650, _contentScaleCss: contentScale,
@@ -582,7 +593,7 @@ test('独立原生气泡取消人物气泡带，保留动作余量、脚底与�
   const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
   for (const scale of [0.15, 0.4, 0.8, 1.6]) for (const dpr of [1, 2.75]) {
-    const baseH = 675 * 1.18 * scale, s = baseH / 1.30 / 1.1;
+    const baseH = 675 * 1.18 * scale, s = baseH / PetApp._renderMarginRatio / 1.1;
     const sent = [];
     const app = Object.assign(Object.create(PetApp.prototype), {
       _wrapWindow: true, _settings: { scale }, _scaleTween: null, _dpr: dpr, _screenW: 400, _screenH: 800,
@@ -711,6 +722,83 @@ test('Android 左下角贴边在松手时保存终点，进入 App 打断动画�
   assert.deepEqual(prefs, [['petX', '20'], ['petY', '700']], '必须在原生动画结束回调之前双写最终原点');
   assert.equal(saved.at(-1).posX, 20); assert.equal(saved.at(-1).posY, 700);
   assert.equal(animations.length, 1);
+});
+
+function androidRotationHarness({ origin = [375, 160], snapEdges = true, scale = 0.2 } = {}) {
+  const saved = [], prefs = [], rects = [];
+  const settings = load('settings');
+  let screen = { screenW: 400, screenH: 800 };
+  const shell = {
+    getMetrics: () => JSON.stringify(screen),
+    setPref: (key, value) => prefs.push([key, value]),
+    setWindowRect: (...rect) => rects.push(rect),
+    setDialogueBubble() {},
+  };
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => shell },
+    './settings': { ...settings, saveSettings: value => saved.push({ ...value }) },
+  }, {
+    window: { matchMedia: () => ({ matches: true }) },
+    document: { body: { classList: { remove() {} }, dataset: {} }, documentElement: {} },
+    getComputedStyle: () => ({ getPropertyValue: () => 'linear' }),
+  });
+  const bounds = { minX: -0.2, maxX: 0.3, minY: -0.6, maxY: 0.5 };
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _wrapWindow: true, _settings: { ...settings.DEFAULT_SETTINGS, scale, snapEdges },
+    _originCssX: origin[0], _originCssY: origin[1],
+    _screenW: 400, _screenH: 800, _snapAnimToken: 0,
+    _contentScaleCss: 675 * PetApp._windowMarginRatio * scale / PetApp._renderMarginRatio / 1.1,
+    _rectInited: true, _rectDirty: false, _nativeSnapping: false, _scaleTween: null,
+    _model: { isReady: () => true, boundsH: 1.1, boundsAspect: 0.5 / 1.1, getStaticBounds: () => bounds },
+  });
+  const edges = () => [app._originCssX + bounds.minX * app._contentScaleCss,
+    screen.screenW - app._originCssX - bounds.maxX * app._contentScaleCss,
+    app._originCssY - bounds.maxY * app._contentScaleCss,
+    screen.screenH - app._originCssY + bounds.minY * app._contentScaleCss];
+  const rotate = (width, height) => {
+    screen = { screenW: width, screenH: height };
+    app.onShellEvent('display-changed');
+    app._syncWrapWindow();
+  };
+  return { app, rotate, edges, saved, prefs, rects };
+}
+
+for (const edge of [0, 1, 2, 3]) {
+  test(`Android 旋转前贴${['左', '右', '上', '下'][edge]}边，旋转后吸附最近边缘并保存位置`, () => {
+    const h = androidRotationHarness();
+    const gaps = h.edges();
+    // 从真实贴边位置开始；左右放在上半屏，保证旋转后不落入旧的 48px 感应带。
+    if (edge === 0) h.app._originCssX -= gaps[0];
+    if (edge === 1) h.app._originCssX += gaps[1];
+    if (edge === 2) h.app._originCssY -= gaps[2];
+    if (edge === 3) h.app._originCssY += gaps[3];
+    h.rotate(800, 400);
+    assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6, '已贴边的人物不能因旋转留在屏幕中间');
+    if (edge === 1) assert.ok(Math.abs(h.edges()[2]) < 1e-6, '原右边落在横屏内部后，应选择更近的上边而非继续强制靠右');
+    assert.deepEqual([h.saved.at(-1).posX, h.saved.at(-1).posY], [h.app._originCssX, h.app._originCssY]);
+    assert.deepEqual(h.prefs.slice(-2), [['petX', String(Math.round(h.app._originCssX))], ['petY', String(Math.round(h.app._originCssY))]]);
+    assert.equal(h.rects.length, 1, '新定位仍通过现有矩形同步发给原生壳');
+    h.rotate(400, 800);
+    assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6, '切回竖屏也保持贴边');
+  });
+}
+
+test('Android 旋转时先按新屏幕限制缩放，再把已贴边人物归位到可见区域', () => {
+  const h = androidRotationHarness({ scale: 0.9 });
+  h.app._originCssX += h.edges()[1];
+  h.app._originCssY += h.edges()[3];
+  h.rotate(800, 400);
+  assert.ok(h.app._settings.scale < 0.9, '横屏高度不足时仍执行现有缩放限制');
+  assert.ok(h.edges().every(gap => gap >= -1e-6), '人物可见边界不越出新屏幕');
+  assert.ok(Math.min(...h.edges().map(Math.abs)) < 1e-6);
+});
+
+test('Android 未贴边人物旋转不强制吸附，关闭贴边时保留原位置', () => {
+  for (const options of [{ origin: [220, 200] }, { origin: [375, 160], snapEdges: false }]) {
+    const h = androidRotationHarness(options), before = [h.app._originCssX, h.app._originCssY];
+    h.rotate(800, 400);
+    assert.deepEqual([h.app._originCssX, h.app._originCssY], before);
+  }
 });
 
 for (const entry of ['resume', 'startup']) {

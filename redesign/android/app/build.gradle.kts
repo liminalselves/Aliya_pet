@@ -19,8 +19,8 @@ android {
         applicationId = "top.liminalselves.aliyapet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     signingConfigs {
@@ -58,6 +58,29 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.webkit:webkit:1.12.1")
+}
+
+// Pure JVM policy checks, without adding a test framework dependency.
+tasks.register<JavaExec>("testPetDisplayPolicy") {
+    group = "verification"
+    description = "Check character touch-through and Android 12 opacity safety policy"
+    dependsOn("compileDebugUnitTestKotlin")
+    mainClass.set("top.liminalselves.aliyapet.PetDisplayPolicyTest")
+    classpath = files(
+        layout.buildDirectory.dir("tmp/kotlin-classes/debugUnitTest"),
+        layout.buildDirectory.dir("tmp/kotlin-classes/debug")
+    ) + configurations.getByName("debugUnitTestRuntimeClasspath")
+}
+
+tasks.register<JavaExec>("testOverlayGesturePolicy") {
+    group = "verification"
+    description = "Check overlay tap / long-press drag gesture policy"
+    dependsOn("compileDebugUnitTestKotlin")
+    mainClass.set("top.liminalselves.aliyapet.OverlayGesturePolicyTest")
+    classpath = files(
+        layout.buildDirectory.dir("tmp/kotlin-classes/debugUnitTest"),
+        layout.buildDirectory.dir("tmp/kotlin-classes/debug")
+    ) + configurations.getByName("debugUnitTestRuntimeClasspath")
 }
 
 // 共享前端产物打包进 assets：ui/dist → app/src/main/assets/pet

@@ -1,9 +1,9 @@
 /**
  * 设置窗口页面（独立 webview）：
  * 改动 → 写 localStorage + emitTo('pet', 'settings-changed') 实时生效；
- * 动作/台词/表情/情绪按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
+ * 动作/台词/表情/状态按钮 → emitTo('pet', 'tray-action') 触发 pet 窗口行为；
  * 监听 'settings-changed'（托盘改动经 pet 广播）刷新控件、
- * 'pet-mood'（pet 情绪变化）刷新情绪高亮。
+ * 'pet-state'（pet 状态变化）刷新状态高亮。
  */
 
 import {
@@ -24,59 +24,18 @@ import {
   shellAction,
   notifyPetAction,
 } from './platform';
-import { ACTION_LIBRARY } from './behavior';
-import { MOODS } from './emotion';
+import { ACTIONS, EXPRESSIONS, STATES } from './catalog';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls } from './chat/msk/control-drawer';
 import { CHAT_SCENES, CUSTOM_BACKGROUND, NO_BACKGROUND, deleteCustomBackground, loadCustomBackground, saveCustomBackground } from './chat-background';
 import { checkForUpdate } from './update/check';
+import { OFFICIAL_SITE_URL } from './update/config';
 import { openUpdateModal } from './update/dialog';
 import './settings.css';
+import { showToast } from './toast';
 
 // 平台样式钩子（移动端大字/大行距/顶栏，见 settings.html）
 document.body.classList.add(`platform-${platform}`);
-
-const ACTION_LABELS: Record<string, string> = {
-  nod: '点头',
-  sway: '摇摆',
-  shake: '摇头',
-  stretch: '伸展',
-  wave: '挥手',
-  doubt: '疑惑',
-  angry: '生气',
-  yawn: '哈欠',
-  cheerful_bounce: '开心雀跃',
-  shy_sway: '撒娇',
-};
-
-/** 表情面板：exp3.json 名 → 中文（与 gen-expressions.py 一一对应）。 */
-const EXPRESSION_LABELS: Record<string, string> = {
-  happy: '开心',
-  angry: '生气',
-  sad: '难过',
-  surprised: '惊讶',
-  shy: '害羞',
-  sleepy: '困倦',
-  smug: '得意',
-  speechless: '无语',
-  worried: '担忧',
-  serious: '认真',
-  hit: '受击',
-};
-
-/** 情绪面板：emotion.ts MOODS 键 → 中文。 */
-const MOOD_LABELS: Record<string, string> = {
-  neutral: '平静',
-  happy: '开心',
-  cheerful: '愉快',
-  angry: '生气',
-  sad: '难过',
-  shy: '害羞',
-  sleepy: '困倦',
-  smug: '得意',
-  curious: '好奇',
-  speechless: '无语',
-};
 
 type Emit = (event: string, payload: unknown) => void;
 type Listen = (event: string, cb: () => void) => void;
@@ -84,7 +43,9 @@ type Listen = (event: string, cb: () => void) => void;
 let emitToPet: Emit = () => {};
 let emitToSettings: Emit = () => {};
 let onSettingsChanged: Listen = () => {};
-let onMoodChanged: (cb: (mood: string) => void) => void = () => {};
+/** pet 窗口推送的状态：manual=null 表示自动。 */
+type PetStatePayload = { state: string; manual: string | null };
+let onStateChanged: (cb: (s: PetStatePayload) => void) => void = () => {};
 let invokeCmd: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) =
   () => Promise.resolve(null);
 
@@ -101,12 +62,10 @@ if (platform === 'tauri') try {
   onSettingsChanged = (event, cb) => {
     ev.listen(event, cb).catch(() => {});
   };
-  onMoodChanged = (cb) => {
+  onStateChanged = (cb) => {
     ev
-      .listen<{ mood: string }>('pet-mood', (e) => {
-        if (e.payload && typeof e.payload.mood === 'string') {
-          cb(e.payload.mood);
-        }
+      .listen<PetStatePayload>('pet-state', (e) => {
+        if (e.payload && typeof e.payload.state === 'string') cb(e.payload);
       })
       .catch(() => {});
   };
@@ -139,7 +98,7 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
 }
 
 /**
- * 表演类操作（动作/台词/表情/情绪）。Windows 设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
+ * 表演类操作（动作/台词/表情/状态）。Windows 设置是独立窗口，桌宠就在旁边，按钮只 pulse 确认；
  * Android 设置页整屏盖住桌宠，发出后先让按钮确认一拍，再滑回主界面让用户看到表演。
  * 桌宠页在设置页下面持续运行，动作在滑出过程中已开始播放。
  */
@@ -229,11 +188,16 @@ const refs: {
   showGeneratedImages?: HTMLInputElement;
   speechMinutes?: HTMLInputElement;
   mirror?: HTMLInputElement;
+  showCatEars?: HTMLInputElement;
+  showChatButton?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
   snapEdges?: HTMLInputElement;
   autoStart?: HTMLInputElement;
   batterySaver?: HTMLInputElement;
   overlayOnExit?: HTMLInputElement;
+  petOpacitySlider?: HTMLInputElement;
+  petOpacityVal?: HTMLSpanElement;
+  fullClickThrough?: HTMLInputElement;
   scaleSlider?: HTMLInputElement;
   scaleVal?: HTMLSpanElement;
 } = {};
@@ -263,6 +227,12 @@ function syncSpeechRow(): void {
 }
 
 function refreshControls(): void {
+  if (refs.petOpacitySlider) {
+    refs.petOpacitySlider.value = String(settings.petOpacity);
+    paintSliderFill(refs.petOpacitySlider);
+  }
+  if (refs.petOpacityVal) refs.petOpacityVal.textContent = `${settings.petOpacity}%`;
+  if (refs.fullClickThrough) refs.fullClickThrough.checked = settings.fullClickThrough;
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
   if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
@@ -270,6 +240,8 @@ function refreshControls(): void {
     refs.speechMinutes.value = String(settings.randomSpeechMinutes);
   syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
+  if (refs.showCatEars) refs.showCatEars.checked = settings.showCatEars;
+  if (refs.showChatButton) refs.showChatButton.checked = settings.showChatButton;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
   if (refs.scaleSlider) {
@@ -282,15 +254,15 @@ function refreshControls(): void {
     refs.batterySaver.checked = settings.batterySaver === true;
 }
 
-// ---- 互动 ----（动作试放经跨窗口事件；Android 经壳桥转发到桌宠页）
+// ---- 动作 ----（试放 Live2D 动作，经跨窗口事件；Android 经壳桥转发到桌宠页）
 {
-  const box = section('互动');
+  const box = section('动作');
   const grid = document.createElement('div');
   grid.className = 'grid';
-  for (const name of ACTION_LIBRARY) {
+  for (const { name, label } of ACTIONS.filter(a => a.kind === 'motion')) {
     const b = document.createElement('button');
     b.className = 'act';
-    b.textContent = ACTION_LABELS[name] ?? name;
+    b.textContent = label;
     b.addEventListener('click', () => perform(b, 'play-action', { name }));
     grid.appendChild(b);
   }
@@ -302,29 +274,28 @@ function refreshControls(): void {
   box.appendChild(speech);
 }
 
-// ---- 表情与情绪 ----（表情 = 临时预览；情绪 = 持续心境；Android 经壳桥转发）
-// 表情 = 临时预览（8s 后自动回当前情绪的默认表情）；
-// 情绪 = 持续心境（默认表情 + 动作选择加权 + 到期自然回落「平静」）。
-const moodButtons = new Map<string, HTMLButtonElement>();
-let currentMood = 'neutral';
+// ---- 表情与状态 ----（表情 = 临时预览；状态 = 持续保持；Android 经壳桥转发）
+// 「自动」键名为空串，当前自动即平静（见 state.ts autoStateAt）；手动选择一直保持到选回自动。
+const stateButtons = new Map<string, HTMLButtonElement>();
+let manualState = '';
 
-function refreshMoodHighlight(): void {
-  for (const [name, btn] of moodButtons) {
-    btn.classList.toggle('active', name === currentMood);
+function refreshStateHighlight(): void {
+  for (const [name, btn] of stateButtons) {
+    btn.classList.toggle('active', name === manualState);
   }
 }
 
 {
-  const box = section('表情与情绪');
+  const box = section('表情与状态');
 
   // 表情（临时预览）
   const exprHint = document.createElement('div');
   exprHint.className = 'hint';
-  exprHint.textContent = '表情（点击预览，8 秒后自动恢复）';
+  exprHint.textContent = '表情（点击预览，8 秒后恢复当前状态的表情）';
   box.appendChild(exprHint);
   const exprGrid = document.createElement('div');
   exprGrid.className = 'grid';
-  for (const [name, label] of Object.entries(EXPRESSION_LABELS)) {
+  for (const { name, label } of EXPRESSIONS.filter(e => e.name !== 'neutral')) {
     const b = document.createElement('button');
     b.className = 'act';
     b.textContent = label;
@@ -338,28 +309,27 @@ function refreshMoodHighlight(): void {
   clearExpr.addEventListener('click', () => perform(clearExpr, 'clear-expression'));
   box.appendChild(clearExpr);
 
-  // 情绪（持续心境）
-  const moodHint = document.createElement('div');
-  moodHint.className = 'hint';
-  moodHint.textContent =
-    '情绪（持续心境：影响默认表情与自发动作，一段时间后自然平静）';
-  box.appendChild(moodHint);
-  const moodGrid = document.createElement('div');
-  moodGrid.className = 'grid';
-  for (const name of Object.keys(MOODS)) {
+  // 状态（持续保持）
+  const stateHint = document.createElement('div');
+  stateHint.className = 'hint';
+  stateHint.textContent = '状态（一直保持的表情与待机动作；自动时为平静）';
+  box.appendChild(stateHint);
+  const stateGrid = document.createElement('div');
+  stateGrid.className = 'grid';
+  for (const { name, label } of [{ name: '', label: '自动' }, ...STATES]) {
     const b = document.createElement('button');
     b.className = 'act';
-    b.textContent = MOOD_LABELS[name] ?? name;
+    b.textContent = label;
     b.addEventListener('click', () => {
-      currentMood = name;
-      refreshMoodHighlight();
-      perform(b, 'set-mood', { name });
+      manualState = name;
+      refreshStateHighlight();
+      perform(b, 'set-state', { name });
     });
-    moodButtons.set(name, b);
-    moodGrid.appendChild(b);
+    stateButtons.set(name, b);
+    stateGrid.appendChild(b);
   }
-  box.appendChild(moodGrid);
-  refreshMoodHighlight();
+  box.appendChild(stateGrid);
+  refreshStateHighlight();
 }
 
 // 省电模式（所有平台；移动端收益最大）
@@ -531,7 +501,87 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     () => settings.mirror,
     (v) => update({ mirror: v })
   );
+  refs.showCatEars = switchRow(
+    box,
+    '显示猫耳',
+    '关闭后耳朵不再显示，也不会再被戳到',
+    () => settings.showCatEars,
+    (v) => update({ showCatEars: v })
+  );
+  refs.showChatButton = switchRow(
+    box,
+    '显示聊天按钮',
+    platform === 'android'
+      ? '关闭后收起聊天框时不再显示聊天按钮，可从主界面菜单「聊天」重新打开'
+      : '关闭后人物脚下不再显示聊天入口，仍可从托盘菜单「打开聊天」进入',
+    () => settings.showChatButton,
+    (v) => update({ showChatButton: v })
+  );
   refs.batterySaver = addBatterySaverSwitch(box);
+}
+
+// ---- 显示与穿透 ----
+{
+  const box = section('显示与穿透');
+
+  // 人物不透明度：滑杆 0–100%，步进 5，实时预览；0% 时人物不可见，
+  // 关闭完全穿透会形成不可见的鼠标拦截区，因此 pet 侧兜底按整窗穿透处理。
+  const opRow = document.createElement('div');
+  opRow.className = 'row opacity-row';
+  const opLab = document.createElement('div');
+  opLab.className = 'label';
+  opLab.textContent = '人物透明度';
+  const opSub = document.createElement('span');
+  opSub.className = 'sub';
+  opSub.textContent = platform === 'android'
+    ? '只影响悬浮窗里的人物，不影响 App 主界面'
+    : '只影响桌宠显示，不影响聊天与其他窗口';
+  opLab.appendChild(opSub);
+  const opWrap = document.createElement('div');
+  opWrap.className = 'slider-row';
+  opWrap.style.flex = '1';
+  const opMinus = document.createElement('button');
+  opMinus.textContent = '−';
+  const opPlus = document.createElement('button');
+  opPlus.textContent = '+';
+  const opSlider = document.createElement('input');
+  opSlider.type = 'range';
+  opSlider.setAttribute('aria-label', '人物透明度');
+  opSlider.min = '0';
+  opSlider.max = '100';
+  opSlider.step = '5';
+  opSlider.value = String(settings.petOpacity);
+  const opVal = document.createElement('span');
+  opVal.className = 'val';
+  opVal.textContent = `${settings.petOpacity}%`;
+  refs.petOpacitySlider = opSlider;
+  refs.petOpacityVal = opVal;
+  const commitOpacity = (v: number) => {
+    const n = Math.min(100, Math.max(0, Math.round(v / 5) * 5));
+    opSlider.value = String(n);
+    opVal.textContent = `${n}%`;
+    paintSliderFill(opSlider);
+    update({ petOpacity: n });
+  };
+  paintSliderFill(opSlider);
+  opMinus.addEventListener('click', () => commitOpacity(settings.petOpacity - 5));
+  opPlus.addEventListener('click', () => commitOpacity(settings.petOpacity + 5));
+  opSlider.addEventListener('input', () => commitOpacity(Number(opSlider.value)));
+  opWrap.appendChild(opMinus);
+  opWrap.appendChild(opSlider);
+  opWrap.appendChild(opPlus);
+  opWrap.appendChild(opVal);
+  opRow.appendChild(opLab);
+  opRow.appendChild(opWrap);
+  box.appendChild(opRow);
+
+  refs.fullClickThrough = switchRow(
+    box,
+    '人物完全穿透',
+    '关闭：人物可以正常互动，透明区域仍然穿透。开启：整个人物都允许鼠标穿透，聊天窗口仍可正常使用。0% 时自动穿透，请通过托盘或 App 设置恢复。' + (platform === 'android' ? 'Android 12+ 完全穿透会自动降低人物可见度；独立气泡覆盖处仍受系统触摸安全限制。' : ''),
+    () => settings.fullClickThrough,
+    (v) => update({ fullClickThrough: v })
+  );
 }
 
 // ---- 聊天 ----（偏好开关与下方 Misskey 连接状态共用一张卡片）
@@ -634,7 +684,7 @@ if (platform === 'android') {
     const file = picker.files?.[0];
     picker.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) { status.textContent = '请选择图片文件。'; box.appendChild(status); return; }
+    if (!file.type.startsWith('image/')) { showToast('请选择图片文件', { kind: 'error' }); return; }
     status.textContent = '正在处理图片…';
     box.appendChild(status);
     try {
@@ -646,7 +696,8 @@ if (platform === 'android') {
       status.textContent = '';
       status.remove();
     } catch (e) {
-      status.textContent = e instanceof Error && e.message ? e.message : '图片保存失败，请重试。';
+      status.remove();
+      showToast(e instanceof Error && e.message ? e.message : '图片保存失败，请重试', { kind: 'error' });
     }
     sync();
   });
@@ -714,24 +765,25 @@ if (platform === 'android') {
       // 贴合模式：petX/petY 是角色原点（非窗口左上角），写屏中心，
       // 悬浮窗下次启动（或服务重建）时在屏幕中央出现
       const shell = androidShell();
-      if (shell) {
-        try {
-          const m = JSON.parse(shell.getMetrics()) as {
-            screenW: number;
-            screenH: number;
-          };
-          const x = Math.round(m.screenW / 2);
-          const y = Math.round(m.screenH * 0.45);
-          update({ posX: x, posY: y });
-          shell.setPref('petX', String(x));
-          shell.setPref('petY', String(y));
-        } catch {
-          // 忽略
-        }
+      try {
+        if (!shell) throw new Error('shell unavailable');
+        const m = JSON.parse(shell.getMetrics()) as {
+          screenW: number;
+          screenH: number;
+        };
+        const x = Math.round(m.screenW / 2);
+        const y = Math.round(m.screenH * 0.45);
+        update({ posX: x, posY: y });
+        shell.setPref('petX', String(x));
+        shell.setPref('petY', String(y));
+        showToast('已重置位置，悬浮窗下次显示时会出现在屏幕中央', { kind: 'success' });
+      } catch {
+        showToast('位置重置失败，请稍后重试', { kind: 'error' });
       }
       return;
     }
     trayAction('reset-position');
+    showToast('已移回屏幕中央', { kind: 'success' });
   });
   box.appendChild(reset);
 
@@ -741,9 +793,12 @@ if (platform === 'android') {
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
       : 'Windows 登录后自动启动',
-    () => settings.autoActions, // 占位，立即被真实值覆盖
+    () => false, // 占位，立即被真实值覆盖
     (v) => {
-      setAutoStart(v);
+      // 设置失败时回读系统真实状态，避免开关停在未生效的位置。
+      void setAutoStart(v).then(async (ok) => {
+        if (!ok && refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+      });
     }
   );
   isAutoStart().then((v) => {
@@ -804,7 +859,22 @@ if (platform === 'android') {
   const statusSub = document.createElement('span');
   statusSub.className = 'sub';
   statusLab.appendChild(statusSub);
-  statusRow.appendChild(statusLab);
+  // 退出登录：清掉本机 token 与用户资料；聊天页经 storage/focus 事件回到连接屏。
+  const logoutBtn = document.createElement('button');
+  logoutBtn.className = 'act';
+  logoutBtn.textContent = '退出登录';
+  logoutBtn.addEventListener('click', () => {
+    try {
+      localStorage.removeItem(MSK_TOKEN_KEY);
+      localStorage.removeItem(MSK_USER_KEY);
+    } catch {
+      // 存储不可用时本就没有持久登录
+    }
+    agentControls.close();
+    refreshChatInfo();
+    showToast('已退出登录。', { kind: 'success' });
+  });
+  statusRow.append(statusLab, logoutBtn);
   box.appendChild(statusRow);
 
   const sessionRow = document.createElement('div');
@@ -829,6 +899,7 @@ if (platform === 'android') {
     }
     const name = user?.name || user?.username || '';
     statusSub.textContent = token && name ? `已连接：${name}` : '未连接（在聊天窗口中授权）';
+    logoutBtn.hidden = !token;
     let sessionName = '';
     if (user?.id) {
       try {
@@ -903,17 +974,13 @@ if (platform === 'android') {
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
 
-  // 检查更新：手动入口不看「跳过/稍后」抑制；结果就地一行展示。
+  // 检查更新：手动入口不看「跳过/稍后」抑制；结果走统一轻提示。
   // Windows 弹独立 update 窗口（pet 窗口透明不能画 UI）；Android 本页内模态。
   const checkRow = document.createElement('div');
   checkRow.className = 'row';
   const checkLab = document.createElement('div');
   checkLab.className = 'label';
   checkLab.textContent = '软件更新';
-  const checkSub = document.createElement('span');
-  checkSub.className = 'sub';
-  checkSub.setAttribute('role', 'status');
-  checkLab.appendChild(checkSub);
   const checkBtn = document.createElement('button');
   checkBtn.className = 'act';
   checkBtn.type = 'button';
@@ -921,14 +988,14 @@ if (platform === 'android') {
   checkBtn.addEventListener('click', async () => {
     if (checkBtn.disabled) return;
     checkBtn.disabled = true;
-    checkSub.textContent = '正在检查…';
+    checkBtn.textContent = '正在检查…';
     try {
       const result = await checkForUpdate(
         platform === 'android' ? 'android' : 'windows',
         __APP_VERSION__
       );
       if (result.updateAvailable) {
-        checkSub.textContent = `可更新到 v${result.latest}`;
+        showToast(`发现新版本 v${result.latest}`);
         if (platform === 'tauri') {
           const { invoke } = await import('@tauri-apps/api/core');
           await invoke('show_update', { payload: result });
@@ -936,24 +1003,25 @@ if (platform === 'android') {
           openUpdateModal(result);
         }
       } else {
-        checkSub.textContent = `已是最新版本 v${result.latest}`;
+        showToast(`已是最新版本 v${result.latest}`, { kind: 'success' });
       }
     } catch {
-      checkSub.textContent = '检查失败，请稍后重试';
+      showToast('检查更新失败，请稍后重试', { kind: 'error' });
     } finally {
       checkBtn.disabled = false;
+      checkBtn.textContent = '检查更新';
     }
   });
   checkRow.append(checkLab, checkBtn);
   box.appendChild(checkRow);
 
-  const repo = document.createElement('button');
-  repo.className = 'act wide';
-  repo.textContent = '打开项目仓库';
-  repo.addEventListener('click', () => {
-    openUrl('https://github.com/liminalselves/Aliya_pet');
+  const site = document.createElement('button');
+  site.className = 'act wide';
+  site.textContent = '打开官网';
+  site.addEventListener('click', () => {
+    openUrl(OFFICIAL_SITE_URL);
   });
-  box.appendChild(repo);
+  box.appendChild(site);
 }
 
 // 托盘改动经 pet 窗口广播 → 刷新控件
@@ -962,30 +1030,29 @@ onSettingsChanged('settings-changed', () => {
   refreshControls();
 });
 
-// pet 窗口情绪变化（petAI/托盘/自然回落）→ 刷新情绪高亮
-onMoodChanged((mood: string) => {
-  currentMood = mood;
-  refreshMoodHighlight();
+// pet 窗口状态变化（petAI/设置）→ 刷新状态高亮
+onStateChanged((s) => {
+  manualState = s.manual ?? '';
+  refreshStateHighlight();
 });
 
-// Android：桌宠页把情绪写入共享 localStorage（跨 WebView 无事件总线），
-// 回到本页/收到 storage 事件时刷新高亮
-if (platform === 'android') {
-  const readMood = () => {
-    let mood = '';
+// 桌宠页把状态存进共享 localStorage：打开本页即按存档高亮；Android 跨 WebView 无事件总线，
+// 另在回到本页/收到 storage 事件时刷新
+{
+  const readState = () => {
     try {
-      mood = localStorage.getItem('aliya_pet_mood') ?? '';
+      const s = JSON.parse(localStorage.getItem('aliya_pet_state') ?? 'null') as PetStatePayload | null;
+      if (s && typeof s.state === 'string') {
+        manualState = s.manual ?? '';
+        refreshStateHighlight();
+      }
     } catch {
-      // 存储不可用则保持当前高亮
-    }
-    if (mood) {
-      currentMood = mood;
-      refreshMoodHighlight();
+      // 存储不可用或内容损坏则保持当前高亮
     }
   };
-  window.addEventListener('focus', readMood);
+  window.addEventListener('focus', readState);
   window.addEventListener('storage', (e) => {
-    if (e.key === 'aliya_pet_mood') readMood();
+    if (e.key === 'aliya_pet_state') readState();
   });
-  readMood();
+  readState();
 }

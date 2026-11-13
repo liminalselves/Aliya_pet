@@ -37,6 +37,9 @@ export class HitAreas {
   /** 是否镜像（左右互换）。 */
   mirrored = false;
 
+  /** 暂时停用的区域（如隐藏猫耳时的耳朵），命中时落到下一优先级区域。 */
+  readonly disabled = new Set<string>();
+
   async load(url = assetUrl('/interaction/aliya_hit_areas.json')): Promise<void> {
     try {
       const res = await fetch(url);
@@ -59,6 +62,9 @@ export class HitAreas {
           priority: Number(m.priority ?? 0),
         };
         if (!def.id) continue;
+        // 非有限数或非正尺寸的区域永远命不中且无提示，直接丢弃。
+        if (![def.x, def.y, def.width, def.height, def.priority].every(Number.isFinite)
+          || def.width <= 0 || def.height <= 0) continue;
         this._areas.push(def);
         if (def.id === 'head_pet_zone') this._headPetZone = def;
       }
@@ -75,6 +81,7 @@ export class HitAreas {
   hitAreaAt(nx: number, ny: number): string | null {
     let best: HitAreaDefinition | null = null;
     for (const area of this._areas) {
+      if (this.disabled.has(area.id)) continue;
       if (contains(area, nx, ny, this.mirrored)) {
         if (!best || area.priority > best.priority) best = area;
       }
@@ -84,7 +91,7 @@ export class HitAreas {
 
   isInArea(id: string, nx: number, ny: number): boolean {
     const area = this._areas.find((a) => a.id === id);
-    return area != null && contains(area, nx, ny, this.mirrored);
+    return area != null && !this.disabled.has(id) && contains(area, nx, ny, this.mirrored);
   }
 
   isInHeadPetZone(nx: number, ny: number): boolean {

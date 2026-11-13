@@ -1,14 +1,13 @@
 /**
- * 人物互动统一入口（移植自 Flutter InteractionService，逻辑等价）：
- * 区域识别、手势识别、台词抽取与参数动画全部集中在此。
- * 上层（PetApp）仅转发指针输入并负责气泡/窗口拖动的呈现。
+ * 人物互动统一入口：区域识别、手势识别与反应组播放集中在此（docs/INTERACTION.md）。
+ * 每次互动 = 按触发键抽一个反应组（台词 + 表情 + 动作，见 reactions.ts）并同时播放；
+ * 反应组没有程序微动时补一个该场景的缺省微动，保证每次点击都有即时身体反馈。
+ * 上层（PetApp）转发指针输入，并实现台词、表情、Live2D 动作的呈现（ReactionHost）。
  */
 
+import type { ResolvedDialogue } from '../dialogue/dialogue';
 import { HitAreas } from './hit-areas';
-import {
-  PettingController,
-  PettingDialogueHost,
-} from './petting-controller';
+import { PettingController, PettingDialogueHost } from './petting-controller';
 import { PointerContext } from './petting-recognizer';
 import {
   ClickResult,
@@ -16,9 +15,39 @@ import {
   DragReactionService,
   PointerProximityService,
   ProceduralReactionService,
-  ProceduralReactions,
+  isProceduralReactionType,
+  proceduralReaction,
+  type ProceduralReactionType,
 } from './procedural';
+import type { ReactionLibrary } from './reactions';
 import { InteractionTarget } from './target';
+
+/** 上层实现的呈现能力。 */
+export interface ReactionHost {
+  /** 台词位是否可用（聊天占位、协调器、气泡播放中都会拒绝）。 */
+  canSpeak(): boolean;
+  speak(line: ResolvedDialogue): void;
+  /** 临时表情；有台词时持续到台词播完，之后回到当前状态的默认表情。 */
+  express(name: string, line: ResolvedDialogue | null): void;
+  /** 播放 Live2D 动作。 */
+  playMotion(name: string): boolean;
+}
+
+/** 互动触发的 Live2D 动作在这段时间内不被下一次互动重启（连点时能演完）。 */
+const MOTION_GUARD_MS = 3000;
+/** 慢慢放下时说台词的概率。 */
+const DRAG_SLOW_LINE_CHANCE = 0.35;
+
+export interface ReactOptions {
+  /** 反应组没有程序微动时补的缺省微动。 */
+  fallback?: ProceduralReactionType;
+  areaId?: string;
+  side?: number;
+  /** false = 只表演不说话。 */
+  speak?: boolean;
+  /** 尽量避开的台词 id。 */
+  exclude?: Set<string>;
+}
 
 export class InteractionService {
   readonly hitAreas: HitAreas;
@@ -27,14 +56,12 @@ export class InteractionService {
   readonly proximity = new PointerProximityService();
   readonly dragReaction = new DragReactionService();
   readonly procedural: ProceduralReactionService;
+  private readonly _reactions: ReactionLibrary;
+  private readonly _host: ReactionHost;
+  private readonly _random: () => number;
   private _earClickUntilMs = 0;
   private _basicClickUntilMs = 0;
-
-  /** 点击台词请求（上层提供：按语义标签播放对应台词）。 */
-  playClickDialogue: ((tag: string) => void) | null = null;
-
-  /** 当前是否有台词在播放（上层提供）。 */
-  isDialogueActive: (() => boolean) | null = null;
+  private _motionUntilMs = 0;
 
   get isBusy(): boolean {
     return this.petting.isPettingSessionActive || this.procedural.isPlaying || this.dragReaction.isDragging;
@@ -46,30 +73,31 @@ export class InteractionService {
     this.procedural.cancelAll();
     this.dragReaction.cancel();
     this.clickSequence.reset();
-    this._earClickUntilMs = 0;
-    this._basicClickUntilMs = 0;
+    this._resetLimits();
   }
-
 
   constructor(deps: {
     hitAreas: HitAreas;
     getTarget: () => InteractionTarget | null;
+    reactions: ReactionLibrary;
+    host: ReactionHost;
     pettingHost: PettingDialogueHost;
-    dialogue: ConstructorParameters<typeof PettingController>[0]['dialogue'];
-    playCharacterAction: (action: string) => boolean;
+    random?: () => number;
   }) {
     this.hitAreas = deps.hitAreas;
+    this._reactions = deps.reactions;
+    this._host = deps.host;
+    this._random = deps.random ?? Math.random;
     this.petting = new PettingController({
       hitAreas: deps.hitAreas,
       getTarget: deps.getTarget,
-      dialogue: deps.dialogue,
       host: deps.pettingHost,
+      react: (trigger, exclude) => this.react(trigger, { exclude }),
     });
     this.procedural = new ProceduralReactionService({
       getTarget: deps.getTarget,
       isPettingActive: () => this.petting.isPettingSessionActive,
       takeOverPetting: () => this.petting.releaseFinishing(),
-      playCharacterAction: deps.playCharacterAction,
     });
   }
 
@@ -82,12 +110,36 @@ export class InteractionService {
     return this.petting.smoothedVelocityXPxPerSec;
   }
 
+  /**
+   * 播放触发键下的一个反应组：表情、动作、台词同时开始。
+   * @returns 说出的台词 id；没说话返回 null
+   */
+  react(trigger: string, opts: ReactOptions = {}): string | null {
+    const withLine = opts.speak !== false && this._host.canSpeak();
+    const pick = this._reactions.pick(trigger, { withLine, excludeIds: opts.exclude });
+    const group = pick?.group;
+    let moved = false;
+    if (group?.action && isProceduralReactionType(group.action)) {
+      this.procedural.apply(proceduralReaction(group.action, {
+        strength: group.strength, areaId: opts.areaId, side: opts.side,
+      }));
+      moved = true;
+    } else if (group?.action) {
+      this._playMotion(group.action);
+    }
+    if (!moved && opts.fallback) {
+      this.procedural.apply(proceduralReaction(opts.fallback, { areaId: opts.areaId, side: opts.side }));
+    }
+    if (group?.expression) this._host.express(group.expression, pick?.line ?? null);
+    if (!pick?.line) return null;
+    this._host.speak(pick.line);
+    return pick.line.entryId;
+  }
+
   /** 指针移动。返回 true=互动已接管（上层不移动窗口/不处理拖动）。 */
   onPointerMove(ctx: PointerContext): boolean {
     this.proximity.update(ctx);
-
-    if (this.petting.onPointerMove(ctx)) return true;
-    return false;
+    return this.petting.onPointerMove(ctx);
   }
 
   /** 指针按下。返回 true=互动已接管（上层不开始拖动）。 */
@@ -108,30 +160,32 @@ export class InteractionService {
   /** 指针松开。返回 true=互动已接管（上层不处理单击）。 */
   onPointerUp(ctx: PointerContext): boolean {
     this.proximity.update(ctx);
-    if (this.petting.onPointerUp(ctx)) return true;
-    return false;
+    return this.petting.onPointerUp(ctx);
   }
 
   /**
    * 普通单击（非抚摸接管，上层在单击确认后调用）。
-   * 返回 true 表示应抑制常规点击台词（点击冷却/疑惑反应等）。
+   * 返回 true 表示点击已由互动处理。
    */
   onClick(ctx: PointerContext, wasDrag: boolean): boolean {
     if (wasDrag) {
-      const wasFast = this.dragReaction.endDrag();
-      if (wasFast) {
-        this.procedural.apply(ProceduralReactions.eyesWiden(1.0));
-        // 每次快速拖动触发一次台词
-        if (this.isDialogueActive?.() !== true) {
-          this.playClickDialogue?.('drag_fast');
-        }
+      const wasDragging = this.dragReaction.isDragging;
+      if (this.dragReaction.endDrag()) {
+        this.react('drag.fast', { fallback: 'eyes_widen' });
+      } else if (wasDragging && this.procedural.isHolding) {
+        // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
+        this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
       }
       return false;
     }
 
     this.dragReaction.cancel();
     const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
-    // 耳朵不计入普通疑惑连点，但保留其历史与全局冷却。
+    // 模型空间水平朝向：触点在角色哪一侧（镜像已还原），供蹭手、回头等朝向反应。
+    const side = ((this.hitAreas.mirrored ? 1 - ctx.normX : ctx.normX) >= 0.5) ? 1 : -1;
+    const areaId = area ?? undefined;
+
+    // 耳朵不计入连点递进，但保留其历史与全局冷却。
     if (area === 'ear_left' || area === 'ear_right') {
       const now = performance.now();
       if (this.clickSequence.isInCooldown) {
@@ -139,42 +193,43 @@ export class InteractionService {
         return true;
       }
       if (now < this._earClickUntilMs) return true;
-      // 左右耳共用一次反馈时窗，避免连点反复启动 120+60+240ms 的单眼动作。
+      // 左右耳共用一次反馈时窗，避免连点反复启动单眼眨。
       this._earClickUntilMs = now + 420;
-      this.procedural.apply(ProceduralReactions.earBlink(0.8, area));
-      if (this.isDialogueActive?.() !== true) this.playClickDialogue?.(area);
+      this.react(`click.${area}`, { fallback: 'ear_blink', areaId, side });
       return true;
     }
+
     const result = this.clickSequence.registerClick();
     if (result === ClickResult.cooldown) {
       this._acknowledgeCooldownClick();
-      return true; // 冷却只抑制台词/连击动作，不吞掉基础视觉反馈。
+      return true; // 冷却只抑制台词与动作，不吞掉基础视觉反馈。
     }
 
-    if (result === ClickResult.doubt || result === ClickResult.comment) {
-      this.procedural.apply(ProceduralReactions.doubt(0.9));
-      this.playClickDialogue?.(result === ClickResult.doubt ? 'click_doubt' : 'click_comment');
-      return true;
-    }
-
-    switch (area) {
-      case 'head':
-      case 'head_pet_zone':
-      case 'hair':
-        this.procedural.apply(ProceduralReactions.eyesAndTilt(0.8));
-        break;
-      case 'face':
-        // 点脸脸红：全局视线跟随光标，故不使用"移开视线"反应（会互相冲突）
-        this.procedural.apply(ProceduralReactions.blush(1.0));
-        break;
-      default:
-        // 身体、手部、平板及未命名的可见区域也有独立反馈，不依赖台词成功播放。
-        this.procedural.apply(ProceduralReactions.acknowledge(0.8));
-        break;
-    }
-
-    this.playClickDialogue?.(area === 'head_pet_zone' ? 'head' : area ?? 'body');
+    const key = `click.${area === 'head_pet_zone' ? 'head' : area ?? 'body'}`;
+    const base = this._reactions.has(key) ? key : 'click.body';
+    // 连点递进：3 秒 3 次 → repeat，4 秒 5 次 → annoyed；区域没有专属组时用通用组。
+    const tier = result === ClickResult.doubt ? 'repeat' : result === ClickResult.comment ? 'annoyed' : null;
+    const trigger = !tier ? base
+      : this._reactions.has(`${key}.${tier}`) ? `${key}.${tier}` : `click.${tier}`;
+    this.react(trigger, { fallback: 'acknowledge', areaId, side });
     return true;
+  }
+
+  /** 拖动开始：进入「被拎起」姿态。 */
+  beginHold(): void {
+    this.procedural.hold();
+  }
+
+  /** 拖动中按画面水平速度做惯性摆头；mirrored 时换算到模型空间。 */
+  updateHoldVelocity(screenVxPxPerSec: number): void {
+    this.procedural.setHoldSway(this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec);
+  }
+
+  /** 互动动作在保护期内不重启；可以打断待机或聊天动作（触碰优先）。 */
+  private _playMotion(name: string): void {
+    const now = performance.now();
+    if (now < this._motionUntilMs) return;
+    if (this._host.playMotion(name)) this._motionUntilMs = now + MOTION_GUARD_MS;
   }
 
   /** 冷却期间只允许低幅度点头；限频不延长台词冷却，也不触发角色动作。 */
@@ -182,7 +237,13 @@ export class InteractionService {
     const now = performance.now();
     if (now < this._basicClickUntilMs) return;
     this._basicClickUntilMs = now + 240;
-    this.procedural.apply(ProceduralReactions.acknowledge(0.35));
+    this.procedural.apply(proceduralReaction('acknowledge', { strength: 0.35 }));
+  }
+
+  private _resetLimits(): void {
+    this._earClickUntilMs = 0;
+    this._basicClickUntilMs = 0;
+    this._motionUntilMs = 0;
   }
 
   onEsc(): void {
@@ -195,8 +256,7 @@ export class InteractionService {
     this.petting.resetConfiguration();
     this.dragReaction.cancel();
     this.clickSequence.reset();
-    this._earClickUntilMs = 0;
-    this._basicClickUntilMs = 0;
+    this._resetLimits();
     this.procedural.cancelAll(true);
   }
 
@@ -205,8 +265,7 @@ export class InteractionService {
     this.petting.exitPettingMode('windowClosing');
     this.procedural.cancelAll(true);
     this.clickSequence.reset();
-    this._earClickUntilMs = 0;
-    this._basicClickUntilMs = 0;
+    this._resetLimits();
     this.proximity.reset();
     this.dragReaction.cancel();
   }

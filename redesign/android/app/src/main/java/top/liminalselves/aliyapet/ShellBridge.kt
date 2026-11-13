@@ -55,6 +55,9 @@ class ShellBridge(private val host: Host) {
          */
         fun setHitMask(cols: Int, rows: Int, data: String) {}
 
+        /** Character-only display settings: opacity 0..100, persisted even in Activity mode. */
+        fun setPetDisplay(opacity: Float, fullClickThrough: Boolean) {}
+
         /** 独立原生气泡：文本、人物窗口内锚点及 CSS 样式；空文本隐藏。 */
         fun setDialogueBubble(json: String) {}
 
@@ -139,6 +142,11 @@ class ShellBridge(private val host: Host) {
     fun setHitMask(cols: Int, rows: Int, data: String) {
         // 命中掩码：JavaBridge 线程直写 volatile，UI 线程在 DOWN 时读
         host.setHitMask(cols, rows, data)
+    }
+
+    @JavascriptInterface
+    fun setPetDisplay(opacity: Float, fullClickThrough: Boolean) {
+        main.post { host.setPetDisplay(opacity, fullClickThrough) }
     }
 
     @JavascriptInterface

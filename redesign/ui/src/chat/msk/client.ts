@@ -323,6 +323,6 @@ export class MskClient {
     const list = await this.post<MskTimelineMessage[]>('/agents/messages/timeline', { sessionId, limit }, signal);
     return (Array.isArray(list) ? list : [])
       .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-      .sort((a, b) => a.createdAt < b.createdAt ? -1 : 1);
+      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
   }
 }

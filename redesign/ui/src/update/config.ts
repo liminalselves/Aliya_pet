@@ -11,6 +11,9 @@
 
 export const DEFAULT_UPDATE_BASES = ['https://aliyapet.liminalselves.top'];
 
+/** 官网即发布页（设置 → 关于 →「打开官网」）；不受 VITE_UPDATE_BASES 联调覆盖影响。 */
+export const OFFICIAL_SITE_URL = `${DEFAULT_UPDATE_BASES[0]}/`;
+
 function parseBases(raw: string | undefined): string[] {
   const list = (raw ?? '')
     .split(',')

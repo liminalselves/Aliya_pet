@@ -213,7 +213,7 @@ const motionAssets = new Map(Object.entries(motionSetting.FileReferences.Motions
   const bytes = new TextEncoder().encode(readFileSync(resolve(motionRoot, entry.File), 'utf8'));
   return [name, { entry, bytes, duration: JSON.parse(new TextDecoder().decode(bytes)).Meta.Duration }];
 }));
-const newActions = ['shy_sway', 'cheerful_bounce'];
+const newActions = ['shy_sway', 'cheerful_bounce', 'puff', 'kiss', 'sob', 'deadpan', 'look_around', 'daydream', 'notice'];
 const oldActions = [...motionAssets.keys()].filter(name => !newActions.includes(name));
 // This is an independent ownership contract, not a list inferred from the motion
 // under test: a missing reset curve must leave a dirty snapshot and fail the test.
@@ -349,7 +349,8 @@ function checkMotionHandoff(from, to, fps, interruptAt = 0.85) {
       assert.ok(harness.value(id) < -9.5, `${label}: ${id} was not folded inward before interruption`);
     }
     for (const id of ['ParamArmL01', 'ParamArmR01']) {
-      assert.ok(harness.value(id) < -4.9 && harness.value(id) > -6.1,
+      // Upper arms squeeze up to 0.6 tighter while following the sway.
+      assert.ok(harness.value(id) < -4.9 && harness.value(id) > -6.5,
         `${label}: ${id} must tuck the upper arm against the coat while the forearm stays folded`);
     }
   }
@@ -446,7 +447,8 @@ for (const fps of [15, 30, 60]) {
         assert.ok(harness.value(id) < -9.5, `${label}: ${id} relaxed back to hanging hands at ${time}s`);
       }
       for (const id of ['ParamArmL01', 'ParamArmR01']) {
-        assert.ok(harness.value(id) > -6.1 && harness.value(id) < -4.9,
+        // Upper arms squeeze up to 0.6 tighter with the sway, never loosen.
+        assert.ok(harness.value(id) > -6.5 && harness.value(id) < -4.9,
           `${label}: ${id} must keep the upper arm tucked throughout both sway directions`);
       }
       body.push(harness.value('ParamBodyAngleZ'));
@@ -477,7 +479,7 @@ for (const fps of [15, 30, 60]) {
     }
   });
   test(`shy_sway entry / main / exit handoffs retain fades and reset all 30 parameters at ${fps} FPS`, () => {
-    assert.equal(motionAssets.size, 10, 'the handoff matrix must include shy_sway and all 9 other actions');
+    assert.equal(motionAssets.size, 17, 'the handoff matrix must include shy_sway and all 16 other actions');
     assert.equal(motionAssets.get('shy_sway').duration, 5.4, 'shy_sway must include its 1.2 s neutral tail');
     for (const other of ['nod', 'wave']) {
       for (const interruptAt of [0.35, 1.4, 3.4, 4.05]) checkMotionHandoff('shy_sway', other, fps, interruptAt);

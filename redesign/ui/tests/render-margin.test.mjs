@@ -22,8 +22,12 @@ function load(filename) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 }, fileName: filename,
   }).outputText;
   const require = id => {
+    // embed.ts reads import.meta (Vite only); asset URLs are irrelevant here.
+    if (/(^|\/)embed$/.test(id)) return { isEmbed: false, assetUrl: p => String(p), postToHost() {} };
     if (id.startsWith('@framework/')) return load(resolve(frameworkRoot, `${id.slice(11)}.ts`));
     assert.ok(id.startsWith('.'), `unexpected import: ${id}`);
+    // embed.ts reads Vite's import.meta.env, which CommonJS vm code cannot parse.
+    if (/(^|\/)embed$/.test(id)) return { isEmbed: false, assetUrl: p => '/' + String(p).replace(/^\/+/, ''), postToHost() {} };
     return load(resolve(dirname(filename), `${id}.ts`));
   };
   vm.runInContext(`(function(require, module, exports) {\n${code}\n})`, context, { filename })(require, module, module.exports);
@@ -77,16 +81,16 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
   for (const fps of [15, 30, 60]) {
     p = await model();
     try {
-      assert.equal(p.getExpressionNames().length, 12);
-      assert.equal(p.actionManifest.length, 10);
-      for (const action of ['cheerful_bounce', 'shy_sway']) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
+      assert.equal(p.getExpressionNames().length, 14);
+      assert.equal(p.getMotionNames().length, 17);
+      for (const action of p.getMotionNames()) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));
         for (let frame = 0; frame < fps * 8; frame++) {
           p.update(1 / fps); sample(`${fps}/${action}/${expression}/${gaze}/${frame}`);
         }
       }
-      for (const action of ['cheerful_bounce', 'shy_sway']) for (const next of p.actionManifest.map(a => a.name)) for (const at of [.2, 1.8, action === 'shy_sway' ? 5.2 : 3.9]) {
+      for (const action of ['cheerful_bounce', 'shy_sway']) for (const next of p.getMotionNames()) for (const at of [.2, 1.8, action === 'shy_sway' ? 5.2 : 3.9]) {
         summary.cases++;
         p.startExpression('shy'); p.setLookTarget(0, 0); assert.ok(p.playAction(action));
         for (let frame = 0; frame < Math.ceil(at * fps) + 8 * fps; frame++) {
