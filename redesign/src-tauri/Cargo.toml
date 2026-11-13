@@ -1,6 +1,6 @@
 [package]
 name = "aliya-pet"
-version = "0.2.0"
+version = "0.3.0"
 description = "Aliya desktop pet (Tauri shell + Web Live2D renderer)"
 edition = "2021"
 
