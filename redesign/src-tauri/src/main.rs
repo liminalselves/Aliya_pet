@@ -588,21 +588,36 @@ fn toggle_pet_visibility(app: &tauri::AppHandle) {
                 chat_window::on_pet_hidden(app);
                 let _ = w.hide();
             }
-            _ => {
-                let _ = w.show();
-                let _ = w.unminimize();
-                chat_window::on_pet_shown(app);
-            }
+            _ => show_pet(app),
         }
     }
 }
 
-/// 单实例：按用户会话创建命名互斥量，已存在说明桌宠在运行，返回 false。
-/// 句柄刻意不关闭，随进程退出由系统释放（更新安装器重启新版本前旧进程已退出）。
+/// 显示桌宠并带回之前开着的 chat；已可见时不动。
+fn show_pet(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("pet") {
+        if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
+            return;
+        }
+        let _ = w.show();
+        let _ = w.unminimize();
+        chat_window::on_pet_shown(app);
+    }
+}
+
+/// 单实例结果：首个实例持有命名事件并等待唤醒；后来者已通知首个实例，应直接退出。
 #[cfg(windows)]
-fn acquire_single_instance() -> bool {
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
-    use windows_sys::Win32::System::Threading::CreateMutexW;
+enum SingleInstance {
+    Primary(Option<isize>),
+    Secondary,
+}
+
+/// 单实例：按用户会话创建命名自动复位事件。事件已存在说明桌宠在运行，
+/// 置位它让首个实例显示桌宠。首个实例的句柄刻意不关闭，随进程退出由系统释放。
+#[cfg(windows)]
+fn acquire_single_instance() -> SingleInstance {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent};
     // 开发构建单独命名，不与已安装的正式版互斥。
     let name = if cfg!(debug_assertions) {
         "Local\\top.liminalselves.aliyapet.single-instance.dev"
@@ -613,17 +628,42 @@ fn acquire_single_instance() -> bool {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-    // 创建失败时不阻止启动，避免互斥量异常让桌宠完全打不开。
-    handle.is_null() || unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+    let handle = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+    // 创建失败时不阻止启动，避免事件异常让桌宠完全打不开。
+    if handle.is_null() {
+        return SingleInstance::Primary(None);
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe {
+            SetEvent(handle);
+            CloseHandle(handle);
+        }
+        return SingleInstance::Secondary;
+    }
+    SingleInstance::Primary(Some(handle as isize))
+}
+
+/// 首个实例等待后来者的唤醒信号，收到后在主线程显示桌宠。
+#[cfg(windows)]
+fn spawn_activation_listener(app: tauri::AppHandle, event: isize) {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    std::thread::spawn(move || loop {
+        if unsafe { WaitForSingleObject(event as _, INFINITE) } != WAIT_OBJECT_0 {
+            return;
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || show_pet(&handle));
+    });
 }
 
 fn main() {
-    // 快捷方式连点会并发拉起多个进程，后来者直接退出。
+    // 快捷方式连点会并发拉起多个进程，后来者唤醒首个实例后直接退出。
     #[cfg(windows)]
-    if !acquire_single_instance() {
-        return;
-    }
+    let activation_event = match acquire_single_instance() {
+        SingleInstance::Primary(event) => event,
+        SingleInstance::Secondary => return,
+    };
 
     let hit_mask: HitMaskState = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let hit_mask_for_setup = hit_mask.clone();
@@ -691,6 +731,10 @@ fn main() {
             chat_window::setup(app.handle())?;
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
+            #[cfg(windows)]
+            if let Some(event) = activation_event {
+                spawn_activation_listener(app.handle().clone(), event);
+            }
             // 托盘菜单（对齐 Flutter 版：主菜单/显示隐藏/切换尺寸/置顶/重置位置/关于/退出）
             let menu_main = MenuItem::with_id(app, "menu", "主菜单", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "显示 / 隐藏桌宠", true, None::<&str>)?;
