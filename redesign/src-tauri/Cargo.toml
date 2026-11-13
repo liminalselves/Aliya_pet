@@ -15,7 +15,7 @@ serde_json = "1"
 tauri-plugin-updater = "2.14.1"
 
 # 透明区域鼠标穿透（GetCursorPos）+ 默认浏览器打开（ShellExecuteW，不走 cmd 元字符解析）
-# + 聊天窗口手动截屏（Gdi）+ 单实例命名互斥量（Threading，CreateMutexW 需 Security）
+# + 聊天窗口手动截屏（Gdi）+ 单实例命名事件（Threading，CreateEventW 需 Security）
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_Security"] }
 
