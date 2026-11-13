@@ -126,3 +126,4 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 | 聊天            | `chat` 跟随 pet；`records` 为独立窗          | 主界面 ChatView + 记录/设置页面栈；悬浮无聊天 |
 | 后台行为        | 常驻渲染                                     | 前台服务 + 通知；熄屏暂停              |
 | 自启            | 注册表 Run 键                                | BootReceiver (+ 悬浮窗权限门槛)        |
+| 单实例          | 会话级命名互斥量，后启动的进程直接退出（main.rs `acquire_single_instance`） | 主 Activity `singleTask` |

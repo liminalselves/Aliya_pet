@@ -597,7 +597,34 @@ fn toggle_pet_visibility(app: &tauri::AppHandle) {
     }
 }
 
+/// 单实例：按用户会话创建命名互斥量，已存在说明桌宠在运行，返回 false。
+/// 句柄刻意不关闭，随进程退出由系统释放（更新安装器重启新版本前旧进程已退出）。
+#[cfg(windows)]
+fn acquire_single_instance() -> bool {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    // 开发构建单独命名，不与已安装的正式版互斥。
+    let name = if cfg!(debug_assertions) {
+        "Local\\top.liminalselves.aliyapet.single-instance.dev"
+    } else {
+        "Local\\top.liminalselves.aliyapet.single-instance"
+    };
+    let name: Vec<u16> = name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    // 创建失败时不阻止启动，避免互斥量异常让桌宠完全打不开。
+    handle.is_null() || unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+}
+
 fn main() {
+    // 快捷方式连点会并发拉起多个进程，后来者直接退出。
+    #[cfg(windows)]
+    if !acquire_single_instance() {
+        return;
+    }
+
     let hit_mask: HitMaskState = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let hit_mask_for_setup = hit_mask.clone();
 
