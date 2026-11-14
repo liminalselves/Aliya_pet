@@ -78,6 +78,9 @@ function detectPlatform(): PlatformKind {
 }
 
 export const platform: PlatformKind = detectPlatform();
+/** 构建目标来自 Tauri CLI，不根据浏览器 UA 猜测；web/Android 不进入桌面分支。 */
+export const desktopOS = platform === 'tauri' && typeof __DESKTOP_OS__ !== 'undefined' ? __DESKTOP_OS__ : 'unknown';
+const desktopCoordinate = (value: number) => desktopOS === 'macos' ? value : Math.round(value);
 
 /**
  * 桌面壳去掉 WebView2 的浏览器右键菜单（返回/刷新/另存为/检查），所有窗口共用；
@@ -128,7 +131,7 @@ export async function getWindowMetrics(): Promise<WindowMetrics | null> {
   }
   if (platform === 'tauri') {
     try {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       const win = m.getCurrentWindow();
       const [mon, scale, outer, size] = await Promise.all([
         m.currentMonitor(),
@@ -161,14 +164,14 @@ export async function moveWindowBy(dx: number, dy: number): Promise<boolean> {
   }
   if (platform === 'tauri') {
     try {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       const win = m.getCurrentWindow();
       const density = await win.scaleFactor();
       const pos = await win.outerPosition();
       await win.setPosition(
         new m.PhysicalPosition(
-          Math.round(pos.x + dx * density),
-          Math.round(pos.y + dy * density)
+          desktopCoordinate(pos.x + dx * density),
+          desktopCoordinate(pos.y + dy * density)
         )
       );
       return true;
@@ -200,7 +203,7 @@ export async function setWindowSize(w: number, h: number): Promise<boolean> {
   }
   if (platform === 'tauri') {
     try {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       await m.getCurrentWindow().setSize(new m.LogicalSize(w, h));
       return true;
     } catch {
@@ -217,11 +220,11 @@ export async function setWindowPos(x: number, y: number): Promise<boolean> {
   }
   if (platform === 'tauri') {
     try {
-      const m = await import('@tauri-apps/api/window');
+      const m = await import('./desktop-window');
       const win = m.getCurrentWindow();
       const density = await win.scaleFactor();
       await win.setPosition(
-        new m.PhysicalPosition(Math.round(x * density), Math.round(y * density))
+        new m.PhysicalPosition(desktopCoordinate(x * density), desktopCoordinate(y * density))
       );
       return true;
     } catch {
@@ -233,7 +236,7 @@ export async function setWindowPos(x: number, y: number): Promise<boolean> {
 
 export async function setAlwaysOnTop(on: boolean): Promise<void> {
   if (platform === 'tauri') {
-    import('@tauri-apps/api/window')
+    import('./desktop-window')
       .then((m) => m.getCurrentWindow().setAlwaysOnTop(on))
       .catch(() => {});
   }

@@ -6,7 +6,7 @@
  * 启动检查或设置页「检查更新」触发。
  *
  * 展示分叉：
- *  - Windows：pet 窗口透明且点击穿透，不能画弹窗 → Rust `show_update`
+ *  - Windows / macOS：pet 窗口透明且点击穿透，不能画弹窗 → Rust `show_update`
  *    唤起独立 update 窗口并转交检查结果（main.rs）。
  *  - Android：主界面 WebView 全屏可交互（命中掩码只在悬浮窗形态生效），
  *    直接挂页内 <dialog> 模态。
@@ -14,17 +14,18 @@
 
 import { checkForUpdate, shouldPromptUpdate } from './check';
 import { openUpdateModal } from './dialog';
-import { isAndroidOverlay, platform } from '../platform';
+import { desktopOS, isAndroidOverlay, platform } from '../platform';
 
 export const STARTUP_CHECK_DELAY_MS = 3000;
 
 export async function runStartupUpdateCheck(): Promise<void> {
   if (platform === 'web') return;
+  if (platform === 'tauri' && desktopOS !== 'windows' && desktopOS !== 'macos') return;
   if (platform === 'android' && isAndroidOverlay()) return;
   let result;
   try {
     result = await checkForUpdate(
-      platform === 'tauri' ? 'windows' : 'android',
+      platform === 'tauri' ? (desktopOS === 'macos' ? 'macos' : 'windows') : 'android',
       __APP_VERSION__
     );
   } catch {

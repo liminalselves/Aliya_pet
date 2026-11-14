@@ -1,12 +1,12 @@
 /**
- * Windows 更新窗口页面（update.html，预创建隐藏，由 show_update 命令唤起）。
+ * Windows / macOS 更新窗口页面（update.html，预创建隐藏，由 show_update 命令唤起）。
  *
  * 数据来源：pet / 设置页检查 /api/check 后把结果经 Rust `show_update` 转交
  * （`update-open` 事件）；页面加载早于任何检查，但为兜底 HMR 整页重载等时序，
  * 启动时再主动取一次 `current_update_payload`。
  *
  * 「立即更新」走官方 updater 插件（tauri.conf.json plugins.updater 端点）：
- * 下载 → 校验签名 → NSIS passive 安装；Windows 上安装器启动后应用自动退出。
+ * 下载 → 校验签名 → 安装；Windows 上安装器启动后应用自动退出，macOS 由 updater 替换 app 后重启。
  */
 
 import type { UpdateCheckResult } from './check';
@@ -89,5 +89,5 @@ if (platform === 'tauri') {
 } else {
   // 浏览器预览 update.html：给个静态占位，避免白屏难辨
   document.getElementById('app')!.textContent =
-    '更新窗口仅在 Windows 桌面壳内使用。';
+    '更新窗口仅在桌面壳内使用。';
 }

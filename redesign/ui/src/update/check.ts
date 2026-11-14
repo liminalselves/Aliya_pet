@@ -1,7 +1,7 @@
 /**
  * 版本检查纯逻辑 + 发布服务客户端。
  *
- * 端点：GET {base}/api/check?platform=windows|android&version=0.1.0
+ * 端点：GET {base}/api/check?platform=windows|macos|android&version=0.1.0
  *  - 有更新：{ updateAvailable:true, mandatory, current, latest, publishedAt,
  *             notes, downloadUrl, size, releasePage }
  *  - 无更新：{ updateAvailable:false, mandatory:false, current, latest }
@@ -10,7 +10,7 @@
 
 import { UPDATE_SERVICE_BASES, UPDATE_SKIP_KEY } from './config';
 
-export type UpdatePlatform = 'windows' | 'android';
+export type UpdatePlatform = 'windows' | 'macos' | 'android';
 
 /** /api/check 响应（无更新时仅前四个字段有值）。 */
 export interface UpdateCheckResult {

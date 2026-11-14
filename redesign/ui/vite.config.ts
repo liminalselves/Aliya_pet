@@ -3,6 +3,12 @@ import path from 'path';
 import fs from 'fs';
 
 const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'));
+const tauriPlatform = process.env.TAURI_ENV_PLATFORM ?? '';
+const desktopTarget = tauriPlatform === 'darwin' || tauriPlatform.includes('apple-darwin')
+  ? 'macos'
+  : tauriPlatform === 'win32' || tauriPlatform.includes('windows')
+    ? 'windows'
+    : tauriPlatform || (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform);
 
 export default defineConfig({
   root: '.',
@@ -11,6 +17,8 @@ export default defineConfig({
   define: {
     // 构建期注入版本号，唯一来源为 ui/package.json（设置页「关于」展示）
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Tauri sets the target even for cross builds; standalone UI builds use the host.
+    __DESKTOP_OS__: JSON.stringify(desktopTarget),
   },
   server: {
     port: 5175,

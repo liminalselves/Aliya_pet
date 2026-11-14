@@ -154,6 +154,19 @@ test('service client: first base wins, non-2xx and bad payloads fall through', a
   assert.equal(calls.length, 2);
 });
 
+test('service client: macOS uses the macos platform query', async () => {
+  const { check } = loadCheck({ bases: 'https://updates.example' });
+  let requested = '';
+  await check.checkForUpdate('macos', '0.2.0', {
+    fetchImpl: async (url) => {
+      requested = url;
+      return jsonResponse({ updateAvailable: false, mandatory: false, current: '0.2.0', latest: '0.2.0' });
+    },
+  });
+  assert.match(requested, /platform=macos/);
+  assert.match(requested, /version=0\.2\.0/);
+});
+
 test('service client: timeout aborts the base and moves on; all failures reject', async () => {
   const { check } = loadCheck({ bases: 'https://slow.example, https://ok.example' });
   const hang = (url, init) => new Promise((_, reject) => {

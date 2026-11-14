@@ -25,7 +25,7 @@
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use tauri::{PhysicalPosition, PhysicalSize};
 
 /// 模型可见矩形（屏幕物理像素），由前端显式上报。
@@ -79,6 +79,13 @@ pub struct ChatRuntime {
     layout: Option<ChatLayout>,
     /// 缩放预告的 pet 外窗几何；存在时代替实时窗口快照。
     pending_pet: Option<PetAnchor>,
+    /// macOS 继续使用旧版动态伴侣窗；Windows 使用固定容量外窗布局。
+    #[cfg(target_os = "macos")]
+    legacy_layout: MacChatLayout,
+    #[cfg(target_os = "macos")]
+    legacy_reply_height: Option<u32>,
+    #[cfg(target_os = "macos")]
+    legacy_composer_height: Option<u32>,
 }
 
 pub type ChatRuntimeState = Arc<Mutex<ChatRuntime>>;
@@ -124,6 +131,8 @@ pub fn on_pet_hidden(app: &AppHandle) {
         r.open_before_pet_hide = open;
     }
     if open {
+        #[cfg(target_os = "macos")]
+        if let Err(error) = crate::macos::parent_chat(app, false) { eprintln!("[chat] detach failed: {error}"); }
         if let Some(chat) = app.get_webview_window("chat") {
             let _ = chat.hide();
         }
@@ -142,6 +151,8 @@ pub fn on_pet_shown(app: &AppHandle) {
     }
     if let Some(chat) = app.get_webview_window("chat") {
         position_chat(app, app.state::<ChatAnchorState>().inner());
+        #[cfg(target_os = "macos")]
+        if let Err(error) = crate::macos::parent_chat(app, true) { eprintln!("[chat] attach failed: {error}"); }
         let _ = chat.show();
     }
 }
@@ -171,7 +182,9 @@ pub const CHAT_SHELL_H_CSS: f64 = 324.0;
 /// 差额由页面 `bottom: calc(56px × (1 − zoom))` 吸收（chat.css 同值）。
 pub const FOOT_OFFSET_CSS: f64 = 56.0;
 /// 外窗固定尺寸（CSS px）：容得下最宽、最高的卡片。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub const CHAT_WINDOW_W_CSS: f64 = CHAT_MAX_W_CSS;
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub const CHAT_WINDOW_H_CSS: f64 = CHAT_SHELL_H_CSS + FOOT_OFFSET_CSS;
 
 /// 卡片视觉宽对应的页面布局：缩放 = 视觉宽 / 最小排版宽（≤1），排版宽 = 视觉宽 / 缩放。
@@ -187,6 +200,7 @@ pub fn chat_layout_for_width(visual_w_css: f64) -> ChatLayout {
 /// 避让只针对可见卡片而不是透明外窗：pet 中心在屏内时把卡片钳回工作区（贴边时
 /// 纯居中会把发送按钮切出屏幕），外窗本身可以越出屏幕；pet 中心出屏说明桌宠被
 /// 拖出桌面，chat 作为影子跟随越界，不拉回。卡片超出工作区底部时整窗上移。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn chat_position(
     pet: PetAnchor,
     card_w: i32,
@@ -223,6 +237,43 @@ pub struct ChatLayout {
     pub width: f64,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum MacChatLayout {
+    #[default]
+    Setup,
+    Reply,
+    Composer,
+}
+
+#[cfg(target_os = "macos")]
+impl ChatRuntime {
+    fn set_legacy_layout(&mut self, mode: &str, content_height: Option<u32>) {
+        self.legacy_layout = match mode {
+            "composer" => MacChatLayout::Composer,
+            "reply" => MacChatLayout::Reply,
+            _ => MacChatLayout::Setup,
+        };
+        if let Some(height) = content_height.filter(|height| *height > 0) {
+            match self.legacy_layout {
+                MacChatLayout::Reply => self.legacy_reply_height = Some(height),
+                MacChatLayout::Composer => self.legacy_composer_height = Some(height),
+                MacChatLayout::Setup => {}
+            }
+        }
+    }
+
+    fn legacy_height_css(&self, default_height: f64) -> f64 {
+        match self.legacy_layout {
+            MacChatLayout::Composer => self.legacy_composer_height
+                .map(f64::from).unwrap_or(default_height).clamp(62.0, 144.0),
+            MacChatLayout::Reply => self.legacy_reply_height
+                .map(f64::from).unwrap_or(default_height).clamp(118.0, 330.0),
+            MacChatLayout::Setup => default_height.max(300.0),
+        }
+    }
+}
+
 /// 页面启动时拉取最近一次卡片布局（事件可能先于页面加载发出）。
 #[tauri::command]
 pub fn chat_layout(runtime: State<ChatRuntimeState>) -> Option<ChatLayout> {
@@ -242,7 +293,21 @@ pub fn begin_pet_bounds(app: &AppHandle, bounds: PetAnchor) {
 /// pet 前端逐帧上报卡片视觉宽（CSS px，按角色当前显示大小折算）：换算布局转给页面，
 /// 并按新卡片宽重算工作区避让。值未变不广播。
 #[tauri::command]
-pub fn set_chat_layout(app: AppHandle, anchor: State<ChatAnchorState>, width: f64) -> Result<(), String> {
+pub fn set_chat_layout(
+    app: AppHandle,
+    anchor: State<ChatAnchorState>,
+    runtime: State<ChatRuntimeState>,
+    width: Option<f64>,
+    mode: Option<String>,
+    content_height: Option<u32>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(mode) = mode.as_deref() {
+        runtime.lock().map_err(|error| error.to_string())?.set_legacy_layout(mode, content_height);
+        position_chat(&app, &anchor);
+        return Ok(());
+    }
+    let width = width.ok_or("missing chat width")?;
     if !width.is_finite() || width <= 0.0 { return Err("invalid chat width".into()); }
     let layout = chat_layout_for_width(width);
     let changed = app.state::<ChatRuntimeState>().lock()
@@ -359,6 +424,10 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
         WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } if label == "pet" => {
             position_chat(app, app.state::<ChatAnchorState>().inner());
         }
+        #[cfg(target_os = "macos")]
+        WindowEvent::ScaleFactorChanged { .. } if label == "chat" => {
+            position_chat(app, app.state::<ChatAnchorState>().inner());
+        }
         WindowEvent::Destroyed if label == "chat" => {
             broadcast_open(app, app.state::<ChatRuntimeState>().inner(), false);
         }
@@ -368,10 +437,14 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
 
 // ---------- 内部 ----------
 
-/// 按锚点定位 chat：外窗尺寸恒定只平移，卡片尺寸经事件交给页面补间。
+/// Windows：按锚点定位固定容量 chat 外窗，卡片尺寸经事件交给页面补间。
+#[cfg(not(target_os = "macos"))]
 fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let Some(chat) = app.get_webview_window("chat") else { return };
     let Some(pet) = current_anchor(app, anchor) else { return };
+    #[cfg(target_os = "macos")]
+    let scale = 1.0;
+    #[cfg(not(target_os = "macos"))]
     let scale = app.get_webview_window("pet").and_then(|pet| pet.scale_factor().ok()).unwrap_or(1.0);
     let stored = app.state::<ChatRuntimeState>().lock().ok().and_then(|r| r.layout);
     let layout = stored.unwrap_or_else(|| chat_layout_for_width(pet.w as f64 / scale * CHAT_WIDTH_RATIO));
@@ -384,6 +457,9 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
     let card_w = (layout.width * layout.zoom * scale).round().max(1.0) as i32;
     let foot = (FOOT_OFFSET_CSS * scale).round() as i32;
     let lift = ((FOOT_OFFSET_CSS * (1.0 - layout.zoom) + 6.0 * layout.zoom) * scale).round() as i32;
+    #[cfg(target_os = "macos")]
+    let (x, y) = chat_position(pet, card_w, w, h, foot, lift, pet_monitor_work_area(app));
+    #[cfg(not(target_os = "macos"))]
     let (x, y) = chat_position(pet, card_w, w, h, foot, lift, pet_monitor_work_area(app));
     // 无变化不触碰窗口：每次 set_size/set_position 都会触发 webview 重合成，
     // 锚点同步、打开窗口大多带着未变的几何进来。chat 是无边框窗，
@@ -411,24 +487,100 @@ fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
             Err(error) => eprintln!("[chat] get window handle failed: {error}"),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = crate::macos::set_frame(&chat, crate::geometry::Rect {
+            x: x as f64, y: y as f64, width: w as f64, height: h as f64,
+        }) { eprintln!("[chat] set logical bounds failed: {error}"); }
+        return;
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         if need_size { let _ = chat.set_size(PhysicalSize::new(w as u32, h as u32)); }
         if need_pos { let _ = chat.set_position(PhysicalPosition::new(x, y)); }
     }
 }
 
+/// macOS：保留当前动态伴侣窗协议，窗口高度随自然页高变化，坐标使用 Cocoa points。
+#[cfg(target_os = "macos")]
+fn position_chat(app: &AppHandle, anchor: &ChatAnchorState) {
+    let Some(chat) = app.get_webview_window("chat") else { return };
+    let Some(pet) = current_anchor(app, anchor) else { return };
+    let (width_css, default_height_css) = chat_size_for_pet(pet.w as f64);
+    let height_css = app.state::<ChatRuntimeState>().lock()
+        .map(|runtime| runtime.legacy_height_css(default_height_css))
+        .unwrap_or(default_height_css);
+    let width = width_css.round().max(1.0);
+    let height = height_css.round().max(1.0);
+    let (x, y) = mac_chat_position(
+        pet,
+        width as i32,
+        height as i32,
+        FOOT_OFFSET_CSS.round() as i32,
+        pet_monitor_work_area(app),
+    );
+    if let Err(error) = crate::macos::set_frame(&chat, crate::geometry::Rect {
+        x: x as f64,
+        y: y as f64,
+        width,
+        height,
+    }) {
+        eprintln!("[chat] set logical bounds failed: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn chat_size_for_pet(pet_w_css: f64) -> (f64, f64) {
+    let width = (pet_w_css * CHAT_WIDTH_RATIO).clamp(260.0, 560.0);
+    (width, (width * 0.62).clamp(170.0, 330.0))
+}
+
+#[cfg(target_os = "macos")]
+fn mac_chat_position(
+    pet: PetAnchor,
+    chat_w: i32,
+    chat_h: i32,
+    foot_offset: i32,
+    work: Option<WorkRect>,
+) -> (i32, i32) {
+    if pet.w <= 0 || pet.h <= 0 || chat_w <= 0 || chat_h <= 0 {
+        return (pet.x, pet.y);
+    }
+    let mut x = pet.x + (pet.w - chat_w) / 2;
+    let mut y = pet.y + pet.h + foot_offset - chat_h;
+    if let Some(wa) = work {
+        if wa.w > 0 && wa.h > 0 {
+            let pet_cx = pet.x + pet.w / 2;
+            if chat_w <= wa.w && pet_cx >= wa.x && pet_cx <= wa.x + wa.w {
+                x = x.clamp(wa.x, wa.x + wa.w - chat_w);
+            }
+            if y + chat_h > wa.y + wa.h {
+                y = wa.y + wa.h - chat_h;
+            }
+        }
+    }
+    (x, y)
+}
+
 /// pet 所在显示器的工作区（物理像素）；取不到时返回 None（不做上下翻转避让）。
 fn pet_monitor_work_area(app: &AppHandle) -> Option<WorkRect> {
     let pet = app.get_webview_window("pet")?;
+    #[cfg(target_os = "macos")]
+    {
+        let wa = crate::macos::geometry(&pet).ok()?.monitor?.work_area;
+        return Some(WorkRect { x: wa.x.round() as i32, y: wa.y.round() as i32, w: wa.width.round() as i32, h: wa.height.round() as i32 });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     let monitor = pet.current_monitor().ok().flatten()?;
     let wa = monitor.work_area();
-    Some(WorkRect {
+    return Some(WorkRect {
         x: wa.position.x,
         y: wa.position.y,
         w: wa.size.width as i32,
         h: wa.size.height as i32,
-    })
+    });
+    }
 }
 
 /// 优先用前端显式上报的锚点；从未上报时回退为原生查询 pet 窗口外接矩形。
@@ -442,7 +594,12 @@ fn current_anchor(app: &AppHandle, anchor: &ChatAnchorState) -> Option<PetAnchor
     // pet 是无边框窗口，Win32 GetWindowRect 一次取得原点和尺寸，避免混合两次查询。
     #[cfg(windows)]
     let result = pet.hwnd().map_err(|e| e.to_string()).and_then(|hwnd| read_window_rect(hwnd.0 as _));
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let result = crate::macos::geometry(&pet).map(|geometry| {
+        let r = geometry.outer;
+        PetAnchor { x: r.x.round() as i32, y: r.y.round() as i32, w: r.width.round() as i32, h: r.height.round() as i32 }
+    });
+    #[cfg(not(any(windows, target_os = "macos")))]
     let result = (|| -> Result<PetAnchor, String> {
         let pos = pet.outer_position().map_err(|e| e.to_string())?;
         let size = pet.inner_size().map_err(|e| e.to_string())?;

@@ -1,7 +1,7 @@
 name: release
 
-# 推送 v* 标签且指向 master 时：构建 Windows 安装包（含更新器签名产物 .sig）与
-# Android 签名 APK，Release 说明取自 CHANGELOG.md 对应版本小节，附到 GitHub Release
+# 推送 v* 标签且指向 master 时：构建 Windows 安装包（含更新器签名产物 .sig）、
+# macOS Universal 包（含 updater archive）与 Android 签名 APK，Release 说明取自 CHANGELOG.md 对应版本小节
 on:
   push:
     tags: ['v*']
@@ -97,6 +97,13 @@ jobs:
             redesign/src-tauri/target/release/bundle/msi/*.msi.sig
           if-no-files-found: error
 
+  build-macos:
+    needs: tag-on-master
+    uses: ./.github/workflows/macos.yml
+    with:
+      release: true
+    secrets: inherit
+
   build-android:
     needs: tag-on-master
     runs-on: ubuntu-latest
@@ -148,7 +155,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-android]
+    needs: [build-windows, build-macos, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

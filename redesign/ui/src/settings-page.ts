@@ -17,6 +17,7 @@ import {
 } from './settings';
 import {
   platform,
+  desktopOS,
   androidShell,
   isAutoStart,
   setAutoStart,
@@ -481,9 +482,9 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
       // 保持默认范围
     }
   } else
-    import('@tauri-apps/api/window')
+    import('./desktop-window')
       .then(async (m) => {
-        let mon: import('@tauri-apps/api/window').Monitor | null = null;
+        let mon: import('./desktop-window').Monitor | null = null;
         try {
           mon = await m.currentMonitor();
         } catch {
@@ -740,7 +741,7 @@ if (platform === 'android') {
     '开机自启',
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
-      : 'Windows 登录后自动启动',
+      : desktopOS === 'macos' ? 'macOS 登录后自动启动' : 'Windows 登录后自动启动',
     () => settings.autoActions, // 占位，立即被真实值覆盖
     (v) => {
       setAutoStart(v);
@@ -898,13 +899,13 @@ if (platform === 'android') {
   const div = document.createElement('div');
   div.className = 'about';
   div.innerHTML =
-    `<b>Aliya Pet</b> v${__APP_VERSION__}（${platform === 'android' ? 'Android' : 'Windows'}）<br>` +
+    `<b>Aliya Pet</b> v${__APP_VERSION__}（${platform === 'android' ? 'Android' : desktopOS === 'macos' ? 'macOS' : 'Windows'}）<br>` +
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
 
   // 检查更新：手动入口不看「跳过/稍后」抑制；结果就地一行展示。
-  // Windows 弹独立 update 窗口（pet 窗口透明不能画 UI）；Android 本页内模态。
+  // Windows / macOS 弹独立 update 窗口（pet 窗口透明不能画 UI）；Android 本页内模态。
   const checkRow = document.createElement('div');
   checkRow.className = 'row';
   const checkLab = document.createElement('div');
@@ -924,7 +925,7 @@ if (platform === 'android') {
     checkSub.textContent = '正在检查…';
     try {
       const result = await checkForUpdate(
-        platform === 'android' ? 'android' : 'windows',
+        platform === 'android' ? 'android' : desktopOS === 'macos' ? 'macos' : 'windows',
         __APP_VERSION__
       );
       if (result.updateAvailable) {
