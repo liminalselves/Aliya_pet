@@ -713,6 +713,14 @@ export class PetApp {
     const win = this._tauriWindow;
     if (win) {
       win.setAlwaysOnTop(s.alwaysOnTop).catch(() => {});
+      if (isMac) {
+        this._deskScale = null;
+        this._deskCapacityReady = false;
+        this._queueWindowGeometry(async () => {
+          await this._applyDesktopGeometry(s, revision, positionRevision, restoredPosition);
+        }, 'Failed to apply pet window settings');
+        return;
+      }
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -752,7 +760,11 @@ export class PetApp {
     //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
     const { baseW, baseH } = this._baseWindowSize();
     const limits = this._scaleLimitsFrom(mon, baseW, baseH);
-    const scale = limits ? limits.maxS : s.scale;
+    const scale = limits
+      ? desktopOS === 'windows'
+        ? limits.maxS
+        : Math.min(Math.max(s.scale, limits.minS), limits.maxS)
+      : s.scale;
     if (stale()) return;
     const chatOpen = this._chatView?.isOpen ?? false;
     const roomW = mon ? mon.workArea.size.width / mon.scaleFactor : 1000;
@@ -894,7 +906,7 @@ export class PetApp {
 
   /** 舞台 CSS 矩形逐帧同步（变化才写）；补间期间铺满外窗，静止时只占当前比例的自然矩形。 */
   private _layoutStage(): void {
-    if (platform !== 'tauri' || this._wrapWindow || !this._deskCapacityReady || !this._model?.isReady()) return;
+    if (isMac || platform !== 'tauri' || this._wrapWindow || !this._deskCapacityReady || !this._model?.isReady()) return;
     const stage = this._canvas.parentElement;
     if (!stage) return;
     const W = window.innerWidth, H = window.innerHeight;
@@ -1390,7 +1402,7 @@ export class PetApp {
   private _physStageRect(size?: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
     const W = size?.width ?? Math.round(window.innerWidth * this._scaleFactor);
     const H = size?.height ?? Math.round(window.innerHeight * this._scaleFactor);
-    if (!this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
+    if (isMac || !this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
   }
 
@@ -1886,7 +1898,7 @@ export class PetApp {
     const viewportH = known?.cssH ?? window.innerHeight;
     if (!(viewportW > 0 && viewportH > 0)) return;
     // 固定容量外窗：锚点取当前比例的舞台，不取整个透明外窗。
-    const rect = this._deskCapacityReady && this._model?.isReady()
+    const rect = !isMac && this._deskCapacityReady && this._model?.isReady()
       ? (known ? this._stageRect(this._settings.scale, viewportW, viewportH, 1) : this._shownStageRectCss())
       : known ? { left: 0, top: 0, width: known.cssW, height: known.cssH } : this._canvas.getBoundingClientRect();
     let left = rect.left;

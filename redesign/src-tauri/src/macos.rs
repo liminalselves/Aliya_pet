@@ -109,6 +109,26 @@ pub fn set_frame(window: &WebviewWindow, frame: Rect) -> Result<(), String> {
     })
 }
 
+extern "C" {
+    fn class_replaceMethod(
+        cls: *mut std::ffi::c_void,
+        name: *const std::ffi::c_void,
+        imp: *const (),
+        types: *const std::ffi::c_char,
+    ) -> *const ();
+    fn sel_registerName(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+    fn object_getClass(obj: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+unsafe extern "C" fn unconstrained_frame(
+    _this: *mut std::ffi::c_void,
+    _cmd: *const std::ffi::c_void,
+    frame_rect: NSRect,
+    _screen: *mut std::ffi::c_void,
+) -> NSRect {
+    frame_rect
+}
+
 pub fn setup(app: &AppHandle) -> Result<(), String> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory).map_err(|e| e.to_string())?;
     app.set_dock_visibility(false).map_err(|e| e.to_string())?;
@@ -118,6 +138,14 @@ pub fn setup(app: &AppHandle) -> Result<(), String> {
         let chat = handle.get_webview_window("chat").ok_or("Missing chat window")?;
         for window in [&pet, &chat] {
             window.set_visible_on_all_workspaces(true).map_err(|e| e.to_string())?;
+            if let Ok(ptr) = window.ns_window() {
+                unsafe {
+                    let cls = object_getClass(ptr as *mut _);
+                    let sel = sel_registerName(b"constrainFrameRect:toScreen:\0".as_ptr() as *const _);
+                    let types = b"{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@\0";
+                    class_replaceMethod(cls, sel, unconstrained_frame as *const (), types.as_ptr() as *const _);
+                }
+            }
         }
         chat.hide().map_err(|e| e.to_string())?;
         Ok(())
