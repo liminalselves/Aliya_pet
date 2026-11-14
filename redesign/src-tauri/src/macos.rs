@@ -88,7 +88,9 @@ pub fn set_position(window: &WebviewWindow, x: f64, y: f64) -> Result<(), String
     if !x.is_finite() || !y.is_finite() { return Err("Invalid desktop position".into()); }
     let win = window.clone();
     on_main(window.app_handle(), move |mtm| {
-        native(&win, mtm)?.setFrameTopLeftPoint(NSPoint::new(x, primary_top(mtm)? - y));
+        let n = native(&win, mtm)?;
+        let height = n.frame().size.height;
+        n.setFrameOrigin(NSPoint::new(x, primary_top(mtm)? - y - height));
         Ok(())
     })
 }
