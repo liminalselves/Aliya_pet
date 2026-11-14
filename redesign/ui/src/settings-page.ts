@@ -18,6 +18,7 @@ import {
 import {
   platform,
   desktopOS,
+  isMac,
   androidShell,
   isAutoStart,
   setAutoStart,
@@ -741,7 +742,7 @@ if (platform === 'android') {
     '开机自启',
     platform === 'android'
       ? '设备开机后自动显示悬浮窗'
-      : desktopOS === 'macos' ? 'macOS 登录后自动启动' : 'Windows 登录后自动启动',
+      : isMac ? 'macOS 登录后自动启动' : 'Windows 登录后自动启动',
     () => settings.autoActions, // 占位，立即被真实值覆盖
     (v) => {
       setAutoStart(v);
@@ -899,7 +900,7 @@ if (platform === 'android') {
   const div = document.createElement('div');
   div.className = 'about';
   div.innerHTML =
-    `<b>Aliya Pet</b> v${__APP_VERSION__}（${platform === 'android' ? 'Android' : desktopOS === 'macos' ? 'macOS' : 'Windows'}）<br>` +
+    `<b>Aliya Pet</b> v${__APP_VERSION__}（${platform === 'android' ? 'Android' : isMac ? 'macOS' : 'Windows'}）<br>` +
     '本程序为二创桌宠，人物原创为《彼方的她》。<br>' +
     'Live2D Cubism SDK for Web © Live2D Inc.';
   box.appendChild(div);
@@ -925,7 +926,7 @@ if (platform === 'android') {
     checkSub.textContent = '正在检查…';
     try {
       const result = await checkForUpdate(
-        platform === 'android' ? 'android' : desktopOS === 'macos' ? 'macos' : 'windows',
+        platform === 'android' ? 'android' : isMac ? 'macos' : 'windows',
         __APP_VERSION__
       );
       if (result.updateAvailable) {

@@ -80,7 +80,12 @@ function detectPlatform(): PlatformKind {
 export const platform: PlatformKind = detectPlatform();
 /** 构建目标来自 Tauri CLI，不根据浏览器 UA 猜测；web/Android 不进入桌面分支。 */
 export const desktopOS = platform === 'tauri' && typeof __DESKTOP_OS__ !== 'undefined' ? __DESKTOP_OS__ : 'unknown';
-const desktopCoordinate = (value: number) => desktopOS === 'macos' ? value : Math.round(value);
+export const isMac: boolean = platform === 'tauri' && (
+  typeof __DESKTOP_OS__ !== 'undefined'
+    ? __DESKTOP_OS__ === 'macos'
+    : (typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/.test(navigator.userAgent || navigator.platform || ''))
+);
+const desktopCoordinate = (value: number) => isMac ? value : Math.round(value);
 
 /**
  * 桌面壳去掉 WebView2 的浏览器右键菜单（返回/刷新/另存为/检查），所有窗口共用；
