@@ -47,18 +47,37 @@ npm --prefix redesign/ui run build
 叠加 sleepy 后分别需 1.311、1.323、1.302，均超过 1.30。所以摇摆、挥手保持原版量级，
 疑惑改为身体反向轻倾，灵动感改由预备、错峰与手臂表现。
 
+## 情绪符号 fx
+
+模型自带 7 个情绪符号图层（`ParamFx*`），由 `src/fx-cue.ts` 的 `FxChannel` 在物理后写入，
+0.25s 渐入、0.4s 渐出，同一时刻只显示一个。两个来源：
+
+- 动作：`actions.json` 条目的 `fx` 字段，`[{ "from": 秒, "to": 秒, "fx": 符号 }]`，时间相对动作开始；
+  新动作接手即撤回，连续重播同一动作时符号不闪断。
+- 表情：`EXPRESSION_FX`，切到该表情冒一次，保持 2.6s 后淡出，表情本身继续；动作符号优先。
+
+| 符号 | 动作 | 表情 |
+| --- | --- | --- |
+| heart 心 | shy_sway 撒娇、kiss 飞吻（「啾」之后） | shy 害羞 |
+| question 问号 | doubt 疑惑 | — |
+| surprise 惊叹 | notice 回神 | surprised 惊讶 |
+| gloom 乌云 | sob 委屈 | sad 难过、gloomy 阴沉 |
+| sleep zzz | yawn 哈欠、daydream 发呆（回神前撤） | sleepy 困倦 |
+| sparkle 闪光 | wave 挥手 | smug 得意 |
+| music 音符 | cheerful_bounce 开心雀跃 | happy 开心 |
 ## 替换脸动作 puff / kiss / sob / deadpan
 
-这四个动作用的是模型里画师已画好、此前没用上的整套替换网格：鼓嘴 `Param37`、
+这四个动作用的是模型里画师已画好、此前没用上的整套替换网格：鼓嘴 `Param38`、
 嘟嘴 `Param39`、哭眼 `Param34`、无语眼 `Param35`。它们是 0/1 网格替换（中间值会让
 两张嘴或两套眼睛半透明叠加，实测确认），不能写进 motion3.json 交给 SDK 交叉淡化。
+哭眼/无语眼的切换由运行时先闭双眼、再在闭眼下 0↔1 渐变完成（见 `MODEL.md` 第 6 条）。
 
 - 时间轴写在 `actions.json` 对应条目的 `face` 字段（唯一来源），格式
   `{ "from": 秒, "to": 秒, "eye"?: "hit|sad|speechless", "mouth"?: "puff|pucker" }`，区间左闭右开。
 - 运行时 `src/face-cue.ts` 的 `FaceCueTrack` 随动作启动；`PetModel` 在最终写入点
   （`face-variant.ts` 的 `applyFaceVariant` / `applyFaceMouth`）一帧切换，任何帧都只有 0 或 1。
 - 动作提示优先于表情眼型，动作结束或被任何动作打断立即撤回，回到表情自己的眼睛；
-  受击挤眼 `Param33` 自带整张脸，开启时不再叠替换嘴。
+  受击挤眼 `Param33` 开启时原嘴保持显示并随 `ParamMouthOpenY` 开合（`ArtMesh66` 已与嘴部联动），不再叠替换嘴。
 - 切换点都放在头部转动最快、或闭眼/垂眼的帧上，用动作遮住网格跳变。
 - motion 本身只写头身与普通五官，按「预备 → 主动作 → 过冲 → 回弹」排节奏，
   全部使用保形平滑插值；手臂只往贴身方向轻收（≤2），不外展，主段结束前回到默认。
