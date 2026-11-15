@@ -195,6 +195,8 @@ test('流泪/无语切换：两眼先一起闭上，闭眼下选择器 0→1，�
       }
       if (selectorOut) assert.equal(param(selectorOut), 0);
     };
+    // 固定掉随机自然眨眼：它会让「睁眼」断言偶发落在眨眼帧上。
+    p._eyeBlink.setBlinkingInterval(1e6); p._eyeBlink._nextBlinkingTime = 1e6;
     p.startExpression(null); for (let i = 0; i < 60; i++) p.update(1 / 60);
     run('sad', null, 'Param34');
     run('speechless', 'Param34', 'Param35');
@@ -211,7 +213,8 @@ test('连续点击重播委屈：哭眼保持到新区间开始，只闭眼一�
   try {
     const m = p.getModel();
     const param = name => m.getParameterValueById(CubismFramework.getIdManager().getId(name));
-    p._eyeBlink = null;
+    // 自然眨眼是随机的（_eyeBlink = null 并不能关掉它），会被误计成过渡闭眼：把间隔拉到测试时长之外。
+    p._eyeBlink.setBlinkingInterval(1e6); p._eyeBlink._nextBlinkingTime = 1e6;
     for (const clicks of [[0, 1, 2, 3], [0, 1.5], [0, 2]]) {
       p.startExpression(null); for (let i = 0; i < 300; i++) p.update(1 / 60);
       let closes = 0, wasClosed = false, flips = 0, wasSad = false;
