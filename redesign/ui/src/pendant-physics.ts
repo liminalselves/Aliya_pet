@@ -16,10 +16,10 @@ export interface PendantConfig {
   ropeLength: number;
 }
 
-/** 重力加速度（CSS px/s²）。 */
+/** 重力加速度（CSS px/s²）：放缓下坠与回摆，减轻坠手感。 */
 export const GRAVITY = 2600;
 /** 空气阻力系数 = DRAG_LINEAR + DRAG_QUAD × min(|v|, DRAG_VCAP)（1/s）。 */
-const DRAG_LINEAR = 1.05; // 低速摆动及时收敛，避免尾段长时间漂摆。
+const DRAG_LINEAR = 1.05; // 减轻摆动阻滞，同时保留停手后的收敛。
 const DRAG_QUAD = 0.0009; // 减轻高速时的黏滞感，保留甩动惯性。
 const DRAG_VCAP = 1200;
 /** 绳子拉伸弹簧刚度（1/s²）与径向阻尼（1/s）。 */

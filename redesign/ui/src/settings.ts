@@ -50,7 +50,7 @@ export interface PetSettings {
 export const PENDANT_SCALE_MIN = 0.4;
 export const PENDANT_SCALE_MAX = 2;
 export const PENDANT_ROPE_MIN = 20;
-export const PENDANT_ROPE_MAX = 300;
+export const PENDANT_ROPE_MAX = 600;
 
 export function clampPendantRope(value: unknown): number {
   const n = Number(value);

@@ -152,7 +152,7 @@ function drawRope(toLocal: (x: number, y: number) => number[]): void {
   if (pts.length < 2) return;
   ctx2d.lineCap = 'round';
   ctx2d.lineJoin = 'round';
-  ctx2d.lineWidth = Math.max(1, 1.6 * dpr);
+  ctx2d.lineWidth = Math.max(1, 3.5 * dpr);
   ctx2d.strokeStyle = 'rgba(92, 64, 51, 0.9)';
   ctx2d.beginPath();
   ctx2d.moveTo(pts[0][0], pts[0][1]);
