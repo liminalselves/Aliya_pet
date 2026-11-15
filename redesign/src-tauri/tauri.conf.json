@@ -47,6 +47,21 @@
         "visible": false
       },
       {
+        "label": "pendant",
+        "title": "Aliya 吊坠",
+        "url": "pendant.html",
+        "width": 400,
+        "height": 400,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "visible": false
+      },
+      {
         "label": "settings",
         "title": "Aliya 设置",
         "url": "settings.html",

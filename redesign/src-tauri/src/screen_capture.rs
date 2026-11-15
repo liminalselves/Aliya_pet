@@ -190,7 +190,7 @@ mod win {
     }
 
     fn own_windows(app: &tauri::AppHandle) -> Result<Vec<HWND>, String> {
-        ["pet", "chat"]
+        ["pet", "chat", "pendant"]
             .iter()
             .filter_map(|label| app.get_webview_window(label))
             .map(|window| {

@@ -749,10 +749,33 @@ export class PetModel
     return this._earPartIndex >= 0;
   }
 
+  /** 该网格是否属于猫耳部件（Part21 及其子部件）。 */
+  public isEarDrawable(drawableIndex: number): boolean {
+    if (this._earPartIndex < 0) return false;
+    const parents = this._model.getPartParentPartIndices();
+    let part = this._model.getDrawableParentPartIndex(drawableIndex);
+    for (let guard = 0; part >= 0 && guard < 64; guard++) {
+      if (part === this._earPartIndex) return true;
+      part = parents[part];
+    }
+    return false;
+  }
+
   /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
   public setCatEarsVisible(visible: boolean, immediate = false): void {
     this._earsVisible = visible;
     if (immediate) this._earOpacity = visible ? 1 : 0;
+  }
+
+  /**
+   * 物理「风力」（Cubism 粒子坐标，y 向下，量纲约为重力的倍数）。
+   * 鼠标吊坠用它把整体摆动的惯性力传给头发、裙摆等物理链；主桌宠不调用，保持 0。
+   */
+  public setPhysicsWind(x: number, y: number): void {
+    const options = this._physics?.getOption();
+    if (!options || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    options.wind.x = x;
+    options.wind.y = y;
   }
 
   public setPettingLookAtReduction(enabled: boolean): void {

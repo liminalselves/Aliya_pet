@@ -14,6 +14,12 @@ import {
   scaleRangeFor,
   loadSettings,
   saveSettings,
+  clampPendantScale,
+  PENDANT_SCALE_MIN,
+  PENDANT_SCALE_MAX,
+  clampPendantRope,
+  PENDANT_ROPE_MIN,
+  PENDANT_ROPE_MAX,
 } from './settings';
 import {
   platform,
@@ -42,6 +48,7 @@ type Listen = (event: string, cb: () => void) => void;
 
 let emitToPet: Emit = () => {};
 let emitToSettings: Emit = () => {};
+let emitToPendant: Emit = () => {};
 let onSettingsChanged: Listen = () => {};
 /** pet 窗口推送的状态：manual=null 表示自动。 */
 type PetStatePayload = { state: string; manual: string | null };
@@ -58,6 +65,9 @@ if (platform === 'tauri') try {
   };
   emitToSettings = (event, payload) => {
     ev.emitTo('settings', event, payload).catch(() => {});
+  };
+  emitToPendant = (event, payload) => {
+    ev.emitTo('pendant', event, payload).catch(() => {});
   };
   onSettingsChanged = (event, cb) => {
     ev.listen(event, cb).catch(() => {});
@@ -81,6 +91,7 @@ function update(patch: Partial<PetSettings>): void {
   settings = { ...settings, ...patch };
   saveSettings(settings);
   emitToPet('settings-changed', settings);
+  emitToPendant('settings-changed', settings);
   // 安卓：设置页与桌宠页是两个 WebView，经壳桥转发实时生效
   if (platform === 'android') {
     try {
@@ -198,6 +209,9 @@ const refs: {
   petOpacitySlider?: HTMLInputElement;
   petOpacityVal?: HTMLSpanElement;
   fullClickThrough?: HTMLInputElement;
+  pendantEnabled?: HTMLInputElement;
+  pendantScaleShow?: (v: number) => void;
+  pendantRopeShow?: (v: number) => void;
   scaleSlider?: HTMLInputElement;
   scaleVal?: HTMLSpanElement;
 } = {};
@@ -233,6 +247,9 @@ function refreshControls(): void {
   }
   if (refs.petOpacityVal) refs.petOpacityVal.textContent = `${settings.petOpacity}%`;
   if (refs.fullClickThrough) refs.fullClickThrough.checked = settings.fullClickThrough;
+  if (refs.pendantEnabled) refs.pendantEnabled.checked = settings.pendantEnabled;
+  refs.pendantScaleShow?.(Math.round(settings.pendantScale * 100));
+  refs.pendantRopeShow?.(settings.pendantRopeLength);
   if (refs.autoActions) refs.autoActions.checked = settings.autoActions;
   if (refs.randomSpeech) refs.randomSpeech.checked = settings.randomSpeech;
   if (refs.showGeneratedImages) refs.showGeneratedImages.checked = settings.showGeneratedImages;
@@ -582,6 +599,73 @@ function addBatterySaverSwitch(parent: HTMLElement): HTMLInputElement {
     () => settings.fullClickThrough,
     (v) => update({ fullClickThrough: v })
   );
+}
+
+// ---- 鼠标吊坠 ----（仅 Windows：独立穿透窗口，与主桌宠同时存在）
+if (platform === 'tauri') {
+  const box = section('鼠标吊坠');
+  refs.pendantEnabled = switchRow(
+    box,
+    '鼠标吊坠',
+    '缩小的人物用绳子挂在鼠标指针上，随移动甩动；不拦截点击，不影响主桌宠',
+    () => settings.pendantEnabled,
+    (v) => update({ pendantEnabled: v })
+  );
+
+  /** 滑杆行：value 为滑杆整数域；commit 返回钳制后的整数值。 */
+  const sliderRow = (label: string, min: number, max: number, step: number, unit: string,
+    get: () => number, commit: (v: number) => number) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const lab = document.createElement('div');
+    lab.className = 'label';
+    lab.textContent = label;
+    const wrap = document.createElement('div');
+    wrap.className = 'slider-row';
+    wrap.style.flex = '1';
+    const minus = document.createElement('button');
+    minus.textContent = '−';
+    const plus = document.createElement('button');
+    plus.textContent = '+';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.setAttribute('aria-label', label);
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    const val = document.createElement('span');
+    val.className = 'val';
+    const show = (v: number) => {
+      slider.value = String(v);
+      val.textContent = `${v}${unit}`;
+      paintSliderFill(slider);
+    };
+    const apply = (v: number) => show(commit(Math.round(v / step) * step));
+    show(get());
+    minus.addEventListener('click', () => apply(get() - step * 2));
+    plus.addEventListener('click', () => apply(get() + step * 2));
+    slider.addEventListener('input', () => apply(Number(slider.value)));
+    wrap.append(minus, slider, plus, val);
+    row.append(lab, wrap);
+    box.appendChild(row);
+    return show;
+  };
+
+  refs.pendantScaleShow = sliderRow('吊坠大小',
+    Math.round(PENDANT_SCALE_MIN * 100), Math.round(PENDANT_SCALE_MAX * 100), 5, '%',
+    () => Math.round(settings.pendantScale * 100),
+    (v) => {
+      const s = clampPendantScale(v / 100);
+      update({ pendantScale: s });
+      return Math.round(s * 100);
+    });
+  refs.pendantRopeShow = sliderRow('连接线长度', PENDANT_ROPE_MIN, PENDANT_ROPE_MAX, 5, 'px',
+    () => settings.pendantRopeLength,
+    (v) => {
+      const n = clampPendantRope(v);
+      update({ pendantRopeLength: n });
+      return n;
+    });
 }
 
 // ---- 聊天 ----（偏好开关与下方 Misskey 连接状态共用一张卡片）

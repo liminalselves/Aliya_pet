@@ -1,0 +1,303 @@
+/**
+ * 鼠标吊坠窗口（pendant.html，仅 Windows）：缩小的 Aliya 用一根绳子挂在鼠标指针上。
+ *
+ * - 与主桌宠共存：独立的透明置顶窗口，永久鼠标穿透（Rust setup 设置），不参与互动和聊天。
+ * - Rust 光标轮询线程让窗口铺满光标所在显示器，并推送 'pendant-cursor'（光标尾部 + 窗口原点，物理 px）。
+ * - 本页只做物理（pendant-physics.ts）与渲染：整体摆动 + 绳子，惯性力再作为
+ *   Cubism 物理的风力传给头发、裙摆。绳子末端系在头顶头发的一个网格顶点上，随头部动作移动。
+ * - 开关、大小、绳长来自设置（pendantEnabled / pendantScale / pendantRopeLength），
+ *   设置页改动经 'settings-changed' 实时生效。
+ */
+
+import { CubismFramework } from '@framework/live2dcubismframework';
+import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
+import { PetModel } from './pet-model';
+import { GRAVITY, PendantPhysics, RopeChain, pendantCharHeight } from './pendant-physics';
+import { clampPendantRope, clampPendantScale, loadSettings, type PetSettings } from './settings';
+
+const MAX_WIND = 1;
+const FPS_ACTIVE = 60;
+const FPS_IDLE = 30;
+
+const stage = document.getElementById('stage')!;
+const glCanvas = document.createElement('canvas');
+const ropeCanvas = document.createElement('canvas');
+for (const c of [glCanvas, ropeCanvas]) {
+  c.style.position = 'absolute';
+  c.style.inset = '0';
+  c.style.width = '100%';
+  c.style.height = '100%';
+  stage.appendChild(c);
+}
+const gl = glCanvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: true }) as WebGL2RenderingContext | null;
+const ctx2d = ropeCanvas.getContext('2d')!;
+
+let settings: PetSettings = loadSettings();
+let model: PetModel | null = null;
+let charHeight = pendantCharHeight(clampPendantScale(settings.pendantScale));
+const physics = new PendantPhysics({ ropeLength: clampPendantRope(settings.pendantRopeLength) });
+const rope = new RopeChain();
+/** 系绳顶点（头顶头发网格上的一个顶点）；模型加载后选定。 */
+let attach: { drawable: number; vertex: number } | null = null;
+/** 最近一次光标与窗口原点（CSS px，屏幕坐标）；null = 尚未收到，不绘制。 */
+let cursor: { x: number; y: number; wx: number; wy: number } | null = null;
+let dpr = 1;
+let running = false;
+let lastTime = 0;
+let prevVx = 0;
+let prevVy = 0;
+let tauriWindow: import('@tauri-apps/api/window').Window | null = null;
+
+function resizeCanvases(): void {
+  const next = Math.min(window.devicePixelRatio || 1, 2);
+  if (next !== dpr) {
+    dpr = next;
+    // 跨屏 DPI 变化时 CSS 坐标系跳变：直接按当前光标复位，避免一次甩飞。
+    if (cursor) resetAt(cursor.x, cursor.y);
+  }
+  const w = Math.max(1, Math.round(stage.clientWidth * dpr));
+  const h = Math.max(1, Math.round(stage.clientHeight * dpr));
+  for (const c of [glCanvas, ropeCanvas]) {
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+  }
+}
+
+/**
+ * 选系绳顶点：头顶最高的可见网格顶点（避开猫耳——可隐藏，且挂在耳朵上不自然）。
+ * 取静止姿态下 x 靠近中线、y 最高的顶点，之后每帧读它的实时位置，绳子跟着头动。
+ */
+function pickAttachVertex(m: PetModel): { drawable: number; vertex: number } | null {
+  const core = m.getModel();
+  const b = m.getStaticBounds();
+  if (!b) return null;
+  const cx = (b.minX + b.maxX) / 2;
+  const halfW = (b.maxX - b.minX) / 2;
+  let best: { drawable: number; vertex: number } | null = null;
+  let bestScore = -Infinity;
+  for (let i = 0; i < core.getDrawableCount(); i++) {
+    if (core.getDrawableOpacity(i) < 0.5) continue;
+    if (m.isEarDrawable(i)) continue;
+    const v = core.getDrawableVertices(i);
+    for (let j = 0; j < v.length; j += 2) {
+      // 头顶中线附近：越高越好，偏离中线扣分。
+      const score = v[j + 1] - 2 * Math.max(0, Math.abs(v[j] - cx) - 0.08 * halfW);
+      if (score > bestScore) { bestScore = score; best = { drawable: i, vertex: j / 2 }; }
+    }
+  }
+  return best;
+}
+
+/** 系绳顶点当前的模型坐标（含动作、物理形变）；不可用时退回静态包围盒头顶中点。 */
+function attachPoint(): { x: number; y: number } {
+  const b = model!.getStaticBounds()!;
+  if (attach) {
+    const v = model!.getModel().getDrawableVertices(attach.drawable);
+    const x = v[attach.vertex * 2], y = v[attach.vertex * 2 + 1];
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return { x: (b.minX + b.maxX) / 2, y: b.maxY };
+}
+
+/** 人物模型矩阵：系绳顶点 (mx, my) 钉在缓冲像素 (px, py)，绕它旋转 angle。 */
+function pendantMatrix(px: number, py: number, angle: number, mx: number, my: number): Float32Array {
+  const b = model!.getStaticBounds()!;
+  const s = (charHeight * dpr) / (b.maxY - b.minY);
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const m = new Float32Array(16);
+  // 模型 y 向上、屏幕 y 向下：以系绳顶点为原点翻转 y，再旋转，最后放到系绳点。
+  m[0] = cos * s; m[1] = sin * s;
+  m[4] = sin * s; m[5] = -cos * s;
+  m[10] = 1; m[15] = 1;
+  m[12] = px - cos * s * mx - sin * s * my;
+  m[13] = py - sin * s * mx + cos * s * my;
+  return m;
+}
+
+function resetAt(x: number, y: number): void {
+  physics.reset(x, y);
+  rope.reset(x, y, physics.x, physics.y);
+  prevVx = prevVy = 0;
+}
+
+/** 惯性 + 身体倾斜 → Cubism 物理风力（模型坐标，单位为重力倍数）。 */
+function updatePhysicsWind(dt: number): void {
+  if (!model || dt <= 0) return;
+  const ax = (physics.vx - prevVx) / dt;
+  const ay = (physics.vy - prevVy) / dt;
+  prevVx = physics.vx;
+  prevVy = physics.vy;
+  // 人物感受到的等效重力（屏幕坐标，y 向下）：真实重力减去自身加速度。
+  const fx = -ax / GRAVITY;
+  const fy = 1 - ay / GRAVITY;
+  // 投影到身体坐标：右 = (cos, sin)，下 = (-sin, cos)。
+  const cos = Math.cos(physics.angle), sin = Math.sin(physics.angle);
+  const bx = fx * cos + fy * sin;
+  const bDown = -fx * sin + fy * cos;
+  // Cubism 粒子空间 y 向下，粒子受力 = 重力方向(静止时 (0,1)) × 加速度 + 风力；
+  // 风力只补与静止竖直悬挂的差值，静止时为 0。
+  // 实测（16.physics3.json）：风力 +x 让发丝偏向模型 −x，所以 x 取反。
+  let wx = -bx, wy = bDown - 1;
+  const mag = Math.hypot(wx, wy);
+  if (mag > MAX_WIND) { wx *= MAX_WIND / mag; wy *= MAX_WIND / mag; }
+  model.setPhysicsWind(wx, wy);
+}
+
+/** 绳子：两端分别是指针尾部与人物头顶的系绳顶点，中间是 Verlet 链的平滑折线。 */
+function drawRope(toLocal: (x: number, y: number) => number[]): void {
+  ctx2d.clearRect(0, 0, ropeCanvas.width, ropeCanvas.height);
+  const pts = rope.points.map(p => toLocal(p.x, p.y));
+  if (pts.length < 2) return;
+  ctx2d.lineCap = 'round';
+  ctx2d.lineJoin = 'round';
+  ctx2d.lineWidth = Math.max(1, 1.6 * dpr);
+  ctx2d.strokeStyle = 'rgba(92, 64, 51, 0.9)';
+  ctx2d.beginPath();
+  ctx2d.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+    ctx2d.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+  }
+  const last = pts[pts.length - 1];
+  ctx2d.lineTo(last[0], last[1]);
+  ctx2d.stroke();
+}
+
+function render(): void {
+  if (!gl || gl.isContextLost()) return;
+  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.clearDepth(1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  if (!model?.isReady() || !cursor) {
+    ctx2d.clearRect(0, 0, ropeCanvas.width, ropeCanvas.height);
+    return;
+  }
+  // 屏幕 CSS 坐标 → 窗口内缓冲像素。
+  const toLocal = (x: number, y: number) => [(x - cursor!.wx) * dpr, (y - cursor!.wy) * dpr];
+  const [px, py] = toLocal(physics.x, physics.y);
+  const a = attachPoint();
+
+  model.getModelMatrix().setMatrix(pendantMatrix(px, py, physics.angle, a.x, a.y));
+  const projection = new CubismMatrix44();
+  projection.scale(2.0 / glCanvas.width, -2.0 / glCanvas.height);
+  projection.translate(-1.0, 1.0);
+  model.draw(projection);
+  drawRope(toLocal);
+}
+
+function frame(t: number): void {
+  if (!running) return;
+  const interval = 1000 / (physics.settled ? FPS_IDLE : FPS_ACTIVE);
+  if (t - lastTime < interval - 1) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  const dt = Math.min(0.05, (t - lastTime) / 1000);
+  lastTime = t;
+  resizeCanvases();
+  if (cursor) {
+    if (physics.step(cursor.x, cursor.y, dt)) {
+      rope.step(physics.anchorX, physics.anchorY, physics.x, physics.y, physics.config.ropeLength, dt);
+    } else {
+      resetAt(cursor.x, cursor.y);
+    }
+  }
+  updatePhysicsWind(dt);
+  if (model?.isReady()) {
+    // 抬头看着指针（吊着的人在下方，目标在正上方）。
+    model.setLookTarget(0.5, 1);
+    model.update(dt);
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+function start(): void {
+  if (running) return;
+  running = true;
+  lastTime = performance.now();
+  requestAnimationFrame(frame);
+}
+
+function stop(): void {
+  running = false;
+  cursor = null;
+  // 清掉最后一帧，重新显示时不闪出旧位置。
+  ctx2d.clearRect(0, 0, ropeCanvas.width, ropeCanvas.height);
+  if (gl && !gl.isContextLost()) {
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+}
+
+/** 按设置显示/隐藏吊坠并调整窗口大小。 */
+async function applySettings(s: PetSettings): Promise<void> {
+  settings = s;
+  charHeight = pendantCharHeight(clampPendantScale(s.pendantScale));
+  physics.config.ropeLength = clampPendantRope(s.pendantRopeLength);
+  if (!tauriWindow) return;
+  if (!s.pendantEnabled || !model?.isReady()) {
+    stop();
+    await tauriWindow.hide().catch(() => {});
+    return;
+  }
+  model.setCatEarsVisible(s.showCatEars);
+  // 窗口尺寸与位置由 Rust 光标线程管理（铺满光标所在显示器）。
+  await tauriWindow.show().catch(() => {});
+  start();
+}
+
+async function main(): Promise<void> {
+  if (!gl) throw new Error('WebGL2 初始化失败');
+  while (!coreReady()) await new Promise(r => setTimeout(r, 50));
+  CubismFramework.startUp();
+  CubismFramework.initialize();
+
+  const winMod = await import('@tauri-apps/api/window');
+  tauriWindow = winMod.getCurrentWindow();
+  const ev = await import('@tauri-apps/api/event');
+  await ev.listen<{ x: number; y: number; wx: number; wy: number }>('pendant-cursor', (e) => {
+    const p = e.payload;
+    if (![p?.x, p?.y, p?.wx, p?.wy].every(Number.isFinite)) return;
+    const k = window.devicePixelRatio || 1;
+    const first = cursor === null;
+    cursor = { x: p.x / k, y: p.y / k, wx: p.wx / k, wy: p.wy / k };
+    if (first) resetAt(cursor.x, cursor.y);
+  });
+  await ev.listen<PetSettings>('settings-changed', (e) => {
+    if (e.payload && typeof e.payload === 'object') void applySettings({ ...settings, ...e.payload });
+  });
+
+  const url = '/live2d/aliya/16.model3.json';
+  const buffer = await (await fetch(url)).arrayBuffer();
+  const m = new PetModel();
+  await m.loadFromSetting(buffer, buffer.byteLength, url.substring(0, url.lastIndexOf('/') + 1), {
+    gl,
+    frameBuffer: gl.getParameter(gl.FRAMEBUFFER_BINDING),
+    shaderPath: '/shaders/',
+  });
+  // 猫耳显隐跟主桌宠一致。
+  m.setCatEarsVisible(settings.showCatEars, true);
+  m.update(0);
+  attach = pickAttachVertex(m);
+  model = m;
+  await applySettings(loadSettings());
+}
+
+function coreReady(): boolean {
+  try {
+    Live2DCubismCore.Version.csmGetLatestMocVersion();
+    const b = new ArrayBuffer(64);
+    Live2DCubismCore.Version.csmGetMocVersion(new Uint8Array(b), b.byteLength);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+main().catch(error => console.error('[pendant] startup failed', error));

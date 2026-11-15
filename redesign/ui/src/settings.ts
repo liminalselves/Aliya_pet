@@ -39,6 +39,29 @@ export interface PetSettings {
   petOpacity: number;
   /** 只控制人物窗口；关闭时继续沿用智能穿透。 */
   fullClickThrough: boolean;
+  /** 鼠标吊坠（仅 Windows）：缩小的人物用绳子挂在鼠标指针上，与主桌宠同时存在。 */
+  pendantEnabled: boolean;
+  /** 吊坠大小倍数（PENDANT_SCALE_MIN..MAX，1 = 默认约 150 CSS px 高）。 */
+  pendantScale: number;
+  /** 吊坠连接线长度（CSS px，PENDANT_ROPE_MIN..MAX），与人物大小独立。 */
+  pendantRopeLength: number;
+}
+
+export const PENDANT_SCALE_MIN = 0.4;
+export const PENDANT_SCALE_MAX = 2;
+export const PENDANT_ROPE_MIN = 20;
+export const PENDANT_ROPE_MAX = 300;
+
+export function clampPendantRope(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 80;
+  return Math.min(PENDANT_ROPE_MAX, Math.max(PENDANT_ROPE_MIN, Math.round(n)));
+}
+
+export function clampPendantScale(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(PENDANT_SCALE_MAX, Math.max(PENDANT_SCALE_MIN, n));
 }
 
 const STORAGE_KEY = 'aliya_pet_settings_v1';
@@ -70,6 +93,9 @@ export const DEFAULT_SETTINGS: PetSettings = {
   chatBackgroundDim: 0.35,
   petOpacity: 100,
   fullClickThrough: false,
+  pendantEnabled: false,
+  pendantScale: 1,
+  pendantRopeLength: 80,
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -167,6 +193,9 @@ export function loadSettings(): PetSettings {
       scale: clampScale(Number(parsed.scale ?? 1.0)),
       petOpacity: clampPetOpacity(parsed.petOpacity),
       fullClickThrough: parsed.fullClickThrough === true,
+      pendantEnabled: parsed.pendantEnabled === true,
+      pendantScale: clampPendantScale(parsed.pendantScale ?? 1),
+      pendantRopeLength: clampPendantRope(parsed.pendantRopeLength ?? DEFAULT_SETTINGS.pendantRopeLength),
       showCatEars: parsed.showCatEars !== false,
       showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
