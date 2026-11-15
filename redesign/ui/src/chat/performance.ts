@@ -21,6 +21,8 @@ export class ChatPerformance {
   constructor(private readonly host: PerformanceHost, private readonly now = () => performance.now()) {}
 
   get active(): boolean { return this._expression !== null; }
+  /** 表演表情已实际套用到模型（busy 期间会让位，此时为 false）。 */
+  get applied(): boolean { return this._applied; }
 
   cue(cue: PerformanceCue): void {
     if (typeof cue.expression === 'string' && this.host.expressions().includes(cue.expression)) {

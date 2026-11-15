@@ -227,7 +227,8 @@ test('受击和无语恢复专用眼型，切换与清除始终互斥且无中�
   applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expressionEye(expression));
   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(0,3).map(id=>values.get(id)),want);
   if(['hit','speechless','sad'].includes(expression)) {
-   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(3,7).map(id=>values.get(id)),[1,1,0,0]);
+   // 眼睑由 EyeVariantTransition 写（特殊眼期间保持闭合），这里只归零笑眼。
+   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(5,7).map(id=>values.get(id)),[0,0]);
    for(const name of FACE_VARIANT_PARAMETERS.slice(7)) assert.equal(values.get(name),0,`${expression}: ${name} 仍残留普通眼部物理`);
   } else {
    for(const name of FACE_VARIANT_PARAMETERS.slice(3)) assert.equal(values.get(name),.6,'普通表情仍保留眨眼、视线与眼部物理');
@@ -704,6 +705,26 @@ function randomSpeechHarness() {
   _bubble:{play(resolved){played.push(resolved);state.speaking=true}}});
  return {app,state,played,get draws(){return draws},setNow(value){now=value}};
 }
+
+test('互动表情到期复位：聊天表演只待命未套用时不能卡住表情',()=>{
+ const {PetApp}=load('pet-app');
+ const timers=[];const {ChatPerformance}=load('chat/performance');
+ let current=null,busy=true;
+ const model={startExpression:name=>{current=name;return true},getCurrentExpression:()=>current};
+ const perf=new ChatPerformance({expressions:()=>['happy'],actions:()=>[],express:name=>{current=name},clearExpression:()=>{current=null},play(){},busy:()=>busy},()=>0);
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_model:model,_chatPerformance:perf,_stateEngine:{definition:{expression:null}},_reactionExpressionTimer:null});
+ // 受击反应先套上表情；互动进行中聊天提示到达，表演只待命；随后回复收起取消表演。
+ app._expressForReaction('hit',{pages:[]});assert.equal(current,'hit');
+ perf.cue({expression:'happy'});assert.equal(perf.active,true);assert.equal(perf.applied,false,'互动中表演只待命');
+ perf.cancel();assert.equal(current,'hit','未套用的表演取消时不清表情');
+ perf.cue({expression:'happy'});
+ return new Promise(resolve=>setTimeout(()=>{
+  assert.equal(current,null,'到期必须回到状态默认表情，不能被待命的表演挡住');
+  busy=false;perf.tick();assert.equal(current,'happy','互动结束后表演接管');
+  perf.cancel();assert.equal(current,null);resolve();
+ },1000));
+});
 
 test('设置窗口手动随机台词绕过失焦静默期，自动闲聊仍等待',()=>{
  const h=randomSpeechHarness();

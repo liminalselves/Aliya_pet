@@ -16,8 +16,9 @@ import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
-import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { applyFaceMouth, applyFaceVariant, expressionEye, EyeVariantTransition, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
+import { FX_NAMES, FX_PARAMETERS, FxChannel, parseFxCues, type FxName, type FxSpan } from './fx-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import type { PetBehaviorHost } from './behavior';
 import { MOTION_NAMES } from './catalog';
@@ -49,6 +50,8 @@ interface ActionAssetEntry {
   name: string;
   /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
   face?: unknown;
+  /** 动作期间的情绪符号时间轴（见 fx-cue.ts）。 */
+  fx?: unknown;
 }
 
 const INVALID_MOTION_HANDLE = -1;
@@ -104,6 +107,8 @@ export class PetModel
   private _chEar: EarChannel = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  /** 情绪符号图层（ParamFx*），随动作时间轴与表情联动。 */
+  private _chFx: FxChannel = null;
   private _angerSplit: AngerMarkSplit | null = null;
   private _idAngerShadow: CubismIdHandle = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
@@ -130,8 +135,12 @@ export class PetModel
   private _faceMouthIds: CubismIdHandle[] = [];
   /** 动作名 → 脸部提示时间轴（actions.json face 字段）。 */
   private readonly _faceCues = new Map<string, FaceCueSpan[]>();
+  /** 动作名 → 情绪符号时间轴（actions.json fx 字段）。 */
+  private readonly _fxCues = new Map<string, FxSpan[]>();
   private readonly _faceTrack = new FaceCueTrack();
   private _face: FaceState = { eye: null, mouth: null };
+  /** 特殊眼型（流泪/无语/受击）切换：先闭眼，流泪/无语再在闭眼下渐变。 */
+  private readonly _eyeTransition = new EyeVariantTransition();
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -336,6 +345,11 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    // 情绪符号：只收模型里真实存在的 ParamFx*，旧模型没有时通道不写入。
+    const fxIds = new Map<FxName, CubismIdHandle>();
+    for (const fx of FX_NAMES) if (hasParam(FX_PARAMETERS[fx])) fxIds.set(fx, id(FX_PARAMETERS[fx]));
+    this._chFx = new FxChannel(fxIds);
+    this._overlays.add(this._chFx);
     // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
     const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
     const markIndex = this._model.getDrawableIndex(id('ArtMesh12'));
@@ -354,6 +368,8 @@ export class PetModel
         for (const entry of parsed.actions as ActionAssetEntry[]) {
           const spans = parseFaceCues(entry.face);
           if (spans.length > 0) this._faceCues.set(entry.name, spans);
+          const fx = parseFxCues(entry.fx);
+          if (fx.length > 0) this._fxCues.set(entry.name, fx);
         }
       }
     } catch {
@@ -416,6 +432,7 @@ export class PetModel
         this._expressionManager.startMotion(neutral, false);
       }
       this._currentExpression = null;
+      this._chFx?.setExpression(null);
       this._gaze.setExpression(null);
       this._angerSplit?.setMode(null);
       return true;
@@ -425,6 +442,7 @@ export class PetModel
     if (this._currentExpression === name) return true;
     this._expressionManager.startMotion(expr, false);
     this._currentExpression = name;
+    this._chFx?.setExpression(name);
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
     this._gaze.setExpression(name);
     this._angerSplit?.setMode(ANGER_SPLIT_MODES[name] ?? (name === 'angry' ? 'both' : null));
@@ -579,6 +597,7 @@ export class PetModel
     const spans = this._faceCues?.get(name);
     if (spans) this._faceTrack.start(spans);
     else this._faceTrack?.stop();
+    this._chFx?.startAction(this._fxCues.get(name));
   }
 
   /** 当前动作脸部提示（调试/测试用）。 */
@@ -742,6 +761,12 @@ export class PetModel
 
   // ---------- 每帧（五阶段流水线） ----------
 
+  private _writeTransitionLid(model: PetModel['_model'], lid: number | null): void {
+    if (lid === null) return;
+    model.setParameterValueById(this._eyeBlinkIds[0], lid);
+    model.setParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0], lid);
+  }
+
   public update(deltaTimeSeconds: number): void {
     if (!this._ready) return;
     const model = this._model;
@@ -767,10 +792,19 @@ export class PetModel
     }
     // 动作脸部提示优先于表情眼型：动作结束后回到表情自己的眼睛。
     this._face = this._faceTrack.advance(deltaTimeSeconds);
-    const eye = this._face.eye ?? expressionEye(this._currentExpression);
+    const targetEye = this._face.eye ?? expressionEye(this._currentExpression);
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
     this._chEye.apply(model, deltaTimeSeconds);
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 特殊眼型切换先闭眼：读到的是眨眼/动作/互动合成后的真实眼睑。
+    const lidNow = Math.min(
+      model.getParameterValueById(this._eyeBlinkIds[0]),
+      model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
+    );
+    const eyeTransition = this._eyeTransition.advance(targetEye, deltaTimeSeconds, lidNow);
+    const eye = eyeTransition.eye;
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑在物理前也写一次，眼珠/高光物理跟着一起闭合。
+    this._writeTransitionLid(model, eyeTransition.lid);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
@@ -789,8 +823,10 @@ export class PetModel
     this._overlays.apply(model, deltaTimeSeconds);
 
     // 在动作、表情淡化、物理和互动之后独占写入整套眼型与替换嘴型。
-    // 受击/无语保留原生表现，但不经历会产生重影的中间值。
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 受击始终 0/1；流泪/无语只在普通眼闭合时渐变。
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑最后写，盖过动作、眨眼与互动对 EyeOpen 的写入。
+    this._writeTransitionLid(model, eyeTransition.lid);
     applyFaceMouth(model, this._faceMouthIds, this._face.mouth, eye);
 
     if (this._earPartIndex >= 0) {

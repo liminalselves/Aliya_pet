@@ -1379,7 +1379,9 @@ export class PetApp {
     const ms = line ? line.pages.reduce((sum, p) => sum + 600 + p.text.length * 90, 900) : 3000;
     this._reactionExpressionTimer = setTimeout(() => {
       this._reactionExpressionTimer = null;
-      if (this._chatPerformance?.active) return;
+      // 只有聊天表演已接管脸部时才让位；表演待命（busy 未套用）时不复位，
+      // 表演取消也不会清理，互动表情会一直卡住。
+      if (this._chatPerformance?.applied) return;
       if (this._model?.getCurrentExpression() === name) {
         this._model.startExpression(this._stateEngine?.definition.expression ?? null);
       }
