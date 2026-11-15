@@ -1320,3 +1320,27 @@ test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快�
  }
 });
 
+
+test('拖动拎起姿态：绕抓取点悬挂，向拖动反方向滞后摆动，停手回正，松手复原',()=>{
+ const {LiftPose,liftMatrix,LIFT_MAX_DEG}=load('lift-pose');
+ const ap=(m,x,y)=>[m[0]*x+m[4]*y+m[12],m[1]*x+m[5]*y+m[13]];
+ const frame={scale:400,originX:500,originY:600,pivotX:500,pivotY:300,angleDeg:0,lift:0,bounds:{minX:-.5,maxX:.5,minY:-.9,maxY:.9},width:1000,height:1300};
+ // 无姿态时与基础变换完全一致
+ let m=liftMatrix(frame);assert.deepEqual(ap(m,.5,.9).map(v=>+v.toFixed(3)),[700,240]);
+ // 抓取点（支点）始终在原位，脚被拉长并向拖动反方向甩
+ m=liftMatrix({...frame,lift:1,angleDeg:8});
+ assert.deepEqual(ap(m,0,.75).map(v=>+v.toFixed(3)),[500,300],'抓取点必须留在指针下');
+ const [footX,footY]=ap(m,0,-.9);assert.ok(footX<480,'向右拖时脚滞后到左边');assert.ok(footY>960,'悬挂拉长');
+ // 摆角大到出画时自动收小，四角都在画布内
+ m=liftMatrix({...frame,lift:1,angleDeg:40,width:760});
+ for(const [x,y] of [[-.5,-.9],[.5,-.9],[-.5,.9],[.5,.9]]){const [px,py]=ap(m,x,y);assert.ok(px>=2&&px<=758&&py>=2&&py<=1298,`出画 ${px},${py}`)}
+ const p=new LiftPose();p.setHolding(true);let max=0;
+ for(let i=0;i<60;i++){p.setVelocity(3000);p.update(1/60);max=Math.max(max,p.angle)}
+ assert.ok(max>5&&max<=LIFT_MAX_DEG+1e-9,`快速拖动摆角 ${max}`);
+ let flips=0,prev=Math.sign(p.angle);for(let i=0;i<180;i++){p.update(1/60);const s=Math.sign(Math.round(p.angle*100));if(s&&s!==prev){flips++;prev=s}}
+ assert.ok(flips>=1,'停手后应来回荡');assert.ok(Math.abs(p.angle)<1,'停手 3 秒内基本回正');
+ p.setHolding(false);for(let i=0;i<120;i++)p.update(1/60);
+ assert.equal(p.active,false,'松手后完全复原，渲染回到原矩阵');
+ const r=new LiftPose();r.setHolding(true);for(let i=0;i<30;i++){r.setVelocity(3000);r.update(1/60,true)}
+ assert.equal(r.active,false,'少动态效果：不摆不拉长');
+});

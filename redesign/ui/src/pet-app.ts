@@ -6,6 +6,7 @@ import { ChatPerformance } from './chat/performance';
 import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
+import { LiftPose, liftMatrix } from './lift-pose';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { timeScene, type ResolvedDialogue } from './dialogue/dialogue';
 import { ReactionLibrary } from './interaction/reactions';
@@ -191,6 +192,11 @@ export class PetApp {
   private _nativeSnapping = false;
   /** 悬浮窗壳正在原生拖动（窗口由壳独占，暂停矩形下发）。 */
   private _nativeDragging = false;
+  /** 拖动「被拎起」的整体悬挂姿态（渲染矩阵层）。 */
+  private readonly _lift: LiftPose | undefined = new LiftPose();
+  /** 悬挂支点（模型单位）：抓取点；原生拖动没有坐标时取上半身。 */
+  private _liftPivot: { x: number; y: number } | null = null;
+  private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
   private _glContextLost = false;
 
@@ -229,6 +235,9 @@ export class PetApp {
   private _touchClickCandidateActive = false;
   private _touchClickCandidate = false;
   private _downScreenX = 0;
+  /** 按下点（视口坐标），拖动开始时换算成拎起支点。 */
+  private _downClientX = 0;
+  private _downClientY = 0;
   private _downScreenY = 0;
   private _lastScreenX = 0;
   private _lastScreenY = 0;
@@ -1866,6 +1875,8 @@ export class PetApp {
       this._touchPetting = (e.pointerType === 'touch' || isEmbed) && isSecondary && e.button === 0;
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
+      this._downClientX = e.clientX;
+      this._downClientY = e.clientY;
       this._downScreenY = e.screenY;
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
@@ -1911,6 +1922,7 @@ export class PetApp {
           const dy = e.screenY - this._downScreenY;
           if (Math.sqrt(dx * dx + dy * dy) >= PetApp._dragThresholdPx) {
             this._dragging = true;
+            this._liftPivot = this._modelPointAt(this._downClientX, this._downClientY);
             this._canvas.style.cursor = 'grabbing';
             this._interaction?.dragReaction.beginDrag();
             this._interaction?.beginHold();
@@ -1922,6 +1934,7 @@ export class PetApp {
           const dy = e.screenY - this._lastScreenY;
           this._interaction?.dragReaction.onDragMove(Math.hypot(dx, dy) * this._scaleFactor / ctx.dtSeconds);
           this._interaction?.updateHoldVelocity(dx / ctx.dtSeconds);
+          this._lift?.setVelocity(dx / ctx.dtSeconds);
           if (!this._wrapWindow) {
             // 贴合模式：拖动由壳侧原生接管（OnTouchListener 直移窗口）
             this._moveWindowBy(dx, dy);
@@ -2266,6 +2279,7 @@ export class PetApp {
    */
   public onNativeDragStart(): void {
     this._nativeDragging = true;
+    this._liftPivot = null;
     this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
@@ -2559,6 +2573,9 @@ export class PetApp {
     // 互动层先算平滑值并写入模型通道，模型 update 时统一应用
     this._chatPerformance?.tick();
     this._interaction?.tick(dt * 1000);
+    this._lift?.setHolding(this._dragging || this._nativeDragging);
+    this._reduceMotionQuery ??= window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
+    this._lift?.update(dt, this._reduceMotionQuery?.matches ?? false);
     this._model?.update(dt);
   }
 
@@ -2610,6 +2627,40 @@ export class PetApp {
     return tween.from + (tween.to - tween.from) * eased;
   }
 
+  /**
+   * 拎起姿态的模型矩阵：在基础变换外套上「绕抓取点拉长 + 摆动」。
+   * 缓冲坐标未镜像（镜像是画布 CSS 翻转），所以镜像时画面摆角取反。
+   */
+  private _liftModelMatrix(scale: number, originX: number, originY: number): Float32Array {
+    const b = this._model.getStaticBounds();
+    const pivot = this._liftPivot ?? {
+      x: (b.minX + b.maxX) / 2,
+      y: b.maxY - (b.maxY - b.minY) * 0.3,
+    };
+    return liftMatrix({
+      scale, originX, originY,
+      pivotX: originX + pivot.x * scale,
+      pivotY: originY - pivot.y * scale,
+      angleDeg: this._settings.mirror ? -this._lift.angle : this._lift.angle,
+      lift: this._lift.lift,
+      bounds: b,
+      width: this._canvas.width,
+      height: this._canvas.height,
+    });
+  }
+
+  /** 视口坐标 → 模型单位（未叠加拎起姿态；镜像已还原）。 */
+  private _modelPointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    if (!this._model?.isReady()) return null;
+    const rect = this._canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const { scale, originX, originY } = this._modelViewportTransform();
+    let px = (clientX - rect.left) * this._canvas.width / rect.width;
+    const py = (clientY - rect.top) * this._canvas.height / rect.height;
+    if (this._settings.mirror) px = this._canvas.width - px;
+    return { x: (px - originX) / scale, y: (originY - py) / scale };
+  }
+
   /** 给定画布 CSS 尺寸下的自然适配比例（CSS px / 模型单位），与 _modelViewportTransform 同式。 */
   private _naturalScaleCss(width: number, height: number, chatOpen: boolean): number {
     if (!this._model?.isReady()) return 0;
@@ -2637,6 +2688,7 @@ export class PetApp {
     const { scale, originX, originY } = this._modelViewportTransform();
     modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
     modelMatrix.translate(originX, originY);
+    if (this._lift?.active) modelMatrix.setMatrix(this._liftModelMatrix(scale, originX, originY));
 
     // 视口像素 -> NDC（y 翻转）
     const projection = new CubismMatrix44();
