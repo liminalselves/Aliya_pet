@@ -65,6 +65,7 @@ npm --prefix redesign/ui run build
 | sleep zzz | yawn 哈欠、daydream 发呆（回神前撤） | sleepy 困倦 |
 | sparkle 闪光 | wave 挥手 | smug 得意 |
 | music 音符 | cheerful_bounce 开心雀跃 | happy 开心 |
+
 ## 替换脸动作 puff / kiss / sob / deadpan
 
 这四个动作用的是模型里画师已画好、此前没用上的整套替换网格：鼓嘴 `Param38`、
