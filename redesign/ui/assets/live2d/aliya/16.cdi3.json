@@ -2,6 +2,11 @@
 	"Version": 3,
 	"Parameters": [
 		{
+			"Id": "ParamBreath",
+			"GroupId": "",
+			"Name": "呼吸"
+		},
+		{
 			"Id": "ParamAngleZ",
 			"GroupId": "ParamGroup5",
 			"Name": "角度 Z"
@@ -232,6 +237,56 @@
 			"Name": "右眉 変形"
 		},
 		{
+			"Id": "ParamFxHeart",
+			"GroupId": "ParamGroup26",
+			"Name": "heart"
+		},
+		{
+			"Id": "ParamFxQuestion",
+			"GroupId": "ParamGroup26",
+			"Name": "Question"
+		},
+		{
+			"Id": "ParamFxSurprise",
+			"GroupId": "ParamGroup26",
+			"Name": "exclaim"
+		},
+		{
+			"Id": "ParamFxGloom",
+			"GroupId": "ParamGroup26",
+			"Name": "gloom"
+		},
+		{
+			"Id": "ParamFxSleep",
+			"GroupId": "ParamGroup26",
+			"Name": "zzz"
+		},
+		{
+			"Id": "ParamFxSparkle",
+			"GroupId": "ParamGroup26",
+			"Name": "sparkle"
+		},
+		{
+			"Id": "ParamFxMusic",
+			"GroupId": "ParamGroup26",
+			"Name": "music"
+		},
+		{
+			"Id": "Param37",
+			"GroupId": "ParamGroup26",
+			"Name": "question动效"
+		},
+		{
+			"Id": "Param40",
+			"GroupId": "ParamGroup26",
+			"Name": "动效X"
+		},
+		{
+			"Id": "Param41",
+			"GroupId": "ParamGroup26",
+			"Name": "动效Y"
+		},
+		{
 			"Id": "ParamCheek",
 			"GroupId": "ParamGroup9",
 			"Name": "脸颊泛红"
@@ -262,7 +317,7 @@
 			"Name": "挥手(开关)"
 		},
 		{
-			"Id": "Param37",
+			"Id": "Param38",
 			"GroupId": "ParamGroup9",
 			"Name": "鼓嘴L"
 		},
@@ -280,11 +335,6 @@
 			"Id": "Param36",
 			"GroupId": "ParamGroup24",
 			"Name": "手部挥手"
-		},
-		{
-			"Id": "ParamBreath",
-			"GroupId": "",
-			"Name": "呼吸"
 		},
 		{
 			"Id": "ParamArmL01",
@@ -689,6 +739,11 @@
 			"Name": "眉毛"
 		},
 		{
+			"Id": "ParamGroup26",
+			"GroupId": "",
+			"Name": "状态"
+		},
+		{
 			"Id": "ParamGroup9",
 			"GroupId": "",
 			"Name": "表情"
@@ -909,6 +964,10 @@
 			"Name": "领带(旋转)"
 		},
 		{
+			"Id": "Part",
+			"Name": "状态"
+		},
+		{
 			"Id": "Part23",
 			"Name": "右猫耳"
 		},
@@ -941,6 +1000,10 @@
 		[
 			"Param22",
 			"Param24"
+		],
+		[
+			"Param40",
+			"Param41"
 		]
 	]
 }
