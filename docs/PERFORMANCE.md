@@ -120,6 +120,9 @@ timeline（原文）→ 记录屏渲染时剥离指令
   交换会把已正确的配对整体错开）。
 - **替换脸动作**：puff/kiss/sob/deadpan 等特殊眼型/嘴型网格由 `actions.json`
   的 `face` 时间轴驱动（见 `ACTIONS.md`），AI 用 `play=` 触发时同样生效。
+- **情绪符号**：心、问号、音符等七个符号图层由 `actions.json` 的 `fx` 时间轴随动作出现，
+  也随部分表情冒一次（`fx-cue.ts` 的 `EXPRESSION_FX`），AI 用 `play=` / `express=` 触发时同样生效，
+  不需要也不能单独指令；对应关系见 `ACTIONS.md`「情绪符号 fx」。
 - **回复展示期间不放待机动作**：`InteractionCoordinator.speaking` 包含回复面板展示中
   （原生聊天窗经 `chat-state.replying`，内嵌聊天读 `ChatView.replying`），直到读完收起。
   否则 8～16s 的自动动作会在读回复时插进来；动作自带的表情曲线（如 `fume` 的黑脸与

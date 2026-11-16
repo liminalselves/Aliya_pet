@@ -46,15 +46,16 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 官方 Demo 的画布适配会把 Aliya 的 1×1 方形画布缩到窗口的 ~44%，
 观感与旧版不符（"压扁"）。重写版复刻旧版 `SetupModelMatrix` 的算法：
 
-- 加载后计算 drawable 顶点包围盒 `boundsW/boundsH`（模型坐标）；
+- 加载后计算默认姿态下可见 drawable 的顶点包围盒 `boundsW/boundsH`（模型坐标）；
+  默认透明的网格（情绪符号、替换脸）不计入，否则符号伸出头顶会让人物整体缩小；
 - 渲染比例 `s = 视口高 / 渲染余量 / boundsH`，模型原点居中；
 - 投影 = 视口像素 → NDC（y 翻转）。
-- 结果：角色高度占窗口的 `1/1.22`，包围盒内比例不变。
+- 结果：角色高度占窗口的 `1/渲染余量`，包围盒内比例不变。
 
 ### 2. 动作余量
 
-- **渲染余量 1.22**：当前模型与自编动作的测量依据由 [ACTIONS.md](ACTIONS.md)
-  维护，更换模型/动作后需重新测量。
+- **渲染余量 1.36**（`PetApp._renderMarginRatio`）：当前模型与动作的测量依据由
+  [ACTIONS.md](ACTIONS.md) 维护，更换模型/动作后需重新测量。
 - **窗口余量 1.18**：窗口尺寸 = 675 × scale × 1.18（宽再乘包围盒宽高比），
   与旧版 `ComputeTargetPixelSize` 一致。
 
@@ -86,7 +87,7 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 
 ## Windows 辅助窗口
 
-- `chat`、`settings`、`records`、`update` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
+- `chat`、`settings`、`records`、`update`、`pendant` 都在 `tauri.conf.json` 随进程隐藏预创建；Windows
   命令线程不动态 `build()` 第二个 WebView2，避免已确认的死锁。
 - `settings` 与 `records` 使用正常原生窗口，可移动、可调整大小；关闭请求被壳拦截
   为隐藏，下次打开保留页面实例。`chat` 仍是透明、无边框、锁定跟随 pet 的伴侣窗。
@@ -95,6 +96,22 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - `update`（420×520）承载更新提示：pet 窗口透明穿透不能画 UI，检查结果经 Rust
   `show_update` 转交（事件 + 暂存兜底）。非强制时关闭即隐藏；强制更新关闭 =
   退出应用（`mandatory` 标记由壳保存，见 main.rs `UpdateWindowState`）。
+
+## 鼠标吊坠（仅 Windows）
+
+缩小的 Aliya 用绳子挂在鼠标指针上，与主桌宠同时存在；默认关闭，设置页「鼠标吊坠」
+开关、大小（40%–200%）、连接线长度（20–600 px）实时生效。
+
+- `pendant` 窗口随进程隐藏预创建（`pendant.html` → `src/pendant.ts`），透明置顶，
+  `setup` 里设为永久鼠标穿透，不参与点击命中、互动和聊天；截图时与 `pet`/`chat` 一同排除。
+  默认关闭时页面不加载模型，首次开启才加载。
+- Rust 光标轮询线程（`follow_pendant`，与穿透判定共用 16ms 循环）让窗口铺满光标所在显示器，
+  只在换屏时移窗；经 `pendant-cursor` 事件推送光标「尾部」（光标位图最下一行可见像素，按光标句柄缓存）
+  与窗口原点，页面按屏幕坐标自己绘制，避免逐帧移窗与重绘不同步造成的抖动。
+- 物理在 `pendant-physics.ts`：质点挂在绳端，重力 + 随速度增大的空气阻力，绳子只拉不推，
+  朝向角弹簧在绳子松弛时几乎自由旋转；绳子外观是只用于绘制的 Verlet 链。惯性力再作为
+  Cubism 物理的风力（`PetModel.setPhysicsWind`）传给头发与裙摆。绳子系在头顶发丝的一个网格顶点上。
+- 设置经 `settings-changed` 事件从设置窗口直达 `pendant` 窗口（`capabilities/pendant.json` 仅授权显隐自身与监听事件）。
 
 ## 应用内更新（ui/src/update/）
 

@@ -85,7 +85,6 @@ export class FxChannel {
   static readonly IN_SECONDS = 0.25;
   static readonly OUT_SECONDS = 0.4;
 
-  /** 只收模型里存在的参数；旧模型没有这些图层时整个通道不写入。 */
   constructor(private readonly ids: ReadonlyMap<FxName, CubismIdHandle>) {}
 
   /** 新动作接手：有 fx 时间轴则播放，没有则撤回动作符号（表情符号不受影响）。 */
@@ -118,7 +117,6 @@ export class FxChannel {
   }
 
   apply(model: CubismModel, dt: number): void {
-    if (this.ids.size === 0) return;
     const step = Math.max(0, Number.isFinite(dt) ? dt : 0);
     if (this._spans.length > 0) {
       this._t += step;

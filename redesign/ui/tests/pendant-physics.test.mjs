@@ -6,6 +6,11 @@ import ts from 'typescript';
 const source = readFileSync(new URL('../src/pendant-physics.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2021 } }).outputText;
 const { PendantPhysics, RopeChain, MAX_STRETCH, pendantCharHeight } = await import(`data:text/javascript,${encodeURIComponent(js)}`);
+const settingsJs = ts.transpileModule(readFileSync(new URL('../src/settings.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2021 },
+}).outputText;
+const { clampPendantScale, clampPendantRope, PENDANT_SCALE_MIN, PENDANT_SCALE_MAX, PENDANT_ROPE_MIN, PENDANT_ROPE_MAX } =
+  await import(`data:text/javascript,${encodeURIComponent(settingsJs)}`);
 
 const DT = 1 / 60;
 const run = (p, ax, ay, seconds, each) => {
@@ -92,4 +97,14 @@ test('绳子：两端固定在指针尾部与人物身上，距离不足时下�
 
 test('人物大小按比例缩放', () => {
   assert.equal(pendantCharHeight(2), pendantCharHeight(1) * 2);
+});
+
+test('吊坠设置值钳制到范围内，非法输入回到默认', () => {
+  assert.equal(clampPendantScale(0), PENDANT_SCALE_MIN);
+  assert.equal(clampPendantScale(99), PENDANT_SCALE_MAX);
+  assert.equal(clampPendantScale('x'), 1);
+  assert.equal(clampPendantRope(1), PENDANT_ROPE_MIN);
+  assert.equal(clampPendantRope(9999), PENDANT_ROPE_MAX);
+  assert.equal(clampPendantRope(Number.NaN), 80);
+  assert.equal(clampPendantRope(80.4), 80);
 });

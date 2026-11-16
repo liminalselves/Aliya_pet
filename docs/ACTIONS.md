@@ -2,8 +2,9 @@
 
 ## 当前资源与接入
 
-正式资源为 PET 版 Aliya 模型，入口保留 `16.model3.json`、`16.moc3`、
-`16.physics3.json`、`16.cdi3.json`，纹理为 `aliya.2048/texture_00.png`。
+正式资源为带情绪符号图层的新版 Aliya 模型（参数/物理/网格详情见 [MODEL.md](MODEL.md)），
+入口保留 `16.model3.json`、`16.moc3`、`16.physics3.json`、`16.cdi3.json`，
+纹理为 `aliya.2048/texture_00.png`。
 当前 **17 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
 不是官方示例占位文件。LipSync 不启用。
 
@@ -225,10 +226,15 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 
 ## 渲染余量
 
-`PetApp._renderMarginRatio` 现为 1.33（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
+`PetApp._renderMarginRatio` 现为 1.36（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
 物理及 `PetModel.update` 驱动全部动作 × 全部表情 × 中点/四角注视的顶点包络，
 按实际静态宽高取 `maxAbsX/(0.5×boundsW)`、`maxAbsY/(0.5×boundsH)` 的最大值，
-再乘 1.05 安全系。动作幅度扩大后必须重测。
+再乘 1.05 安全系。动作幅度扩大或模型换新后必须重测。
+
+静态包围盒 `boundsW/boundsH` 只统计默认可见的网格：七个情绪符号和替换脸默认透明，
+不计入，否则符号伸出头顶（顶边比人物高约 0.05）会让人物整体缩小，
+并使 `boundsH` 偏离命中椭圆的校准值（见「互动命中坐标」）。
+符号显示时的包络仍由本节测量覆盖（动态包围盒按可见网格统计，符号显示即计入）。
 
 之后 `test:bounds` 扩展为全部 13 动作 × 全部表情 × 5 注视及全部接替。
 **重做前**的 8 个原有动作在这个完整矩阵（12 表情，2574 场景）里已需 1.323，超过 1.30；
@@ -240,6 +246,9 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 1,108,672 帧，需 1.2313、×1.05 为 1.2928，仍低于 1.33（最差帧是 15 FPS 的 `wave`+sleepy，
 不是替换脸动作）。这四个动作的头身幅度沿用优化前的量级，只新增贴身方向 ≤2 的手臂收放，
 不抬高包络；此后任何动作幅度增加都要重跑 `npm run test:bounds`。
+
+换用带情绪符号图层的新模型后，符号显示时顶边与右侧伸出人物（`zzz` 最远），同一矩阵需 1.2863、
+×1.05 为 1.3507，高于原 1.33，因此提高到 **1.36**（最差帧是 15 FPS 的 `daydream`+sleepy，`zzz` 出现时）。
 
 在 `redesign/ui` 运行 `npm run test:bounds` 可复现此较慢检查（本机约 5 分钟）。测试还用
 真实 `PetApp._render` 和 Cubism 矩阵，将测得的保守包络投影到 3840×2160 工作区、

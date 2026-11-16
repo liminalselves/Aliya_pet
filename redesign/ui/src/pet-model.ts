@@ -175,7 +175,8 @@ export class PetModel
     this.loadModel(await this._fetchArrayBuffer(mocFile), false);
     this._model.saveParameters();
 
-    // 静态包围盒：默认姿态下全部 drawable 顶点的 min/max（native 同款算法）
+    // 静态包围盒：默认姿态下可见 drawable 顶点的 min/max（native 同款算法）。
+    // 默认透明的网格（情绪符号、替换脸）不计入：符号伸出头顶，计入会让人物整体缩小。
     {
       this._model.update();
       const dc = this._model.getDrawableCount();
@@ -184,6 +185,7 @@ export class PetModel
         minY = 1e9,
         maxY = -1e9;
       for (let i = 0; i < dc; i++) {
+        if (this._model.getDrawableOpacity(i) < 0.01) continue;
         const v = this._model.getDrawableVertices(i);
         for (let j = 0; j < v.length; j += 2) {
           if (v[j] < minX) minX = v[j];
@@ -345,9 +347,8 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
-    // 情绪符号：只收模型里真实存在的 ParamFx*，旧模型没有时通道不写入。
     const fxIds = new Map<FxName, CubismIdHandle>();
-    for (const fx of FX_NAMES) if (hasParam(FX_PARAMETERS[fx])) fxIds.set(fx, id(FX_PARAMETERS[fx]));
+    for (const fx of FX_NAMES) fxIds.set(fx, id(FX_PARAMETERS[fx]));
     this._chFx = new FxChannel(fxIds);
     this._overlays.add(this._chFx);
     // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）

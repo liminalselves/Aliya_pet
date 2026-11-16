@@ -34,6 +34,7 @@ assert.ok(CubismFramework.startUp());
 CubismFramework.initialize();
 const { PetModel } = load(resolve(uiRoot, 'src/pet-model.ts'));
 const { parseFaceCues, faceAt, FaceCueTrack } = load(resolve(uiRoot, 'src/face-cue.ts'));
+const { parseFxCues, EXPRESSION_FX, FX_PARAMETERS } = load(resolve(uiRoot, 'src/fx-cue.ts'));
 const assetRoot = resolve(uiRoot, 'assets/live2d/aliya');
 const bytes = file => { const b = readFileSync(resolve(assetRoot, file)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
 const manifest = JSON.parse(readFileSync(resolve(assetRoot, 'actions.json'), 'utf8')).actions;
@@ -208,6 +209,7 @@ test('流泪/无语切换：两眼先一起闭上，闭眼下选择器 0→1，�
     assert.equal(param('Param35'), 0); assert.equal(param('ParamEyeLOpen'), 1);
   } finally { p.release(); }
 });
+
 test('连续点击重播委屈：哭眼保持到新区间开始，只闭眼一次', async () => {
   const p = await model();
   try {
@@ -232,7 +234,7 @@ test('连续点击重播委屈：哭眼保持到新区间开始，只闭眼一�
     }
   } finally { p.release(); }
 });
-const { parseFxCues, EXPRESSION_FX, FX_PARAMETERS } = load(resolve(uiRoot, 'src/fx-cue.ts'));
+
 const FX_MESH = { heart: 'heart', question: 'question', surprise: 'exclaim', gloom: 'gloom', sleep: 'zzz', sparkle: 'sparkle', music: 'music' };
 
 test('情绪符号时间轴解析：丢弃非法区间与未知符号', () => {
@@ -282,5 +284,25 @@ test('情绪符号随动作与表情联动：只显示对应符号，渐入渐�
     assert.ok(op('question') > 0.99);
     p.playAction('nod'); for (let i = 0; i < 30; i++) p.update(1 / 60);
     assert.ok(op('question') < 0.05, '新动作接手后问号应淡出');
+  } finally { p.release(); }
+});
+
+test('静态包围盒只统计默认可见网格：情绪符号与替换脸不撑高人物', async () => {
+  const p = await model();
+  try {
+    const m = p.getModel();
+    const b = p.getStaticBounds();
+    const symbols = ['heart', 'question', 'exclaim', 'gloom', 'zzz', 'sparkle', 'music'];
+    const ids = Array.from({ length: m.getDrawableCount() }, (_, i) => m.getDrawableId(i).getString());
+    let symbolTop = -Infinity;
+    for (const name of symbols) {
+      const i = ids.indexOf(name);
+      assert.ok(i >= 0 && m.getDrawableOpacity(i) < 0.01, `${name} 默认应透明`);
+      const v = m.getDrawableVertices(i);
+      for (let j = 1; j < v.length; j += 2) symbolTop = Math.max(symbolTop, v[j]);
+    }
+    assert.ok(symbolTop > b.maxY, '符号顶边高于人物，才有必要排除');
+    // 旧模型包围盒高 1.0072：符号不计入时保持同一量级，计入会变成约 1.056。
+    assert.ok(p.boundsH < 1.02, `boundsH=${p.boundsH} 不应包含符号`);
   } finally { p.release(); }
 });

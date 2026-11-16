@@ -235,12 +235,37 @@ function stop(): void {
   }
 }
 
+/** 首次开启时才加载模型：默认关闭，窗口预创建但不占模型与贴图内存。 */
+let loading: Promise<void> | null = null;
+function ensureModel(): Promise<void> {
+  loading ??= (async () => {
+    const url = '/live2d/aliya/16.model3.json';
+    const buffer = await (await fetch(url)).arrayBuffer();
+    const m = new PetModel();
+    await m.loadFromSetting(buffer, buffer.byteLength, url.substring(0, url.lastIndexOf('/') + 1), {
+      gl: gl!,
+      frameBuffer: gl!.getParameter(gl!.FRAMEBUFFER_BINDING),
+      shaderPath: '/shaders/',
+    });
+    // 猫耳显隐跟主桌宠一致。
+    m.setCatEarsVisible(settings.showCatEars, true);
+    m.update(0);
+    attach = pickAttachVertex(m);
+    model = m;
+  })().catch((error) => {
+    loading = null;
+    throw error;
+  });
+  return loading;
+}
+
 /** 按设置显示/隐藏吊坠并调整窗口大小。 */
 async function applySettings(s: PetSettings): Promise<void> {
   settings = s;
   charHeight = pendantCharHeight(clampPendantScale(s.pendantScale));
   physics.config.ropeLength = clampPendantRope(s.pendantRopeLength);
   if (!tauriWindow) return;
+  if (s.pendantEnabled && !model) await ensureModel();
   if (!s.pendantEnabled || !model?.isReady()) {
     stop();
     await tauriWindow.hide().catch(() => {});
@@ -270,22 +295,11 @@ async function main(): Promise<void> {
     if (first) resetAt(cursor.x, cursor.y);
   });
   await ev.listen<PetSettings>('settings-changed', (e) => {
-    if (e.payload && typeof e.payload === 'object') void applySettings({ ...settings, ...e.payload });
+    if (e.payload && typeof e.payload === 'object') {
+      applySettings({ ...settings, ...e.payload }).catch(error => console.error('[pendant] apply failed', error));
+    }
   });
 
-  const url = '/live2d/aliya/16.model3.json';
-  const buffer = await (await fetch(url)).arrayBuffer();
-  const m = new PetModel();
-  await m.loadFromSetting(buffer, buffer.byteLength, url.substring(0, url.lastIndexOf('/') + 1), {
-    gl,
-    frameBuffer: gl.getParameter(gl.FRAMEBUFFER_BINDING),
-    shaderPath: '/shaders/',
-  });
-  // 猫耳显隐跟主桌宠一致。
-  m.setCatEarsVisible(settings.showCatEars, true);
-  m.update(0);
-  attach = pickAttachVertex(m);
-  model = m;
   await applySettings(loadSettings());
 }
 

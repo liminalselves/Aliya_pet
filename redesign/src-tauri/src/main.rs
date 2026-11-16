@@ -453,6 +453,8 @@ fn cursor_tail_offset(cache: &mut std::collections::HashMap<isize, (i32, i32)>) 
             break 'rows;
         }
     }
+    // 动画光标会不断换句柄：缓存只留最近用到的一批，超限直接清空重建。
+    if cache.len() >= 64 { cache.clear(); }
     cache.insert(key, result);
     result
 }

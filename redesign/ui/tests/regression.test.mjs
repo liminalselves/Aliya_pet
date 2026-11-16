@@ -1320,7 +1320,6 @@ test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快�
  }
 });
 
-
 test('拖动拎起姿态：绕抓取点悬挂，向拖动反方向滞后摆动，停手回正，松手复原',()=>{
  const {LiftPose,liftMatrix,LIFT_MAX_DEG}=load('lift-pose');
  const ap=(m,x,y)=>[m[0]*x+m[4]*y+m[12],m[1]*x+m[5]*y+m[13]];
