@@ -110,7 +110,7 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
   与窗口原点，页面按屏幕坐标自己绘制，避免逐帧移窗与重绘不同步造成的抖动。
 - 物理在 `pendant-physics.ts`：质点挂在绳端，重力 + 随速度增大的空气阻力，绳子只拉不推，
   朝向角弹簧在绳子松弛时几乎自由旋转；绳子外观是只用于绘制的 Verlet 链。惯性力再作为
-  Cubism 物理的风力（`PetModel.setPhysicsWind`）传给头发与裙摆。绳子系在头顶发丝的一个网格顶点上。
+  Cubism 物理的风力（`PetModel.setPhysicsWind`）传给头发与裙摆。绳子系在离人物中心最近的一个网格顶点上、画在人物下层（被身体挡住的一段不显示），人物绕该点摆动。
 - 设置经 `settings-changed` 事件从设置窗口直达 `pendant` 窗口（`capabilities/pendant.json` 仅授权显隐自身与监听事件）。
 
 ## 应用内更新（ui/src/update/）

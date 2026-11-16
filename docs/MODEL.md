@@ -60,8 +60,8 @@
 
 | 物理 | 输入 | 输出 | 说明 |
 | ---- | ---- | ---- | ---- |
-| 符号（问号/感叹号） | AngleX/Y | Param37 | PhysicsSetting16；符号随头部晃动漂浮，勿手写 |
-| 符号（动效） | AngleX/Y | Param40 / Param41 | PhysicsSetting17；动效 X/Y，勿手写 |
+| 符号（问号/感叹号） | AngleX/Y | Param37 | PhysicsSetting16；头部摆动带出小幅漂浮，符号自身动效由 `fx-cue.ts` 在物理后叠加，动作文件勿写 |
+| 符号（动效） | AngleX/Y | Param40 / Param41 | PhysicsSetting17；动效 X/Y，同上由 `fx-cue.ts` 叠加，动作文件勿写 |
 | 猫耳（左/右） | AngleX/Y/Z + EyeLOpen/ROpen | Param7~10 / Param11~14 | 耳朵随头摆；**加写 Param9/Param13 可直接拨耳**（×12 缩放） |
 | 手部（左/右） | BodyAngleX/Y/Z + Breath | Param_Angle_B_BODY_6..8 / 9..11 | 左右各三段，±30；自然摆动由物理控制 |
 | 挥手 | BodyAngleX/Y | Param31 / Param36 | PhysicsSetting15；挥手通道在物理后控制，避免覆盖 |
