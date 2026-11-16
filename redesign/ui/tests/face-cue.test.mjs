@@ -284,3 +284,51 @@ test('情绪符号随动作与表情联动：只显示对应符号，渐入渐�
     assert.ok(op('question') < 0.05, '新动作接手后问号应淡出');
   } finally { p.release(); }
 });
+test('情绪符号动效：每个符号显示期间都在动（相对少动态效果），量程内无跳变，淡出后归位', async () => {
+  const p = await model();
+  try {
+    const m = p.getModel();
+    const ids = Array.from({ length: m.getDrawableCount() }, (_, i) => m.getDrawableId(i).getString());
+    const center = name => {
+      const v = m.getDrawableVertices(ids.indexOf(name));
+      let x = 0, y = 0; for (let j = 0; j < v.length; j += 2) { x += v[j]; y += v[j + 1]; }
+      return [x / (v.length / 2), y / (v.length / 2)];
+    };
+    const drivers = ['Param37', 'Param40', 'Param41'];
+    const index = id => Array.from({ length: m.getParameterCount() }, (_, i) => i).find(i => m.getParameterId(i).getString() === id);
+    const param = id => m.getParameterValueByIndex(index(id));
+    const motion = (fx, reduce) => {
+      p.setReducedMotion(reduce);
+      p.startExpression(null); p.setEyeOverride(true, 1, 1);
+      for (let i = 0; i < 240; i++) p.update(1 / 60);
+      // 直接经通道显示：表情符号保持 2.6s，取其中 2s 采样。
+      const expr = Object.entries(EXPRESSION_FX).find(([, f]) => f === fx)?.[0];
+      if (expr) p.startExpression(expr);
+      else { const act = manifest.find(a => parseFxCues(a.fx)[0]?.fx === fx); assert.ok(act, fx); p.playAction(act.name); }
+      const track = [];
+      let prev = null, maxJump = 0;
+      for (let i = 0; i < 120; i++) {
+        p.update(1 / 60);
+        const c = center(FX_MESH[fx]);
+        track.push(c);
+        if (prev) maxJump = Math.max(maxJump, Math.hypot(c[0] - prev[0], c[1] - prev[1]));
+        prev = c;
+        for (const d of drivers) { const v = param(d); assert.ok(v >= -10 && v <= 10, `${fx}: ${d}=${v} 超出量程`); }
+      }
+      return { track, maxJump };
+    };
+    for (const fx of Object.keys(FX_MESH)) {
+      // 同一帧序列各跑一遍：差值只来自符号动效，排除表情/动作带动头部的位移。
+      const on = motion(fx, false), off = motion(fx, true);
+      const dx = on.track.map((c, i) => c[0] - off.track[i][0]);
+      const dy = on.track.map((c, i) => c[1] - off.track[i][1]);
+      const swing = Math.max(Math.max(...dx) - Math.min(...dx), Math.max(...dy) - Math.min(...dy));
+      assert.ok(swing > 0.006, `${fx}: 显示期间应有可见动效（位移 ${swing.toFixed(4)}）`);
+      assert.ok(on.maxJump < 0.01, `${fx}: 一帧位移 ${on.maxJump.toFixed(4)} 过大`);
+    }
+    // 全部淡出后动效参数回到物理自身的小幅漂浮。
+    p.setReducedMotion(false); p.startExpression(null); p.playAction('nod');
+    for (let i = 0; i < 600; i++) p.update(1 / 60);
+    for (const d of drivers) assert.ok(Math.abs(param(d)) < 1, `${d} 残留 ${param(d)}`);
+  } finally { p.release(); }
+});
