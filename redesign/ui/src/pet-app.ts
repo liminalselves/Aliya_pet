@@ -774,6 +774,10 @@ export class PetApp {
       void import('@tauri-apps/api/core')
         .then(m => m.invoke('sync_top_menu', { checked: s.alwaysOnTop }))
         .catch(() => {});
+      // 游戏模式快捷键随设置注册；壳侧值未变不重复注册，失败时保留原快捷键。
+      void import('@tauri-apps/api/core')
+        .then(m => m.invoke('set_game_mode_hotkey', { hotkey: s.gameModeHotkey }))
+        .catch(e => console.warn('Failed to register game mode hotkey', e));
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {

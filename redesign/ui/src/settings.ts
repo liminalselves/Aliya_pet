@@ -45,6 +45,8 @@ export interface PetSettings {
   pendantScale: number;
   /** 吊坠连接线长度（CSS px，PENDANT_ROPE_MIN..MAX），与人物大小独立。 */
   pendantRopeLength: number;
+  /** 游戏模式全局快捷键（仅 Windows），如 "Ctrl+Alt+G"；空串 = 不使用快捷键。 */
+  gameModeHotkey: string;
 }
 
 export const PENDANT_SCALE_MIN = 0.4;
@@ -96,6 +98,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   pendantEnabled: false,
   pendantScale: 1,
   pendantRopeLength: 80,
+  gameModeHotkey: 'Ctrl+Alt+G',
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -196,6 +199,7 @@ export function loadSettings(): PetSettings {
       pendantEnabled: parsed.pendantEnabled === true,
       pendantScale: clampPendantScale(parsed.pendantScale ?? 1),
       pendantRopeLength: clampPendantRope(parsed.pendantRopeLength ?? DEFAULT_SETTINGS.pendantRopeLength),
+      gameModeHotkey: typeof parsed.gameModeHotkey === 'string' ? parsed.gameModeHotkey : DEFAULT_SETTINGS.gameModeHotkey,
       showCatEars: parsed.showCatEars !== false,
       showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
