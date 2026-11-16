@@ -22,7 +22,8 @@ const FPS_IDLE = 30;
 const stage = document.getElementById('stage')!;
 const glCanvas = document.createElement('canvas');
 const ropeCanvas = document.createElement('canvas');
-for (const c of [glCanvas, ropeCanvas]) {
+// 绳子画布在下、人物在上：系在身体中心的那段绳子被身体挡住，只露出身体外的部分。
+for (const c of [ropeCanvas, glCanvas]) {
   c.style.position = 'absolute';
   c.style.inset = '0';
   c.style.width = '100%';
@@ -37,7 +38,7 @@ let model: PetModel | null = null;
 let charHeight = pendantCharHeight(clampPendantScale(settings.pendantScale));
 const physics = new PendantPhysics({ ropeLength: clampPendantRope(settings.pendantRopeLength) });
 const rope = new RopeChain();
-/** 系绳顶点（头顶头发网格上的一个顶点）；模型加载后选定。 */
+/** 系绳顶点（离人物中心最近的网格顶点）；模型加载后选定。 */
 let attach: { drawable: number; vertex: number } | null = null;
 /** 最近一次光标与窗口原点（CSS px，屏幕坐标）；null = 尚未收到，不绘制。 */
 let cursor: { x: number; y: number; wx: number; wy: number } | null = null;
@@ -66,31 +67,30 @@ function resizeCanvases(): void {
 }
 
 /**
- * 选系绳顶点：头顶最高的可见网格顶点（避开猫耳——可隐藏，且挂在耳朵上不自然）。
- * 取静止姿态下 x 靠近中线、y 最高的顶点，之后每帧读它的实时位置，绳子跟着头动。
+ * 选系绳顶点：离人物中心（静态包围盒中心）最近的可见网格顶点，避开猫耳（可隐藏）。
+ * 之后每帧读它的实时位置，绳子跟着身体动；人物也绕这个点旋转。
  */
 function pickAttachVertex(m: PetModel): { drawable: number; vertex: number } | null {
   const core = m.getModel();
   const b = m.getStaticBounds();
   if (!b) return null;
   const cx = (b.minX + b.maxX) / 2;
-  const halfW = (b.maxX - b.minX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
   let best: { drawable: number; vertex: number } | null = null;
-  let bestScore = -Infinity;
+  let bestDist = Infinity;
   for (let i = 0; i < core.getDrawableCount(); i++) {
     if (core.getDrawableOpacity(i) < 0.5) continue;
     if (m.isEarDrawable(i)) continue;
     const v = core.getDrawableVertices(i);
     for (let j = 0; j < v.length; j += 2) {
-      // 头顶中线附近：越高越好，偏离中线扣分。
-      const score = v[j + 1] - 2 * Math.max(0, Math.abs(v[j] - cx) - 0.08 * halfW);
-      if (score > bestScore) { bestScore = score; best = { drawable: i, vertex: j / 2 }; }
+      const d = Math.hypot(v[j] - cx, v[j + 1] - cy);
+      if (d < bestDist) { bestDist = d; best = { drawable: i, vertex: j / 2 }; }
     }
   }
   return best;
 }
 
-/** 系绳顶点当前的模型坐标（含动作、物理形变）；不可用时退回静态包围盒头顶中点。 */
+/** 系绳顶点当前的模型坐标（含动作、物理形变）；不可用时退回静态包围盒中心。 */
 function attachPoint(): { x: number; y: number } {
   const b = model!.getStaticBounds()!;
   if (attach) {
@@ -98,7 +98,7 @@ function attachPoint(): { x: number; y: number } {
     const x = v[attach.vertex * 2], y = v[attach.vertex * 2 + 1];
     if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
   }
-  return { x: (b.minX + b.maxX) / 2, y: b.maxY };
+  return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
 }
 
 /** 人物模型矩阵：系绳顶点 (mx, my) 钉在缓冲像素 (px, py)，绕它旋转 angle。 */
