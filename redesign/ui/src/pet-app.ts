@@ -255,11 +255,11 @@ export class PetApp {
   private static readonly _snapZonePx = 48;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.36，不改变用户窗口缩放设置。
-   * 正式 Core 的全部 17 动作×14 表情×极端注视/切换矩阵（含情绪符号）：需求 1.2863，
-   * 乘 1.05 安全系数后需 1.3507，取 1.36（测量方法与演变见 docs/ACTIONS.md）。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.39，不改变用户窗口缩放设置。
+   * 正式 Core 的全部 17 动作×14 表情×极端注视/切换矩阵（含情绪符号及其动效）：需求 1.3152，
+   * 乘 1.05 安全系数后需 1.3809，取 1.39（测量方法与演变见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.36;
+  private static readonly _renderMarginRatio = 1.39;
   /** 聊天入口与脚底的固定间隙（CSS px）。 */
   private static readonly _launcherGapCss = 6;
 

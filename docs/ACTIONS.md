@@ -226,7 +226,7 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 
 ## 渲染余量
 
-`PetApp._renderMarginRatio` 现为 1.36（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
+`PetApp._renderMarginRatio` 现为 1.39（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
 物理及 `PetModel.update` 驱动全部动作 × 全部表情 × 中点/四角注视的顶点包络，
 按实际静态宽高取 `maxAbsX/(0.5×boundsW)`、`maxAbsY/(0.5×boundsH)` 的最大值，
 再乘 1.05 安全系。动作幅度扩大或模型换新后必须重测。
@@ -247,8 +247,9 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 不是替换脸动作）。这四个动作的头身幅度沿用优化前的量级，只新增贴身方向 ≤2 的手臂收放，
 不抬高包络；此后任何动作幅度增加都要重跑 `npm run test:bounds`。
 
-换用带情绪符号图层的新模型后，符号显示时顶边与右侧伸出人物（`zzz` 最远），同一矩阵需 1.2863、
-×1.05 为 1.3507，高于原 1.33，因此提高到 **1.36**（最差帧是 15 FPS 的 `daydream`+sleepy，`zzz` 出现时）。
+换用带情绪符号图层的新模型后，符号显示时顶边与右侧伸出人物，符号自带的循环动效（`FX_MOTION`）
+还会再向外摆：同一矩阵需 1.3152、×1.05 为 1.3809，高于原 1.33，因此提高到 **1.39**
+（最差帧是 60 FPS 的 `daydream`+sleepy，`zzz` 画圈漂到最右时）。
 
 在 `redesign/ui` 运行 `npm run test:bounds` 可复现此较慢检查（本机约 5 分钟）。测试还用
 真实 `PetApp._render` 和 Cubism 矩阵，将测得的保守包络投影到 3840×2160 工作区、

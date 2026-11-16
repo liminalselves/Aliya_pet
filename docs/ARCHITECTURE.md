@@ -54,7 +54,7 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 
 ### 2. 动作余量
 
-- **渲染余量 1.36**（`PetApp._renderMarginRatio`）：当前模型与动作的测量依据由
+- **渲染余量 1.39**（`PetApp._renderMarginRatio`）：当前模型与动作的测量依据由
   [ACTIONS.md](ACTIONS.md) 维护，更换模型/动作后需重新测量。
 - **窗口余量 1.18**：窗口尺寸 = 675 × scale × 1.18（宽再乘包围盒宽高比），
   与旧版 `ComputeTargetPixelSize` 一致。
