@@ -349,7 +349,7 @@ export class PetModel
     this._overlays.add(this._chHand);
     const fxIds = new Map<FxName, CubismIdHandle>();
     for (const fx of FX_NAMES) fxIds.set(fx, id(FX_PARAMETERS[fx]));
-    this._chFx = new FxChannel(fxIds);
+    this._chFx = new FxChannel(fxIds, [id('Param37'), id('Param40'), id('Param41')]);
     this._overlays.add(this._chFx);
     // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
     const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
@@ -750,6 +750,24 @@ export class PetModel
     return this._earPartIndex >= 0;
   }
 
+  /**
+   * 少动态效果：情绪符号只渐入渐出，不摆动、不闪烁。
+   * 默认跟随系统「减少动态效果」，每帧读取（主桌宠与吊坠一致）；测试可显式覆盖。
+   */
+  public setReducedMotion(reduce: boolean | null): void {
+    this._reducedMotionOverride = reduce;
+  }
+  private _reducedMotionOverride: boolean | null = null;
+  private _reducedMotionQuery: MediaQueryList | null | undefined;
+  private _reducedMotion(): boolean {
+    if (this._reducedMotionOverride !== null) return this._reducedMotionOverride;
+    if (this._reducedMotionQuery === undefined) {
+      this._reducedMotionQuery = typeof matchMedia === 'function'
+        ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    }
+    return this._reducedMotionQuery?.matches ?? false;
+  }
+
   /** 该网格是否属于猫耳部件（Part21 及其子部件）。 */
   public isEarDrawable(drawableIndex: number): boolean {
     if (this._earPartIndex < 0) return false;
@@ -842,6 +860,7 @@ export class PetModel
     });
     if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
+    if (this._chFx) this._chFx.reducedMotion = this._reducedMotion();
     // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);

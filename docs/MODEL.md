@@ -31,8 +31,8 @@
 | 挥手 | Param30 | 0..1 | 手臂图层开关，运行时只写 0 或 1 |
 | 挥手 | Param31 / Param36 | ±1 | 小臂 / 手部挥手，物理后写入 |
 | 表情 | Param38 / Param39 | 0..1 | 鼓嘴 / 嘟嘴替换网格，只能 0/1；由动作脸部时间轴驱动（见 `ACTIONS.md`） |
-| 表情 | Param37 / Param40 / Param41 | ±10 | 新版「question动效」及动效 X/Y，由物理输出，勿手写；旧版 Param37 是鼓嘴，已迁到 Param38 |
-| 特效 | ParamFxHeart / Question / Surprise / Gloom / Sleep / Sparkle / Music | 0..1 | 情绪符号图层（值即不透明度，可渐变），由 `fx-cue.ts` 随动作 `fx` 时间轴与表情联动；漂浮由物理 Param37/40/41 产生 |
+| 表情 | Param37 / Param40 / Param41 | ±10 | 新版「question动效」及动效 X/Y。物理输出头部摆动带来的小幅漂浮（实测待机 <0.4）；`fx-cue.ts` 在物理后按当前符号叠加 `FX_MOTION`，动作文件勿写。Param37 只形变问号/惊叹，Param40/41 平移其余符号。旧版 Param37 是鼓嘴，已迁到 Param38 |
+| 特效 | ParamFxHeart / Question / Surprise / Gloom / Sleep / Sparkle / Music | 0..1 | 情绪符号图层（值即不透明度，可渐变），由 `fx-cue.ts` 随动作 `fx` 时间轴与表情联动；每个符号自带循环动效（心上浮、问号摇摆、惊叹一抖、乌云飘、zzz 画圈、闪光闪烁、音符跳），系统「减少动态效果」时只渐入渐出 |
 | 呼吸 | ParamBreath | 0..1 | 呼吸系统占用 |
 
 ## 腿脚能力边界

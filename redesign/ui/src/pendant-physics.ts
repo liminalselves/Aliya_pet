@@ -30,7 +30,7 @@ export const MAX_STRETCH = 1.1;
 /** 人物朝向角弹簧：绷紧时的刚度（1/s²）与阻尼比；松弛时只剩 SLACK_RATIO 的刚度。 */
 const ANGLE_K = 160;
 const ANGLE_ZETA = 0.3;
-const SLACK_RATIO = 0.01; // 松绳时弱化回正牵引，让身体更自由地延续旋转。
+const SLACK_RATIO = 0.1; // 松绳时弱化回正牵引，让身体更自由地延续旋转。
 /** 物理子步长（秒），帧率波动时保持稳定。 */
 const SUBSTEP = 1 / 240;
 /** 单帧锚点跳变超过该距离（如跨屏、休眠恢复）直接复位，不甩飞人物。 */
