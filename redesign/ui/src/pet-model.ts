@@ -16,8 +16,9 @@ import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
-import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { applyFaceMouth, applyFaceVariant, expressionEye, EyeVariantTransition, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
+import { FX_NAMES, FX_PARAMETERS, FxChannel, parseFxCues, type FxName, type FxSpan } from './fx-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import type { PetBehaviorHost } from './behavior';
 import { MOTION_NAMES } from './catalog';
@@ -49,6 +50,8 @@ interface ActionAssetEntry {
   name: string;
   /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
   face?: unknown;
+  /** 动作期间的情绪符号时间轴（见 fx-cue.ts）。 */
+  fx?: unknown;
 }
 
 const INVALID_MOTION_HANDLE = -1;
@@ -104,6 +107,8 @@ export class PetModel
   private _chEar: EarChannel = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  /** 情绪符号图层（ParamFx*），随动作时间轴与表情联动。 */
+  private _chFx: FxChannel = null;
   private _angerSplit: AngerMarkSplit | null = null;
   private _idAngerShadow: CubismIdHandle = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
@@ -130,8 +135,12 @@ export class PetModel
   private _faceMouthIds: CubismIdHandle[] = [];
   /** 动作名 → 脸部提示时间轴（actions.json face 字段）。 */
   private readonly _faceCues = new Map<string, FaceCueSpan[]>();
+  /** 动作名 → 情绪符号时间轴（actions.json fx 字段）。 */
+  private readonly _fxCues = new Map<string, FxSpan[]>();
   private readonly _faceTrack = new FaceCueTrack();
   private _face: FaceState = { eye: null, mouth: null };
+  /** 特殊眼型（流泪/无语/受击）切换：先闭眼，流泪/无语再在闭眼下渐变。 */
+  private readonly _eyeTransition = new EyeVariantTransition();
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -166,7 +175,8 @@ export class PetModel
     this.loadModel(await this._fetchArrayBuffer(mocFile), false);
     this._model.saveParameters();
 
-    // 静态包围盒：默认姿态下全部 drawable 顶点的 min/max（native 同款算法）
+    // 静态包围盒：默认姿态下可见 drawable 顶点的 min/max（native 同款算法）。
+    // 默认透明的网格（情绪符号、替换脸）不计入：符号伸出头顶，计入会让人物整体缩小。
     {
       this._model.update();
       const dc = this._model.getDrawableCount();
@@ -175,6 +185,7 @@ export class PetModel
         minY = 1e9,
         maxY = -1e9;
       for (let i = 0; i < dc; i++) {
+        if (this._model.getDrawableOpacity(i) < 0.01) continue;
         const v = this._model.getDrawableVertices(i);
         for (let j = 0; j < v.length; j += 2) {
           if (v[j] < minX) minX = v[j];
@@ -336,6 +347,10 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    const fxIds = new Map<FxName, CubismIdHandle>();
+    for (const fx of FX_NAMES) fxIds.set(fx, id(FX_PARAMETERS[fx]));
+    this._chFx = new FxChannel(fxIds, [id('Param37'), id('Param40'), id('Param41')]);
+    this._overlays.add(this._chFx);
     // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
     const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
     const markIndex = this._model.getDrawableIndex(id('ArtMesh12'));
@@ -354,6 +369,8 @@ export class PetModel
         for (const entry of parsed.actions as ActionAssetEntry[]) {
           const spans = parseFaceCues(entry.face);
           if (spans.length > 0) this._faceCues.set(entry.name, spans);
+          const fx = parseFxCues(entry.fx);
+          if (fx.length > 0) this._fxCues.set(entry.name, fx);
         }
       }
     } catch {
@@ -416,6 +433,7 @@ export class PetModel
         this._expressionManager.startMotion(neutral, false);
       }
       this._currentExpression = null;
+      this._chFx?.setExpression(null);
       this._gaze.setExpression(null);
       this._angerSplit?.setMode(null);
       return true;
@@ -425,6 +443,7 @@ export class PetModel
     if (this._currentExpression === name) return true;
     this._expressionManager.startMotion(expr, false);
     this._currentExpression = name;
+    this._chFx?.setExpression(name);
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
     this._gaze.setExpression(name);
     this._angerSplit?.setMode(ANGER_SPLIT_MODES[name] ?? (name === 'angry' ? 'both' : null));
@@ -579,6 +598,7 @@ export class PetModel
     const spans = this._faceCues?.get(name);
     if (spans) this._faceTrack.start(spans);
     else this._faceTrack?.stop();
+    this._chFx?.startAction(this._fxCues.get(name));
   }
 
   /** 当前动作脸部提示（调试/测试用）。 */
@@ -730,10 +750,51 @@ export class PetModel
     return this._earPartIndex >= 0;
   }
 
+  /**
+   * 少动态效果：情绪符号只渐入渐出，不摆动、不闪烁。
+   * 默认跟随系统「减少动态效果」，每帧读取（主桌宠与吊坠一致）；测试可显式覆盖。
+   */
+  public setReducedMotion(reduce: boolean | null): void {
+    this._reducedMotionOverride = reduce;
+  }
+  private _reducedMotionOverride: boolean | null = null;
+  private _reducedMotionQuery: MediaQueryList | null | undefined;
+  private _reducedMotion(): boolean {
+    if (this._reducedMotionOverride !== null) return this._reducedMotionOverride;
+    if (this._reducedMotionQuery === undefined) {
+      this._reducedMotionQuery = typeof matchMedia === 'function'
+        ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    }
+    return this._reducedMotionQuery?.matches ?? false;
+  }
+
+  /** 该网格是否属于猫耳部件（Part21 及其子部件）。 */
+  public isEarDrawable(drawableIndex: number): boolean {
+    if (this._earPartIndex < 0) return false;
+    const parents = this._model.getPartParentPartIndices();
+    let part = this._model.getDrawableParentPartIndex(drawableIndex);
+    for (let guard = 0; part >= 0 && guard < 64; guard++) {
+      if (part === this._earPartIndex) return true;
+      part = parents[part];
+    }
+    return false;
+  }
+
   /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
   public setCatEarsVisible(visible: boolean, immediate = false): void {
     this._earsVisible = visible;
     if (immediate) this._earOpacity = visible ? 1 : 0;
+  }
+
+  /**
+   * 物理「风力」（Cubism 粒子坐标，y 向下，量纲约为重力的倍数）。
+   * 鼠标吊坠用它把整体摆动的惯性力传给头发、裙摆等物理链；主桌宠不调用，保持 0。
+   */
+  public setPhysicsWind(x: number, y: number): void {
+    const options = this._physics?.getOption();
+    if (!options || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    options.wind.x = x;
+    options.wind.y = y;
   }
 
   public setPettingLookAtReduction(enabled: boolean): void {
@@ -741,6 +802,12 @@ export class PetModel
   }
 
   // ---------- 每帧（五阶段流水线） ----------
+
+  private _writeTransitionLid(model: PetModel['_model'], lid: number | null): void {
+    if (lid === null) return;
+    model.setParameterValueById(this._eyeBlinkIds[0], lid);
+    model.setParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0], lid);
+  }
 
   public update(deltaTimeSeconds: number): void {
     if (!this._ready) return;
@@ -767,10 +834,19 @@ export class PetModel
     }
     // 动作脸部提示优先于表情眼型：动作结束后回到表情自己的眼睛。
     this._face = this._faceTrack.advance(deltaTimeSeconds);
-    const eye = this._face.eye ?? expressionEye(this._currentExpression);
+    const targetEye = this._face.eye ?? expressionEye(this._currentExpression);
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
     this._chEye.apply(model, deltaTimeSeconds);
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 特殊眼型切换先闭眼：读到的是眨眼/动作/互动合成后的真实眼睑。
+    const lidNow = Math.min(
+      model.getParameterValueById(this._eyeBlinkIds[0]),
+      model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
+    );
+    const eyeTransition = this._eyeTransition.advance(targetEye, deltaTimeSeconds, lidNow);
+    const eye = eyeTransition.eye;
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑在物理前也写一次，眼珠/高光物理跟着一起闭合。
+    this._writeTransitionLid(model, eyeTransition.lid);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
@@ -784,13 +860,16 @@ export class PetModel
     });
     if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
+    if (this._chFx) this._chFx.reducedMotion = this._reducedMotion();
     // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
 
     // 在动作、表情淡化、物理和互动之后独占写入整套眼型与替换嘴型。
-    // 受击/无语保留原生表现，但不经历会产生重影的中间值。
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 受击始终 0/1；流泪/无语只在普通眼闭合时渐变。
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑最后写，盖过动作、眨眼与互动对 EyeOpen 的写入。
+    this._writeTransitionLid(model, eyeTransition.lid);
     applyFaceMouth(model, this._faceMouthIds, this._face.mouth, eye);
 
     if (this._earPartIndex >= 0) {

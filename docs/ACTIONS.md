@@ -2,8 +2,9 @@
 
 ## 当前资源与接入
 
-正式资源为 PET 版 Aliya 模型，入口保留 `16.model3.json`、`16.moc3`、
-`16.physics3.json`、`16.cdi3.json`，纹理为 `aliya.2048/texture_00.png`。
+正式资源为带情绪符号图层的新版 Aliya 模型（参数/物理/网格详情见 [MODEL.md](MODEL.md)），
+入口保留 `16.model3.json`、`16.moc3`、`16.physics3.json`、`16.cdi3.json`，
+纹理为 `aliya.2048/texture_00.png`。
 当前 **17 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
 不是官方示例占位文件。LipSync 不启用。
 
@@ -47,18 +48,38 @@ npm --prefix redesign/ui run build
 叠加 sleepy 后分别需 1.311、1.323、1.302，均超过 1.30。所以摇摆、挥手保持原版量级，
 疑惑改为身体反向轻倾，灵动感改由预备、错峰与手臂表现。
 
+## 情绪符号 fx
+
+模型自带 7 个情绪符号图层（`ParamFx*`），由 `src/fx-cue.ts` 的 `FxChannel` 在物理后写入，
+0.25s 渐入、0.4s 渐出，同一时刻只显示一个。两个来源：
+
+- 动作：`actions.json` 条目的 `fx` 字段，`[{ "from": 秒, "to": 秒, "fx": 符号 }]`，时间相对动作开始；
+  新动作接手即撤回，连续重播同一动作时符号不闪断。
+- 表情：`EXPRESSION_FX`，切到该表情冒一次，保持 2.6s 后淡出，表情本身继续；动作符号优先。
+
+| 符号 | 动作 | 表情 |
+| --- | --- | --- |
+| heart 心 | shy_sway 撒娇、kiss 飞吻（「啾」之后） | shy 害羞 |
+| question 问号 | doubt 疑惑 | — |
+| surprise 惊叹 | notice 回神 | surprised 惊讶 |
+| gloom 乌云 | sob 委屈 | sad 难过、gloomy 阴沉 |
+| sleep zzz | yawn 哈欠、daydream 发呆（回神前撤） | sleepy 困倦 |
+| sparkle 闪光 | wave 挥手 | smug 得意 |
+| music 音符 | cheerful_bounce 开心雀跃 | happy 开心 |
+
 ## 替换脸动作 puff / kiss / sob / deadpan
 
-这四个动作用的是模型里画师已画好、此前没用上的整套替换网格：鼓嘴 `Param37`、
+这四个动作用的是模型里画师已画好、此前没用上的整套替换网格：鼓嘴 `Param38`、
 嘟嘴 `Param39`、哭眼 `Param34`、无语眼 `Param35`。它们是 0/1 网格替换（中间值会让
 两张嘴或两套眼睛半透明叠加，实测确认），不能写进 motion3.json 交给 SDK 交叉淡化。
+哭眼/无语眼的切换由运行时先闭双眼、再在闭眼下 0↔1 渐变完成（见 `MODEL.md` 第 6 条）。
 
 - 时间轴写在 `actions.json` 对应条目的 `face` 字段（唯一来源），格式
   `{ "from": 秒, "to": 秒, "eye"?: "hit|sad|speechless", "mouth"?: "puff|pucker" }`，区间左闭右开。
 - 运行时 `src/face-cue.ts` 的 `FaceCueTrack` 随动作启动；`PetModel` 在最终写入点
   （`face-variant.ts` 的 `applyFaceVariant` / `applyFaceMouth`）一帧切换，任何帧都只有 0 或 1。
 - 动作提示优先于表情眼型，动作结束或被任何动作打断立即撤回，回到表情自己的眼睛；
-  受击挤眼 `Param33` 自带整张脸，开启时不再叠替换嘴。
+  受击挤眼 `Param33` 开启时原嘴保持显示并随 `ParamMouthOpenY` 开合（`ArtMesh66` 已与嘴部联动），不再叠替换嘴。
 - 切换点都放在头部转动最快、或闭眼/垂眼的帧上，用动作遮住网格跳变。
 - motion 本身只写头身与普通五官，按「预备 → 主动作 → 过冲 → 回弹」排节奏，
   全部使用保形平滑插值；手臂只往贴身方向轻收（≤2），不外展，主段结束前回到默认。
@@ -205,10 +226,15 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 
 ## 渲染余量
 
-`PetApp._renderMarginRatio` 现为 1.33（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
+`PetApp._renderMarginRatio` 现为 1.39（演变见下）。测量方式：正式 Cubism Core 6.0.1、moc、
 物理及 `PetModel.update` 驱动全部动作 × 全部表情 × 中点/四角注视的顶点包络，
 按实际静态宽高取 `maxAbsX/(0.5×boundsW)`、`maxAbsY/(0.5×boundsH)` 的最大值，
-再乘 1.05 安全系。动作幅度扩大后必须重测。
+再乘 1.05 安全系。动作幅度扩大或模型换新后必须重测。
+
+静态包围盒 `boundsW/boundsH` 只统计默认可见的网格：七个情绪符号和替换脸默认透明，
+不计入，否则符号伸出头顶（顶边比人物高约 0.05）会让人物整体缩小，
+并使 `boundsH` 偏离命中椭圆的校准值（见「互动命中坐标」）。
+符号显示时的包络仍由本节测量覆盖（动态包围盒按可见网格统计，符号显示即计入）。
 
 之后 `test:bounds` 扩展为全部 13 动作 × 全部表情 × 5 注视及全部接替。
 **重做前**的 8 个原有动作在这个完整矩阵（12 表情，2574 场景）里已需 1.323，超过 1.30；
@@ -220,6 +246,10 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
 1,108,672 帧，需 1.2313、×1.05 为 1.2928，仍低于 1.33（最差帧是 15 FPS 的 `wave`+sleepy，
 不是替换脸动作）。这四个动作的头身幅度沿用优化前的量级，只新增贴身方向 ≤2 的手臂收放，
 不抬高包络；此后任何动作幅度增加都要重跑 `npm run test:bounds`。
+
+换用带情绪符号图层的新模型后，符号显示时顶边与右侧伸出人物，符号自带的循环动效（`FX_MOTION`）
+还会再向外摆：同一矩阵需 1.3152、×1.05 为 1.3809，高于原 1.33，因此提高到 **1.39**
+（最差帧是 60 FPS 的 `daydream`+sleepy，`zzz` 画圈漂到最右时）。
 
 在 `redesign/ui` 运行 `npm run test:bounds` 可复现此较慢检查（本机约 5 分钟）。测试还用
 真实 `PetApp._render` 和 Cubism 矩阵，将测得的保守包络投影到 3840×2160 工作区、

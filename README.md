@@ -59,6 +59,7 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 - **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页；支持 Windows 截图预览、图片上传、粘贴与拖放附件。
 - **显示与穿透**：设置页支持人物透明度 0–100%、5% 步进和实时预览；独立的“人物完全穿透”开关仅作用于人物悬浮窗，不影响聊天、设置和独立台词气泡。0% 会安全降级为完全穿透，保留原始 Alpha 命中掩码。
 - **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
+- **鼠标吊坠（仅 Windows）**：缩小的人物用绳子挂在鼠标指针上，随移动甩动，惯性力同时带动头发与裙摆；独立穿透窗口，不拦截点击，与主桌宠同时存在，默认关闭，设置页可调开关、大小和绳长。
 - **Android 桌面集成**：App 内全屏互动，退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
 - **设置持久化**：缩放、位置、镜像、贴边、置顶、自启、人物透明度和完全穿透状态等在双端一致保存。
 
@@ -155,7 +156,7 @@ redesign/                    # 重写版（当前主产品）
 │   │   └── settings.ts      # 设置存储（localStorage）
 │   ├── tests/               # 前端回归、渲染边界与触摸事件集成测试
 │   └── assets/live2d/aliya/ # 模型 + 自编动作 / 表情（tools 生成脚本产出）
-├── src-tauri/               # Windows 壳（Rust）：窗口 / 托盘 / 自启 / 设置子窗口
+├── src-tauri/               # Windows 壳（Rust）：窗口 / 托盘 / 自启 / 设置子窗口 / 鼠标吊坠窗口
 ├── android/                 # Android 壳（Kotlin）：Activity / 悬浮窗服务 / JS 桥
 └── tools/                   # 动作 / 表情生成脚本（入库）与 CDP 调试脚本（未入库）
 
@@ -269,6 +270,7 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 - **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android; Windows screen-capture preview and image attachments support paste and drag-and-drop.
 - **Display & click-through**: the settings page provides 0–100% character opacity in 5% steps with live preview, plus a separate full click-through switch that only affects the character overlay, not chat, settings or the standalone dialogue bubble. At 0%, the character safely falls back to full click-through while preserving the original alpha hit mask.
 - **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start; click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
+- **Mouse pendant (Windows only)**: a shrunken character hangs from the mouse cursor on a rope and swings with the motion, with the inertia also driving hair and skirt physics; it lives in its own click-through window, never intercepts clicks, coexists with the main pet, is off by default, and the settings page adjusts the switch, size and rope length.
 - **Android desktop integration**: full-screen interaction inside the app; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
 - **Persistent settings**: scale, position, mirroring, snapping, always-on-top, auto-start, character opacity and full click-through are stored consistently on both platforms.
 
@@ -364,7 +366,7 @@ redesign/                    # The rewrite (current main product)
 │   │   └── settings.ts      # Settings storage (localStorage)
 │   ├── tests/               # Frontend regression, render-boundary and touch-integration tests
 │   └── assets/live2d/aliya/ # Model + self-authored motions / expressions (from tools generators)
-├── src-tauri/               # Windows shell (Rust): window / tray / auto-start / settings window
+├── src-tauri/               # Windows shell (Rust): window / tray / auto-start / settings window / mouse-pendant window
 ├── android/                 # Android shell (Kotlin): Activity / overlay service / JS bridge
 └── tools/                   # Motion/expression generators (committed) + CDP debug scripts (not committed)
 

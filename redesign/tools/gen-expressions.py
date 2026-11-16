@@ -158,7 +158,7 @@ EXPRESSIONS = {
     # 受击（彩蛋/被戳反应）【签名：原生挤眼（face-variant.ts）+ 挑眉张嘴】
     "hit": {"fade": (0.08, 0.35), "params": [
         P("ParamBrowLY", 0.6), P("ParamBrowRY", 0.6),
-        P("ParamMouthOpenY", 0.35),
+        P("ParamMouthOpenY", 1.0),
         P("ParamMouthForm", -0.1),
     ]},
 }

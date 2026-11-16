@@ -315,12 +315,15 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
         // tauri 的 is_visible()/hwnd() 每次都要投递到主线程事件循环再等结果，
         // 60Hz × 2 个窗口的跨线程往返是空闲时主进程 CPU 的主要来源。
         let mut handles: std::collections::HashMap<&str, isize> = Default::default();
+        let mut pendant_last: Option<(i32, i32)> = None;
+        let mut cursor_tails: std::collections::HashMap<isize, (i32, i32)> = Default::default();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(16));
             let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
             if unsafe { GetCursorPos(&mut pt) } == 0 {
                 continue;
             }
+            follow_pendant(&app, &mut handles, &mut pendant_last, &mut cursor_tails, pt);
             for label in ["pet", "chat"] {
                 let Some(win) = app.get_webview_window(label) else {
                     continue;
@@ -371,6 +374,142 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
             }
         }
     });
+}
+
+/// 当前光标「尾部」相对热点的偏移（物理 px）：光标位图里最下面一行可见像素的中点。
+/// 箭头是箭杆末端，I 形是底端；随光标形状、系统光标大小和 DPI 自动适配。
+/// 结果按光标句柄缓存；读取失败返回 (0, 0)，即挂在热点上。
+#[cfg(windows)]
+fn cursor_tail_offset(cache: &mut std::collections::HashMap<isize, (i32, i32)>) -> (i32, i32) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, ICONINFO};
+    let mut ci: CURSORINFO = unsafe { std::mem::zeroed() };
+    ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
+    if unsafe { GetCursorInfo(&mut ci) } == 0 || ci.flags & CURSOR_SHOWING == 0 || ci.hCursor.is_null() {
+        return (0, 0);
+    }
+    let key = ci.hCursor as isize;
+    if let Some(&v) = cache.get(&key) { return v; }
+    let mut info: ICONINFO = unsafe { std::mem::zeroed() };
+    if unsafe { GetIconInfo(ci.hCursor, &mut info) } == 0 { return (0, 0); }
+    let read = |bmp: HBITMAP| -> Option<(i32, i32, Vec<u8>)> {
+        if bmp.is_null() { return None; }
+        let mut b: BITMAP = unsafe { std::mem::zeroed() };
+        if unsafe { GetObjectW(bmp as _, std::mem::size_of::<BITMAP>() as i32, (&mut b as *mut BITMAP).cast()) } == 0 {
+            return None;
+        }
+        let (w, h) = (b.bmWidth, b.bmHeight);
+        if w <= 0 || h <= 0 || w > 1024 || h > 2048 { return None; }
+        let mut bmi: BITMAPINFO = unsafe { std::mem::zeroed() };
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB,
+            ..unsafe { std::mem::zeroed() }
+        };
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        let dc = unsafe { GetDC(std::ptr::null_mut()) };
+        let lines = unsafe { GetDIBits(dc, bmp, 0, h as u32, buf.as_mut_ptr().cast(), &mut bmi, DIB_RGB_COLORS) };
+        unsafe { ReleaseDC(std::ptr::null_mut(), dc) };
+        (lines == h).then_some((w, h, buf))
+    };
+    let mask = read(info.hbmMask);
+    let color = read(info.hbmColor);
+    unsafe {
+        if !info.hbmMask.is_null() { DeleteObject(info.hbmMask as _); }
+        if !info.hbmColor.is_null() { DeleteObject(info.hbmColor as _); }
+    }
+    let Some((mw, mh, mbuf)) = mask else { return (0, 0) };
+    // 彩色光标：有 alpha 用 alpha，否则看 AND 掩码；单色光标：掩码上半 AND、下半 XOR。
+    let (w, h, visible): (i32, i32, Box<dyn Fn(i32, i32) -> bool>) = match &color {
+        Some((cw, ch, cbuf)) => {
+            let has_alpha = cbuf.chunks_exact(4).any(|p| p[3] != 0);
+            let (cw, ch) = (*cw, *ch);
+            let cbuf = cbuf.clone();
+            let mbuf = mbuf.clone();
+            (cw, ch, Box::new(move |x, y| {
+                let i = ((y * cw + x) * 4) as usize;
+                if has_alpha { cbuf[i + 3] > 16 } else { y < mh && x < mw && mbuf[((y * mw + x) * 4) as usize] == 0 }
+            }))
+        }
+        None => {
+            let h = mh / 2;
+            let mbuf = mbuf.clone();
+            (mw, h, Box::new(move |x, y| {
+                let and = mbuf[((y * mw + x) * 4) as usize];
+                let xor = mbuf[(((y + h) * mw + x) * 4) as usize];
+                and == 0 || xor != 0
+            }))
+        }
+    };
+    let mut result = (0, 0);
+    'rows: for y in (0..h).rev() {
+        let xs: Vec<i32> = (0..w).filter(|&x| visible(x, y)).collect();
+        if !xs.is_empty() {
+            let cx = (xs[0] + xs[xs.len() - 1]) / 2;
+            result = (cx - info.xHotspot as i32, y - info.yHotspot as i32);
+            break 'rows;
+        }
+    }
+    // 动画光标会不断换句柄：缓存只留最近用到的一批，超限直接清空重建。
+    if cache.len() >= 64 { cache.clear(); }
+    cache.insert(key, result);
+    result
+}
+
+/// 鼠标吊坠：窗口铺满光标所在的显示器，只在换屏时移动；页面按光标屏幕坐标自行绘制。
+/// （跟着光标逐帧移窗会因移窗与重绘不同步而抖动。）
+/// 吊坠窗口在 setup 里设为永久鼠标穿透，不参与像素命中判定。
+/// 隐藏时清空记录，重新显示后第一帧立即就位。
+#[cfg(windows)]
+fn follow_pendant(
+    app: &tauri::AppHandle,
+    handles: &mut std::collections::HashMap<&'static str, isize>,
+    last: &mut Option<(i32, i32)>,
+    tails: &mut std::collections::HashMap<isize, (i32, i32)>,
+    pt: windows_sys::Win32::Foundation::POINT,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, IsWindowVisible, SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+    };
+    let hwnd = match handles.get("pendant") {
+        Some(&h) => h,
+        None => {
+            let Some(win) = app.get_webview_window("pendant") else { return };
+            let Ok(h) = win.hwnd() else { return };
+            handles.insert("pendant", h.0 as isize);
+            h.0 as isize
+        }
+    };
+    if unsafe { IsWindowVisible(hwnd as _) } == 0 {
+        *last = None;
+        return;
+    }
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let monitor = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 { return; }
+    let m = info.rcMonitor;
+    let (x, y, w, h) = (m.left, m.top, m.right - m.left, m.bottom - m.top);
+    let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(hwnd as _, &mut r) } == 0 { return; }
+    if (r.left, r.top, r.right - r.left, r.bottom - r.top) != (x, y, w, h) {
+        unsafe {
+            SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+        *last = None; // 换屏后必须重发，页面据新原点复位
+    }
+    // 绳子挂在光标尾部；与窗口原点一起发出（物理 px），页面据此把人物画回屏幕坐标。
+    let (ox, oy) = cursor_tail_offset(tails);
+    let anchor = (pt.x + ox, pt.y + oy);
+    if *last != Some(anchor) {
+        *last = Some(anchor);
+        let _ = app.emit_to("pendant", "pendant-cursor", json!({ "x": anchor.0, "y": anchor.1, "wx": x, "wy": y }));
+    }
 }
 
 /// 开机自启注册表键（与 Flutter 版一致：reg.exe 实现，零新依赖）。
@@ -729,6 +868,10 @@ fn main() {
         })
         .setup(move |app| {
             chat_window::setup(app.handle())?;
+            // 吊坠跟着光标走，任何时候都不能挡住点击。
+            if let Some(pendant) = app.get_webview_window("pendant") {
+                let _ = pendant.set_ignore_cursor_events(true);
+            }
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
             #[cfg(windows)]

@@ -28,6 +28,7 @@ export default defineConfig({
         records: path.resolve(__dirname, 'records.html'),
         bubble: path.resolve(__dirname, 'bubble.html'),
         update: path.resolve(__dirname, 'update.html'),
+        pendant: path.resolve(__dirname, 'pendant.html'),
       },
     },
   },

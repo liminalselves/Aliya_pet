@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Aliya 吊坠</title>
+<!-- 鼠标吊坠窗口（仅 Windows）：铺满光标所在显示器的透明穿透层，见 src/pendant.ts -->
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent;
+    -webkit-user-select: none; user-select: none;
+    pointer-events: none;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script src="/core/live2dcubismcore.js"></script>
+<script type="module" src="/src/pendant.ts"></script>
+</body>
+</html>
