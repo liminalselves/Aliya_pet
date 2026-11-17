@@ -73,6 +73,199 @@ struct TopMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
 
 type HitMaskState = Arc<Mutex<std::collections::HashMap<String, HitMask>>>;
 
+/// 游戏模式：pet 与 chat 整窗穿透、chat 收起，桌宠不再接收任何鼠标点击，
+/// 也就不会被激活抢走游戏的键盘焦点。由托盘勾选项或全局快捷键切换。
+static GAME_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 托盘「游戏模式」勾选项。
+struct GameModeMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
+fn game_mode() -> bool {
+    GAME_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 切换游戏模式并同步托盘勾选；开启时收起 chat，释放其持有的键盘焦点。
+fn set_game_mode(app: &tauri::AppHandle, on: bool) {
+    GAME_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+    if let Some(item) = app.try_state::<GameModeMenuItem>() {
+        let _ = item.0.set_checked(on);
+    }
+    if on {
+        let _ = chat_window::hide_chat(app.clone(), app.state());
+    }
+    #[cfg(debug_assertions)]
+    println!("[game-mode] {on}");
+}
+
+/// 默认游戏模式快捷键；设置页可改（前端 `gameModeHotkey` 与此同值）。
+const DEFAULT_GAME_MODE_HOTKEY: &str = "Ctrl+Alt+G";
+
+/// 解析快捷键文本（如 "Ctrl+Shift+F9"）为 RegisterHotKey 的 (修饰键, 虚拟键码)。
+/// 主键支持 A–Z、0–9、F1–F24；字母和数字必须带修饰键，避免吞掉游戏里的普通按键。
+/// 返回规范化文本供菜单显示和前端回写。
+fn parse_hotkey(text: &str) -> Result<(u32, u32, String), String> {
+    const MOD_ALT: u32 = 0x1;
+    const MOD_CONTROL: u32 = 0x2;
+    const MOD_SHIFT: u32 = 0x4;
+    const MOD_WIN: u32 = 0x8;
+    let parts: Vec<&str> = text.split('+').map(str::trim).collect();
+    let (key, mods) = parts.split_last().filter(|(k, _)| !k.is_empty()).ok_or("快捷键为空")?;
+    let mut flags = 0;
+    for m in mods {
+        flags |= match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => MOD_CONTROL,
+            "alt" => MOD_ALT,
+            "shift" => MOD_SHIFT,
+            "win" | "super" | "meta" => MOD_WIN,
+            _ => return Err(format!("不支持的修饰键：{m}")),
+        };
+    }
+    let upper = key.to_ascii_uppercase();
+    let (vk, function_key) = match upper.as_bytes() {
+        [c @ (b'A'..=b'Z' | b'0'..=b'9')] => (*c as u32, false),
+        [b'F', digits @ ..] => match std::str::from_utf8(digits).ok().and_then(|d| d.parse::<u32>().ok()) {
+            Some(n @ 1..=24) if !digits.starts_with(b"0") => (0x70 + n - 1, true), // VK_F1 = 0x70
+            _ => return Err(format!("不支持的按键：{key}")),
+        },
+        _ => return Err(format!("不支持的按键：{key}")),
+    };
+    if flags == 0 && !function_key {
+        return Err("字母和数字键需要搭配 Ctrl / Alt / Shift / Win".into());
+    }
+    let mut label = String::new();
+    for (bit, name) in [(MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift"), (MOD_WIN, "Win")] {
+        if flags & bit != 0 { label.push_str(name); label.push('+'); }
+    }
+    label.push_str(&upper);
+    Ok((flags, vk, label))
+}
+
+/// 快捷键注册线程的句柄：RegisterHotKey 与线程绑定，改键请求经通道交给该线程执行。
+#[cfg(windows)]
+struct HotkeyThread {
+    thread_id: u32,
+    requests: std::sync::mpsc::Sender<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>,
+}
+
+#[cfg(windows)]
+const WM_HOTKEY_REQUEST: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
+
+/// 全局快捷键线程：持有唯一的热键注册，收到 WM_HOTKEY 在主线程切换游戏模式；
+/// 收到 WM_HOTKEY_REQUEST 时先注销旧键再注册新键，结果经回执通道返回。
+#[cfg(windows)]
+fn spawn_game_mode_hotkey(app: tauri::AppHandle) -> Result<HotkeyThread, String> {
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetMessageW, PeekMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_USER};
+    const HOTKEY_ID: i32 = 1;
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>();
+    let (id_tx, id_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        // 先建消息队列，PostThreadMessageW 才不会因队列不存在而失败。
+        unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), WM_USER, WM_USER, PM_NOREMOVE) };
+        let _ = id_tx.send(unsafe { GetCurrentThreadId() });
+        let mut registered = false;
+        while unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) } > 0 {
+            if msg.message == WM_HOTKEY && msg.wParam == HOTKEY_ID as usize {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || set_game_mode(&handle, !game_mode()));
+            } else if msg.message == WM_HOTKEY_REQUEST {
+                while let Ok((key, reply)) = req_rx.try_recv() {
+                    if registered {
+                        unsafe { UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID) };
+                        registered = false;
+                    }
+                    let result = match key {
+                        None => Ok(()),
+                        Some((mods, vk)) => {
+                            if unsafe { RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, mods | MOD_NOREPEAT, vk) } != 0 {
+                                registered = true;
+                                Ok(())
+                            } else {
+                                Err(format!("快捷键已被其他程序占用（{}）", std::io::Error::last_os_error()))
+                            }
+                        }
+                    };
+                    let _ = reply.send(result);
+                }
+            }
+        }
+    });
+    let thread_id = id_rx.recv_timeout(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
+    Ok(HotkeyThread { thread_id, requests: req_tx })
+}
+
+/// 在热键线程上替换注册；None 表示只注销。
+#[cfg(windows)]
+fn register_game_mode_hotkey(thread: &HotkeyThread, key: Option<(u32, u32)>) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread.requests.send((key, tx)).map_err(|_| "快捷键线程已退出".to_string())?;
+    if unsafe { PostThreadMessageW(thread.thread_id, WM_HOTKEY_REQUEST, 0, 0) } == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(2)).map_err(|_| "快捷键线程无响应".to_string())?
+}
+
+/// 当前生效的快捷键文本（规范化）；空串 = 未设置。
+#[derive(Default)]
+struct GameModeHotkey(Mutex<String>);
+
+/// 设置游戏模式快捷键（空串 = 不使用快捷键）。注册失败时保留原快捷键并返回错误；
+/// 成功返回规范化文本，同步托盘菜单文字。值未变时不重复注册。
+#[tauri::command]
+fn set_game_mode_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<String, String> {
+    let parsed = if hotkey.trim().is_empty() { None } else { Some(parse_hotkey(&hotkey)?) };
+    let label = parsed.as_ref().map(|p| p.2.clone()).unwrap_or_default();
+    let current = app.state::<GameModeHotkey>();
+    let mut current = current.0.lock().map_err(|e| e.to_string())?;
+    if *current == label { return Ok(label); }
+    #[cfg(windows)]
+    {
+        let thread = app.try_state::<HotkeyThread>().ok_or("快捷键线程未启动")?;
+        if let Err(error) = register_game_mode_hotkey(&thread, parsed.as_ref().map(|p| (p.0, p.1))) {
+            // 恢复原快捷键，失败的改动不让旧键也失效。
+            let old = (!current.is_empty()).then(|| parse_hotkey(&current).ok()).flatten();
+            let _ = register_game_mode_hotkey(&thread, old.map(|p| (p.0, p.1)));
+            return Err(error);
+        }
+    }
+    *current = label.clone();
+    if let Some(item) = app.try_state::<GameModeMenuItem>() {
+        let _ = item.0.set_text(game_mode_menu_text(&label));
+    }
+    Ok(label)
+}
+
+fn game_mode_menu_text(hotkey: &str) -> String {
+    if hotkey.is_empty() { "游戏模式".into() } else { format!("游戏模式（{hotkey}）") }
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::parse_hotkey;
+
+    #[test]
+    fn parses_and_normalizes_modifiers_and_keys() {
+        assert_eq!(parse_hotkey("ctrl+alt+g"), Ok((0x3, b'G' as u32, "Ctrl+Alt+G".into())));
+        assert_eq!(parse_hotkey("Shift + Win + 5"), Ok((0xC, b'5' as u32, "Shift+Win+5".into())));
+        assert_eq!(parse_hotkey("Alt+Ctrl+F12"), Ok((0x3, 0x7B, "Ctrl+Alt+F12".into())));
+        assert_eq!(parse_hotkey("F9"), Ok((0, 0x78, "F9".into())));
+        assert_eq!(parse_hotkey("f24").map(|p| p.1), Ok(0x87));
+    }
+
+    #[test]
+    fn rejects_bare_letters_and_unknown_keys() {
+        assert!(parse_hotkey("G").is_err());
+        assert!(parse_hotkey("Ctrl+").is_err());
+        assert!(parse_hotkey("Ctrl+F25").is_err());
+        assert!(parse_hotkey("Ctrl+F0").is_err());
+        assert!(parse_hotkey("Ctrl+F01").is_err());
+        assert!(parse_hotkey("Hyper+G").is_err());
+        assert!(parse_hotkey("Ctrl+Space").is_err());
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn update_hit_mask(
@@ -357,7 +550,7 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                     (unsafe { GetWindowRect(hwnd as _, &mut r) } != 0)
                         .then_some((r.left, r.top, r.right - r.left, r.bottom - r.top))
                 };
-                let want = {
+                let want = if game_mode() { true } else {
                     let Ok(map) = state.lock() else { continue };
                     match want_ignore_at(map.get(label), (pt.x, pt.y), rect) {
                         Some(w) => w,
@@ -824,6 +1017,7 @@ fn main() {
             show_settings,
             sync_click_through_menu,
             sync_top_menu,
+            set_game_mode_hotkey,
             show_records,
             show_update,
             current_update_payload,
@@ -892,6 +1086,9 @@ fn main() {
             // 托盘不依赖人物命中，可切换穿透、恢复可见度或打开设置。
             let click_through =
                 CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
+            let game = CheckMenuItem::with_id(
+                app, "game_mode", game_mode_menu_text(""), true, false, None::<&str>,
+            )?;
             let reset_opacity =
                 MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
@@ -901,11 +1098,25 @@ fn main() {
                 app,
                 &[
                     &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
-                    &reset_opacity, &sep2, &about, &quit,
+                    &game, &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
             app.manage(click_through.clone());
             app.manage(TopMenuItem(top.clone()));
+            app.manage(GameModeMenuItem(game.clone()));
+            app.manage(GameModeHotkey::default());
+            // 先注册默认键；pet 前端加载设置后按用户保存的快捷键替换。
+            #[cfg(windows)]
+            match spawn_game_mode_hotkey(app.handle().clone()) {
+                Ok(thread) => {
+                    app.manage(thread);
+                    if let Err(error) = set_game_mode_hotkey(app.handle().clone(), DEFAULT_GAME_MODE_HOTKEY.into()) {
+                        eprintln!("[game-mode] register default hotkey failed: {error}");
+                        let _ = game.set_text(game_mode_menu_text(""));
+                    }
+                }
+                Err(error) => eprintln!("[game-mode] hotkey thread failed: {error}"),
+            }
 
             let icon = app
                 .default_window_icon()
@@ -964,6 +1175,11 @@ fn main() {
                             "tray-action",
                             json!({ "action": "full-click-through", "value": new_val }),
                         );
+                    }
+                    "game_mode" => {
+                        // muda 已先切换勾选；按勾选值设置，不能再次反转。
+                        let on = app.state::<GameModeMenuItem>().0.is_checked().unwrap_or(false);
+                        set_game_mode(app, on);
                     }
                     "reset_opacity" => {
                         let _ = app.emit_to(

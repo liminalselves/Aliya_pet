@@ -192,6 +192,67 @@ function switchRow(
   return input;
 }
 
+/** KeyboardEvent → 快捷键文本（与壳侧 parse_hotkey 同格式）；纯修饰键或不支持的键返回 null。 */
+function hotkeyFromEvent(e: KeyboardEvent): string | null {
+  const m = /^(?:Key([A-Z])|Digit([0-9])|(F(?:[1-9]|1[0-9]|2[0-4])))$/.exec(e.code);
+  if (!m) return null;
+  const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win'].filter(Boolean);
+  return [...mods, m[1] ?? m[2] ?? m[3]].join('+');
+}
+
+/** 游戏模式快捷键录制行：点按钮后按下组合键；Esc 取消，Backspace/Delete 清除。
+ *  先经壳注册，成功才保存，被占用时保留原快捷键并提示。 */
+function gameModeHotkeyRow(parent: HTMLElement): void {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const lab = document.createElement('div');
+  lab.className = 'label';
+  lab.textContent = '游戏模式快捷键';
+  const sub = document.createElement('span');
+  sub.className = 'sub';
+  sub.textContent = '游戏模式下桌宠和聊天窗口完全不接收鼠标，不会抢走游戏的键盘焦点。也可从托盘切换。字母和数字需搭配 Ctrl / Alt / Shift / Win。';
+  lab.appendChild(sub);
+  const btn = document.createElement('button');
+  btn.className = 'act';
+  btn.style.flex = '0 0 auto';
+  btn.style.padding = '8px 18px';
+  let recording = false;
+  const show = () => { btn.textContent = recording ? '请按下快捷键…' : (settings.gameModeHotkey || '未设置'); };
+  const stop = () => { recording = false; window.removeEventListener('keydown', onKey, true); show(); };
+  const commit = async (hotkey: string) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const label = await invoke<string>('set_game_mode_hotkey', { hotkey });
+      update({ gameModeHotkey: label });
+      showToast(label ? `游戏模式快捷键已设为 ${label}` : '已清除游戏模式快捷键', { kind: 'success' });
+    } catch (error) {
+      showToast(`设置失败：${String(error)}`, { kind: 'error' });
+    }
+    show();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') { stop(); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { stop(); void commit(''); return; }
+    const hotkey = hotkeyFromEvent(e);
+    if (!hotkey) return; // 只按了修饰键，继续等主键
+    stop();
+    void commit(hotkey);
+  };
+  btn.addEventListener('click', () => {
+    if (recording) { stop(); return; }
+    recording = true;
+    window.addEventListener('keydown', onKey, true);
+    show();
+  });
+  btn.addEventListener('blur', () => { if (recording) stop(); });
+  refs.gameModeHotkeyShow = show;
+  show();
+  row.append(lab, btn);
+  parent.appendChild(row);
+}
+
 // 控件引用（外部广播时刷新）
 const refs: {
   autoActions?: HTMLInputElement;
@@ -210,6 +271,7 @@ const refs: {
   petOpacityVal?: HTMLSpanElement;
   fullClickThrough?: HTMLInputElement;
   pendantEnabled?: HTMLInputElement;
+  gameModeHotkeyShow?: () => void;
   pendantScaleShow?: (v: number) => void;
   pendantRopeShow?: (v: number) => void;
   scaleSlider?: HTMLInputElement;
@@ -260,6 +322,7 @@ function refreshControls(): void {
   if (refs.showCatEars) refs.showCatEars.checked = settings.showCatEars;
   if (refs.showChatButton) refs.showChatButton.checked = settings.showChatButton;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
+  refs.gameModeHotkeyShow?.();
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
   if (refs.scaleSlider) {
     refs.scaleSlider.value = String(scalePercent(settings.scale));
@@ -841,6 +904,7 @@ if (platform === 'android') {
     () => settings.snapEdges,
     (v) => update({ snapEdges: v })
   );
+  if (platform === 'tauri') gameModeHotkeyRow(box);
   const reset = document.createElement('button');
   reset.className = 'act wide';
   reset.textContent = '位置重置（移回主屏幕中央）';
