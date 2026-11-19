@@ -67,6 +67,8 @@ class ShellBridge(private val host: Host) {
         /** 设置页动作 JSON（tray-action 形状）：壳转发给桌宠 WebView 执行。 */
         fun notifyPetAction(json: String) {}
         fun saveDownload(name: String, mime: String, base64: String) {}
+        /** 短促触觉震动反馈（如抚摸头部）：时长 ms，强度 1..255（0=默认强度）。 */
+        fun vibrate(durationMs: Int, amplitude: Int) {}
 
     }
 
@@ -167,6 +169,11 @@ class ShellBridge(private val host: Host) {
     @JavascriptInterface
     fun notifyPetAction(json: String) {
         main.post { host.notifyPetAction(json) }
+    }
+
+    @JavascriptInterface
+    fun vibrate(durationMs: Int, amplitude: Int) {
+        host.vibrate(durationMs, amplitude)
     }
 
 }

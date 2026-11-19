@@ -10,6 +10,7 @@ import { HitAreas } from './hit-areas';
 import {
   PettingController,
   PettingDialogueHost,
+  type PettingHapticPulse,
   type DailyInteractionPersistence,
 } from './petting-controller';
 import { PointerContext } from './petting-recognizer';
@@ -96,6 +97,7 @@ export class InteractionService {
     pettingHost: PettingDialogueHost;
     persistence?: DailyInteractionPersistence;
     onInteraction?: (event: PetInteractionEvent) => void;
+    onHaptic?: (pulse: PettingHapticPulse) => void;
     random?: () => number;
   }) {
     this.hitAreas = deps.hitAreas;
@@ -108,6 +110,7 @@ export class InteractionService {
       getTarget: deps.getTarget,
       host: deps.pettingHost,
       persistence: deps.persistence,
+      onHaptic: deps.onHaptic,
       react: (trigger, exclude) => this.react(trigger, { exclude }),
     });
     this.petting.onStageEvent = (stage) => this._onInteraction?.({ kind: 'petting', stage });

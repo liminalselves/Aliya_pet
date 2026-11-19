@@ -44,6 +44,13 @@ export interface PettingDialogueHost {
   isDialogueActive(): boolean;
 }
 
+/** 抚摸触觉震动脉冲描述（由 Android 等支持震动的端消费）。 */
+export interface PettingHapticPulse {
+  kind: 'start' | 'stroke' | 'reverse';
+  durationMs: number;
+  amplitude: number;
+}
+
 /** 播放触发键下的反应组；返回说出的台词 id（没说话为 null）。 */
 export type PettingReact = (trigger: string, excludeIds: Set<string>) => string | null;
 
@@ -210,10 +217,18 @@ export class PettingController {
 
   private _lastLookAtReduction = false;
 
+  // 触觉震动节律跟踪
+  private _hapticLastMs = 0;
+  private _hapticLastX = 0;
+  private _hapticLastY = 0;
+  private _hapticAccumPx = 0;
+
   /** 抚摸会话结束回调（上层用于收尾光标等）。 */
   onSessionEnded: ((reason: PettingEndReason) => void) | null = null;
   /** 抚摸阶段事件通知（用于 PetAI 观察）。 */
   onStageEvent: ((stage: 'start' | 'soft' | 'active' | 'fast' | 'long' | 'repeat' | 'end') => void) | null = null;
+  /** 抚摸触觉震动回调（用于移动端短促反馈）。 */
+  onHaptic: ((pulse: PettingHapticPulse) => void) | null = null;
 
   constructor(deps: {
     hitAreas: HitAreas;
@@ -221,11 +236,13 @@ export class PettingController {
     host: PettingDialogueHost;
     react: PettingReact;
     persistence?: DailyInteractionPersistence;
+    onHaptic?: (pulse: PettingHapticPulse) => void;
   }) {
     this._hitAreas = deps.hitAreas;
     this._getTarget = deps.getTarget;
     this._host = deps.host;
     this._react = deps.react;
+    this.onHaptic = deps.onHaptic ?? null;
     this.dailyState = new DailyInteractionState(deps.persistence);
   }
 
@@ -259,14 +276,15 @@ export class PettingController {
 
     if (this.state === 'pressed' || this.state === 'petting') {
       const result = this.recognizer.update(ctx);
+      const now = performance.now();
       const moved = Math.hypot(ctx.pxX - this._lastRawPxX, ctx.pxY - this._lastRawPxY) >= 1.5;
       if (moved) {
         this._lastRawPxX = ctx.pxX;
         this._lastRawPxY = ctx.pxY;
-        this._lastInputMs = performance.now();
+        this._lastInputMs = now;
       }
       if (result.directionReversed && this.state === 'petting') {
-        this._lastInputMs = performance.now();
+        this._lastInputMs = now;
       }
       if (this.state === 'petting' || result.isValid) {
         if (moved || result.isValid || result.directionReversed) {
@@ -275,11 +293,18 @@ export class PettingController {
       }
       if (result.isValid && this.state === 'pressed') {
         this._recognized = true;
-        this._sessionStartMs = performance.now();
-        this._lastInputMs = this._sessionStartMs;
+        this._sessionStartMs = now;
+        this._lastInputMs = now;
         this._beginEyeClose(); // 识别到抚摸手势（按住并滑动）后闭眼
         this._setState('petting');
         this._onPettingStarted();
+        this._hapticLastX = ctx.pxX;
+        this._hapticLastY = ctx.pxY;
+        this._hapticAccumPx = 0;
+        this._hapticLastMs = now;
+        this._emitHaptic('start', result.smoothedVelX);
+      } else if (this.state === 'petting') {
+        this._updatePettingHaptic(ctx, result.directionReversed, result.smoothedVelX, now);
       }
       return true;
     }
@@ -469,6 +494,10 @@ export class PettingController {
     this._eyeOverrideActive = false;
     this._pettingActive = false;
     this._lastDir = 0;
+    this._hapticLastMs = 0;
+    this._hapticLastX = 0;
+    this._hapticLastY = 0;
+    this._hapticAccumPx = 0;
     this._applyLookAtReduction(false, true);
     const target = this._getTarget();
     if (target) {
@@ -708,6 +737,54 @@ export class PettingController {
 
   private _setState(next: PettingState): void {
     this.state = next;
+  }
+
+  private _updatePettingHaptic(
+    ctx: PointerContext,
+    directionReversed: boolean,
+    velX: number,
+    now: number
+  ): void {
+    const stepPx = Math.hypot(ctx.pxX - this._hapticLastX, ctx.pxY - this._hapticLastY);
+    this._hapticLastX = ctx.pxX;
+    this._hapticLastY = ctx.pxY;
+    // 忽略手指静止时的亚像素传感器抖动
+    if (stepPx >= 1.0) this._hapticAccumPx += stepPx;
+
+    const elapsed = now - this._hapticLastMs;
+    if (directionReversed && elapsed >= 42 && this._hapticAccumPx >= 5) {
+      this._hapticAccumPx = 0;
+      this._hapticLastMs = now;
+      this._emitHaptic('reverse', velX);
+      return;
+    }
+    if (elapsed >= 45 && this._hapticAccumPx >= 11) {
+      this._hapticAccumPx = 0;
+      this._hapticLastMs = now;
+      this._emitHaptic('stroke', velX);
+    }
+  }
+
+  private _emitHaptic(kind: PettingHapticPulse['kind'], velX: number): void {
+    if (!this.onHaptic) return;
+    const speedNorm = Math.min(1, Math.max(0, (Math.abs(velX) - 60) / 260));
+    if (kind === 'start') {
+      this.onHaptic({ kind, durationMs: 16, amplitude: 90 });
+      return;
+    }
+    if (kind === 'reverse') {
+      this.onHaptic({
+        kind,
+        durationMs: Math.round(12 + speedNorm * 3),
+        amplitude: Math.round(80 + speedNorm * 35),
+      });
+      return;
+    }
+    this.onHaptic({
+      kind,
+      durationMs: Math.round(10 + speedNorm * 3),
+      amplitude: Math.round(55 + speedNorm * 45),
+    });
   }
 
   private static _clampHead(min: number, max: number, v: number): number {

@@ -678,3 +678,68 @@ test('还原原版耳朵判定：触控抚摸起手仅认 head_pet_zone、悬停
   for (let i = 0; i < 12; i++) h.advance(16); // ~512ms > 420ms
   assert.equal(h.writes.eyes[0], false, '完整 420ms 播完后才释放眼覆盖');
 });
+
+test('抚摸触觉震动：轻点不震，识别后按往返与滑动节律震动，静止不持续嗡鸣', () => {
+  let now = 1000;
+  const globals = { performance: { now: () => now } };
+  const recognizer = load('interaction/petting-recognizer', {}, globals);
+  const procedural = load('interaction/procedural', {}, globals);
+  const petting = load('interaction/petting-controller', { './petting-recognizer': recognizer }, globals);
+  const { InteractionService } = load('interaction/interaction', {
+    './petting-controller': petting, './procedural': procedural,
+  }, globals);
+  const target = {
+    getInteractionParamInfo: () => ({
+      angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
+      angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
+      eyeLMin: 0, eyeLMax: 1, eyeRMin: 0, eyeRMax: 1, hasEyes: true,
+    }),
+    setInteractionOffsets() {}, setEyeOverride() {},
+    setPettingLookAtReduction() {}, setEarInteraction() {}, setFaceCheek() {},
+  };
+  const haptics = [];
+  const s = new InteractionService({
+    hitAreas: { hitAreaAt: () => 'head', isInHeadPetZone: () => true, mirrored: false },
+    getTarget: () => target,
+    reactions: reactionStub(),
+    host: reactionHost(),
+    pettingHost: { isDialogueActive: () => false },
+    onHaptic: pulse => haptics.push(pulse),
+  });
+  const ctx = (x, y = 200) => ({
+    normX: 0.5, normY: 0.2, pxX: x, pxY: y, dtSeconds: 1 / 60, leftPressed: false, isSecondary: true, pointerType: 'touch',
+  });
+
+  // 1) 轻点头部（仅 pressed + tiny move + up）：不触发抚摸震动
+  s.onPointerDown(ctx(400));
+  now += 16;
+  s.onPointerMove(ctx(403));
+  s.onPointerUp(ctx(403));
+  assert.equal(haptics.length, 0, '轻点未进入抚摸不应触发震动');
+
+  // 2) 进入抚摸：先发 start，之后往返划动触发 stroke / reverse
+  s.onPointerDown(ctx(400));
+  for (let i = 1; i <= 75; i++) {
+    now += 1000 / 60;
+    const x = 400 + 36 * Math.sin((i / 60) * Math.PI * 2);
+    s.onPointerMove(ctx(x));
+    s.tick(1000 / 60);
+  }
+  assert.equal(s.petting.state, 'petting');
+  assert.equal(haptics[0]?.kind, 'start', '识别成抚摸时触发 start 脉冲');
+  const strokeOrRev = haptics.slice(1).filter(p => p.kind === 'stroke' || p.kind === 'reverse');
+  assert.ok(strokeOrRev.length >= 6, `连续往返应触发密集且节律性的滑动/换向震动，实际=${haptics.length}`);
+  assert.ok(haptics.every(p => p.durationMs >= 10 && p.durationMs <= 20 && p.amplitude > 0 && p.amplitude <= 120),
+    '震动强度与时长保持短促有质感');
+
+  // 3) 手指停在最后位置（静止或亚像素抖动 <1px）：不应继续累加触发震动
+  const idleX = 400 + 36 * Math.sin((75 / 60) * Math.PI * 2);
+  const countBeforeIdle = haptics.length;
+  for (let i = 0; i < 60; i++) {
+    now += 20;
+    s.onPointerMove(ctx(idleX + (i % 2) * 0.4, 200));
+  }
+  assert.equal(haptics.length, countBeforeIdle, '手指静止或亚像素抖动不应继续震动');
+
+  s.onPointerUp(ctx(idleX));
+});

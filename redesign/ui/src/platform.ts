@@ -48,6 +48,8 @@ export interface AndroidShell {
   notifySettings(json: string): void;
   /** 设置页动作转发（play-action/express/set-state 等 tray-action 形状 JSON）给桌宠页。 */
   notifyPetAction(json: string): void;
+  /** 短促触觉震动反馈（Android 线性/普通马达）：时长 ms，强度 1..255（0=默认强度）。 */
+  vibrate?(durationMs: number, amplitude: number): void;
 }
 
 export interface WindowMetrics {

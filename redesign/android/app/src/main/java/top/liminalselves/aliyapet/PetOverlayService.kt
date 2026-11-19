@@ -703,6 +703,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     override fun openUrl(url: String) = ShellBridgeHostDefaults.openUrl(this, url)
+    override fun vibrate(durationMs: Int, amplitude: Int) {
+        if (windowAttached && !screenOff) ShellBridgeHostDefaults.vibrate(this, durationMs, amplitude)
+    }
     override fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(this)
     override fun setAutoStart(on: Boolean) = ShellPrefs.setAutoStart(this, on)
     override fun isAutoStart(): Boolean = ShellPrefs.getAutoStart(this)

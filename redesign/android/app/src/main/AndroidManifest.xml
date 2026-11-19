@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 抚摸触觉反馈 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 不声明 CAMERA 权限：ACTION_IMAGE_CAPTURE 由系统相机应用拍摄，本应用无需运行时授权。 -->
     <queries>
         <intent>

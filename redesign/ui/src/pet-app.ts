@@ -464,6 +464,14 @@ export class PetApp {
         save: (stats) => saveDailyInteractionStats(stats),
       },
       onInteraction: (ev: PetInteractionEvent) => this._ai?.emitInteraction(ev),
+      onHaptic: (pulse) => {
+        if (platform !== 'android') return;
+        try {
+          androidShell()?.vibrate?.(Math.round(pulse.durationMs), Math.round(pulse.amplitude));
+        } catch {
+          // 旧版壳桥未注入 vibrate 时静默跳过
+        }
+      },
     });
 
     this._behavior = new BehaviorService(() =>
