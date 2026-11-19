@@ -32,6 +32,7 @@ import {
 } from './platform';
 import { ACTIONS, EXPRESSIONS, STATES } from './catalog';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
+import { MskClient, type MskSession } from './chat/msk/client';
 import { mountAgentControls, type AgentControlHandle } from './chat/msk/control-drawer';
 import {
   AUTO_BACKGROUND,
@@ -50,6 +51,8 @@ import { openUpdateModal } from './update/dialog';
 import {
   DEFAULT_SETTINGS_TAB,
   getSettingsTabs,
+  isExplicitOpenTarget,
+  isValidSettingsTab,
   resolveOpenTarget,
   type SettingsTabId,
 } from './settings/navigation';
@@ -142,11 +145,17 @@ function trayAction(action: string, extra?: Record<string, unknown>): void {
  * Android 设置页整屏盖住桌宠，发出后先让按钮确认一拍，再滑回主界面让用户看到表演。
  * 桌宠页在设置页下面持续运行，动作在滑出过程中已开始播放。
  */
+const STAGE_AUTO_RETURN_KEY = 'aliya_stage_auto_return';
+const SETTINGS_LAST_TAB_KEY = 'aliya_settings_tab';
+let stageAutoReturn = (() => {
+  try { return localStorage.getItem(STAGE_AUTO_RETURN_KEY) !== '0'; } catch { return true; }
+})();
+
 let returning = 0;
 function perform(button: HTMLElement, action: string, extra?: Record<string, unknown>): void {
   trayAction(action, extra);
   pulse(button);
-  if (platform !== 'android' || returning) return;
+  if (platform !== 'android' || !stageAutoReturn || returning) return;
   returning = window.setTimeout(() => {
     returning = 0;
     shellAction('open-main');
@@ -159,6 +168,30 @@ function pulse(button: HTMLElement): void {
   void button.offsetWidth;
   button.classList.add('sent');
   window.setTimeout(() => button.classList.remove('sent'), 700);
+}
+
+/** 破坏性操作二次确认：首次点击切换提示并 3 秒内自动复位，第二次才真正执行。 */
+function armTwoStepButton(button: HTMLButtonElement, confirmLabel: string, onConfirm: () => void): void {
+  const idleLabel = button.textContent ?? '';
+  let timer = 0;
+  const disarm = () => {
+    if (timer) { clearTimeout(timer); timer = 0; }
+    button.dataset.confirm = '';
+    button.textContent = idleLabel;
+    button.classList.remove('confirming');
+  };
+  button.addEventListener('click', () => {
+    if (button.dataset.confirm !== '1') {
+      button.dataset.confirm = '1';
+      button.textContent = confirmLabel;
+      button.classList.add('confirming');
+      if (timer) clearTimeout(timer);
+      timer = window.setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    onConfirm();
+  });
 }
 
 // ---------- 页面骨架（左侧导航 / 顶部横向标签 + 模块化卡片容器） ----------
@@ -240,8 +273,14 @@ const revealNavTab = (tab: HTMLElement) => {
   }
 };
 
-function selectTab(id: SettingsTabId, options: { animate?: boolean; focusTab?: boolean } = {}): void {
+function selectTab(
+  id: SettingsTabId,
+  options: { animate?: boolean; focusTab?: boolean; persist?: boolean } = {}
+): void {
   activeTab = id;
+  if (options.persist !== false) {
+    try { localStorage.setItem(SETTINGS_LAST_TAB_KEY, id); } catch { /* ignore */ }
+  }
   for (const [tabId, btn] of tabButtons) {
     const on = tabId === id;
     btn.classList.toggle('active', on);
@@ -267,6 +306,7 @@ function selectTab(id: SettingsTabId, options: { animate?: boolean; focusTab?: b
       panel.classList.add('enter');
     }
   }
+  if (id === 'chat') refs.chatEnter?.();
 }
 
 for (const tab of tabs) {
@@ -363,9 +403,11 @@ const refs: {
   pendantRope?: SliderRowHandle;
   syncPendantRows?: () => void;
   gameModeHotkeyShow?: () => void;
+  syncGameMode?: (enabled: boolean) => void;
   scaleControl?: SliderRowHandle;
   chatBgDim?: SliderRowHandle;
   chatBgSync?: () => void;
+  chatEnter?: () => void;
 } = {};
 
 // 缩放显示域：设备允许的实际范围 [scaleRangeMin, scaleRangeMax] 线性映射到
@@ -409,6 +451,16 @@ function refreshControls(): void {
   refs.chatBgSync?.();
 }
 
+let gameModeEnabled = false;
+let gameModeEpoch = 0;
+
+function applyGameModeState(enabled: boolean): void {
+  gameModeEnabled = enabled;
+  refs.syncGameMode?.(enabled);
+}
+
+let hotkeyRecordingActive = false;
+
 /** 游戏模式快捷键录制行：点按钮后按下组合键；Esc 取消，Backspace/Delete 清除。
  *  先经壳注册，成功才保存，被占用时保留原快捷键并提示。 */
 function gameModeHotkeyRow(parent: HTMLElement): void {
@@ -433,6 +485,7 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
   };
   const stop = () => {
     recording = false;
+    hotkeyRecordingActive = false;
     window.removeEventListener('keydown', onKey, true);
     show();
   };
@@ -461,8 +514,14 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
       void commit('');
       return;
     }
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
     const hotkey = hotkeyFromEvent(e);
-    if (!hotkey) return;
+    if (!hotkey) {
+      showToast('不支持该按键，请按字母/数字（需搭配 Ctrl/Alt/Shift/Win）或 F1–F24', {
+        kind: 'error',
+      });
+      return;
+    }
     stop();
     void commit(hotkey);
   };
@@ -472,6 +531,7 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
       return;
     }
     recording = true;
+    hotkeyRecordingActive = true;
     window.addEventListener('keydown', onKey, true);
     show();
   });
@@ -533,6 +593,18 @@ function refreshStateHighlight(): void {
   }
   motionCard.body.appendChild(motionGrid);
   createWideAction(motionCard.body, '随机说一句', (b) => perform(b, 'random-speech'));
+  if (platform === 'android') {
+    createSwitchRow(
+      motionCard.body,
+      '点击后自动回到主界面',
+      '触发动作、表情或状态后自动返回桌宠画面；关闭后可留在设置里连续试放',
+      () => stageAutoReturn,
+      (v) => {
+        stageAutoReturn = v;
+        try { localStorage.setItem(STAGE_AUTO_RETURN_KEY, v ? '1' : '0'); } catch { /* ignore */ }
+      }
+    );
+  }
 
   // 卡片 2：表情
   const exprCard = createCard(group, {
@@ -869,7 +941,10 @@ function refreshStateHighlight(): void {
       () => false,
       (v) => {
         void setAutoStart(v).then(async (ok) => {
-          if (!ok && refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+          if (!ok) {
+            if (refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+            showToast('设置开机自启失败，请检查系统权限', { kind: 'error' });
+          }
         });
       }
     ).input;
@@ -977,7 +1052,45 @@ function refreshStateHighlight(): void {
       title: '快捷与系统',
       desc: '全局快捷键、启动项与帧率控制',
     });
-    if (platform === 'tauri') gameModeHotkeyRow(sysCard.body);
+    let gameModeInput: HTMLInputElement | null = null;
+    if (platform === 'tauri') {
+      const syncGameModeCard = (enabled: boolean) => {
+        if (gameModeInput) gameModeInput.checked = enabled;
+        sysCard.setBadge(enabled ? '游戏模式中' : '', enabled ? 'warning' : 'neutral');
+      };
+      refs.syncGameMode = syncGameModeCard;
+      gameModeInput = createSwitchRow(
+        sysCard.body,
+        '游戏模式',
+        '开启后桌宠与聊天完全穿透且自动收起聊天窗，避免打游戏时误点抢焦点',
+        () => gameModeEnabled,
+        (v) => {
+          const opEpoch = ++gameModeEpoch;
+          const prev = gameModeEnabled;
+          applyGameModeState(v);
+          void import('@tauri-apps/api/core')
+            .then((m) => m.invoke('set_game_mode_enabled', { enabled: v }))
+            .then(() => {
+              if (gameModeEpoch === opEpoch) applyGameModeState(v);
+              if (gameModeEnabled === v) showToast(v ? '已开启游戏模式' : '已退出游戏模式');
+            })
+            .catch(() => {
+              if (gameModeEpoch === opEpoch) applyGameModeState(prev);
+              showToast('切换游戏模式失败', { kind: 'error' });
+            });
+        }
+      ).input;
+      syncGameModeCard(gameModeEnabled);
+      const initEpoch = gameModeEpoch;
+      void import('@tauri-apps/api/core')
+        .then((m) => m.invoke<boolean>('get_game_mode'))
+        .then((enabled) => {
+          if (gameModeEpoch !== initEpoch) return;
+          applyGameModeState(Boolean(enabled));
+        })
+        .catch(() => {});
+      gameModeHotkeyRow(sysCard.body);
+    }
     refs.autoStart = createSwitchRow(
       sysCard.body,
       '开机自启',
@@ -986,7 +1099,10 @@ function refreshStateHighlight(): void {
       (v) => {
         // 设置失败时回读系统真实状态，避免开关停在未生效的位置。
         void setAutoStart(v).then(async (ok) => {
-          if (!ok && refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+          if (!ok) {
+            if (refs.autoStart) refs.autoStart.checked = (await isAutoStart()) === true;
+            showToast('设置开机自启失败，请检查系统权限', { kind: 'error' });
+          }
         });
       }
     ).input;
@@ -1027,46 +1143,400 @@ let agentControls!: AgentControlHandle;
   accountCard.body.appendChild(statusRow);
 
   const sessionRow = document.createElement('div');
-  sessionRow.className = 'row';
+  sessionRow.className = 'row session-row';
   const sessionLab = document.createElement('div');
   sessionLab.className = 'label';
   sessionLab.textContent = '当前会话';
   const sessionSub = document.createElement('span');
   sessionSub.className = 'sub';
   sessionLab.appendChild(sessionSub);
-  sessionRow.appendChild(sessionLab);
+
+  const sessionControls = document.createElement('div');
+  sessionControls.className = 'session-controls';
+  sessionControls.hidden = true;
+  const sessionSelect = document.createElement('select');
+  sessionSelect.className = 'session-select';
+  sessionSelect.setAttribute('aria-label', '选择当前会话');
+  const renameSessionBtn = document.createElement('button');
+  renameSessionBtn.type = 'button';
+  renameSessionBtn.className = 'act';
+  renameSessionBtn.textContent = '重命名';
+  const refreshSessionsBtn = document.createElement('button');
+  refreshSessionsBtn.type = 'button';
+  refreshSessionsBtn.className = 'act';
+  refreshSessionsBtn.textContent = '刷新';
+  const createSessionBtn = document.createElement('button');
+  createSessionBtn.type = 'button';
+  createSessionBtn.className = 'act';
+  createSessionBtn.textContent = '新建会话';
+  sessionControls.append(sessionSelect, renameSessionBtn, refreshSessionsBtn, createSessionBtn);
+
+  const renameRow = document.createElement('form');
+  renameRow.className = 'session-rename-row';
+  renameRow.hidden = true;
+  const renameInput = document.createElement('input');
+  renameInput.type = 'text';
+  renameInput.className = 'session-rename-input';
+  renameInput.maxLength = 80;
+  renameInput.placeholder = '输入新的会话名称';
+  renameInput.setAttribute('aria-label', '新的会话名称');
+  const renameSaveBtn = document.createElement('button');
+  renameSaveBtn.type = 'submit';
+  renameSaveBtn.className = 'act';
+  renameSaveBtn.textContent = '保存';
+  const renameCancelBtn = document.createElement('button');
+  renameCancelBtn.type = 'button';
+  renameCancelBtn.className = 'act';
+  renameCancelBtn.textContent = '取消';
+  renameRow.append(renameInput, renameSaveBtn, renameCancelBtn);
+
+  sessionRow.append(sessionLab, sessionControls, renameRow);
   accountCard.body.appendChild(sessionRow);
 
-  const refreshChatInfo = () => {
+  type SavedSessionMeta = {
+    id?: string;
+    name?: string;
+    characterId?: string;
+    characterName?: string;
+  };
+  let cachedSessionKey = '';
+  let sessionList: MskSession[] = [];
+  let loadingSessions = false;
+  let creatingSession = false;
+  let renamingSession = false;
+  let renameOpen = false;
+  let renameTargetId = '';
+  let sessionFetchError = false;
+  let sessionFetchAbort: AbortController | null = null;
+  let sessionFetchEpoch = 0;
+  let lastSessionFetchAt = 0;
+
+  const readAuthAndSession = (): {
+    token: string;
+    user: { id?: string; username?: string; name?: string } | null;
+    saved: SavedSessionMeta | null;
+  } => {
     let token = '';
     let user: { id?: string; username?: string; name?: string } | null = null;
+    let saved: SavedSessionMeta | null = null;
     try {
       token = localStorage.getItem(MSK_TOKEN_KEY) ?? '';
       user = JSON.parse(localStorage.getItem(MSK_USER_KEY) ?? 'null');
+      if (user?.id) {
+        saved = JSON.parse(localStorage.getItem(mskSessionKey(user.id)) ?? 'null') as SavedSessionMeta | null;
+      }
     } catch {
       // 存储不可用时按未连接显示
     }
+    return { token, user, saved };
+  };
+
+  const persistSelectedSession = (userId: string, session: MskSession): string => {
+    const displayName = session.name || session.characterName || 'Aliya';
+    try {
+      localStorage.setItem(
+        mskSessionKey(userId),
+        JSON.stringify({
+          id: session.id,
+          name: displayName,
+          characterId: session.characterId,
+          characterName: session.characterName || 'Aliya',
+        })
+      );
+    } catch {
+      // 存储受限时保留内存状态
+    }
+    return displayName;
+  };
+
+  const closeRenameRow = () => {
+    renameOpen = false;
+    renameTargetId = '';
+    renameRow.hidden = true;
+    renameInput.value = '';
+  };
+
+  const renderSessionSelect = (saved: SavedSessionMeta | null, connected: boolean) => {
+    sessionSelect.replaceChildren();
+    if (!connected) {
+      sessionSelect.disabled = true;
+      return;
+    }
+    const sorted = [...sessionList].sort((a, b) =>
+      (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? '')
+    );
+    const savedId = typeof saved?.id === 'string' ? saved.id : '';
+    const hasSavedInList = Boolean(savedId && sorted.some((s) => s.id === savedId));
+
+    if (!sorted.length) {
+      if (savedId) {
+        const opt = document.createElement('option');
+        opt.value = savedId;
+        opt.textContent = saved?.name || 'Aliya';
+        sessionSelect.appendChild(opt);
+        sessionSelect.value = savedId;
+        sessionSelect.disabled = creatingSession || renamingSession;
+      } else {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = loadingSessions ? '正在读取会话…' : sessionFetchError ? '读取失败，请点刷新' : '暂无会话（可点击新建）';
+        sessionSelect.appendChild(opt);
+        sessionSelect.disabled = true;
+      }
+      return;
+    }
+
+    if (!hasSavedInList) {
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      placeholder.textContent = savedId
+        ? `${saved?.name || '原会话'}（已失效，请重选）`
+        : '请选择会话…';
+      sessionSelect.appendChild(placeholder);
+    }
+
+    for (const s of sorted) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      const title = s.name || s.characterName || 'Aliya';
+      opt.textContent = s.hasUnread ? `${title} · 未读` : title;
+      sessionSelect.appendChild(opt);
+    }
+    if (hasSavedInList) sessionSelect.value = savedId;
+    sessionSelect.disabled = creatingSession || renamingSession;
+  };
+
+  const refreshChatInfo = () => {
+    const { token, user, saved } = readAuthAndSession();
     const name = user?.name || user?.username || '';
-    const connected = Boolean(token && name);
+    const connected = Boolean(token && user?.id && name);
+    const key = connected ? `${token}:${user!.id}` : '';
+    if (key !== cachedSessionKey) {
+      sessionFetchAbort?.abort();
+      sessionFetchAbort = null;
+      sessionFetchEpoch++;
+      cachedSessionKey = key;
+      sessionList = [];
+      loadingSessions = false;
+      sessionFetchError = false;
+      lastSessionFetchAt = 0;
+      closeRenameRow();
+    }
+
+    const activeId = typeof saved?.id === 'string' ? saved.id : '';
+    const canRename = connected && Boolean(activeId) && !creatingSession && !renamingSession;
+    if (renameOpen && (!connected || !activeId || (renameTargetId && renameTargetId !== activeId))) {
+      closeRenameRow();
+    }
+
     statusSub.textContent = connected ? `已连接：${name}` : '未连接（在聊天窗口中授权）';
     logoutBtn.hidden = !token;
     accountCard.setBadge(connected ? '已连接' : '未连接', connected ? 'success' : 'neutral');
+    sessionControls.hidden = !connected;
+    renameSessionBtn.disabled = !canRename;
+    refreshSessionsBtn.disabled = !connected || loadingSessions || creatingSession || renamingSession;
+    createSessionBtn.disabled = !connected || creatingSession || renamingSession;
+    renameInput.disabled = renamingSession;
+    renameSaveBtn.disabled = renamingSession;
+    renameCancelBtn.disabled = renamingSession;
 
-    let sessionName = '';
-    if (user?.id) {
-      try {
-        const saved = JSON.parse(localStorage.getItem(mskSessionKey(user.id)) ?? 'null') as {
-          name?: string;
-        } | null;
-        sessionName = saved?.name ?? '';
-      } catch {
-        // 无记录
-      }
+    const sessionName = typeof saved?.name === 'string' ? saved.name : '';
+    if (!connected) {
+      sessionSub.textContent = token ? '用户信息缺失，请重新授权' : '—';
+    } else if (loadingSessions && !sessionList.length) {
+      sessionSub.textContent = sessionName ? `${sessionName}（同步列表中…）` : '正在读取会话…';
+    } else if (sessionFetchError && !sessionList.length) {
+      sessionSub.textContent = sessionName ? `${sessionName}（列表读取失败，可点刷新）` : '列表读取失败，请点击刷新';
+    } else {
+      sessionSub.textContent = sessionName || '未选择';
     }
-    sessionSub.textContent = sessionName || (token ? '未选择' : '—');
+    renderSessionSelect(saved, connected);
+    agentControls?.sync();
   };
 
-  logoutBtn.addEventListener('click', () => {
+  const fetchSessions = async (force = false) => {
+    const { token, user } = readAuthAndSession();
+    const userId = user?.id;
+    const name = user?.name || user?.username || '';
+    if (!token || !userId || !name) return;
+    const key = `${token}:${userId}`;
+    if (!force && key === cachedSessionKey && (loadingSessions || (lastSessionFetchAt > 0 && Date.now() - lastSessionFetchAt < 15_000))) {
+      return;
+    }
+    sessionFetchAbort?.abort();
+    const controller = new AbortController();
+    sessionFetchAbort = controller;
+    const epoch = ++sessionFetchEpoch;
+    cachedSessionKey = key;
+    loadingSessions = true;
+    sessionFetchError = false;
+    refreshChatInfo();
+    try {
+      const list = await new MskClient(token).listAliyaSessions(controller.signal);
+      if (epoch !== sessionFetchEpoch || controller.signal.aborted) return;
+      sessionList = list;
+      lastSessionFetchAt = Date.now();
+      sessionFetchError = false;
+    } catch (e) {
+      if (epoch !== sessionFetchEpoch || controller.signal.aborted) return;
+      sessionFetchError = true;
+      if (force) {
+        showToast(e instanceof Error && e.message ? e.message : '读取会话列表失败', { kind: 'error' });
+      }
+    } finally {
+      if (epoch === sessionFetchEpoch) {
+        loadingSessions = false;
+        if (sessionFetchAbort === controller) sessionFetchAbort = null;
+        refreshChatInfo();
+      }
+    }
+  };
+
+  refs.chatEnter = () => {
+    refreshChatInfo();
+    void fetchSessions(false);
+  };
+
+  sessionSelect.addEventListener('change', () => {
+    const id = sessionSelect.value;
+    const { user } = readAuthAndSession();
+    const chosen = sessionList.find((s) => s.id === id);
+    if (!chosen || !user?.id) return;
+    closeRenameRow();
+    const displayName = persistSelectedSession(user.id, chosen);
+    refreshChatInfo();
+    showToast(`已切换会话：${displayName}`, { kind: 'success' });
+  });
+
+  renameSessionBtn.addEventListener('click', () => {
+    if (renamingSession || creatingSession) return;
+    const { saved } = readAuthAndSession();
+    const targetId = typeof saved?.id === 'string' ? saved.id : '';
+    if (!targetId) return;
+    if (renameOpen) {
+      closeRenameRow();
+      return;
+    }
+    const existing = sessionList.find((s) => s.id === targetId);
+    const currentName = existing?.name || saved?.name || existing?.characterName || 'Aliya';
+    renameOpen = true;
+    renameTargetId = targetId;
+    renameRow.hidden = false;
+    renameInput.value = currentName;
+    renameInput.focus();
+    renameInput.select();
+  });
+
+  renameCancelBtn.addEventListener('click', () => {
+    if (!renamingSession) closeRenameRow();
+  });
+
+  renameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.isComposing) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!renamingSession) closeRenameRow();
+    }
+  });
+
+  renameRow.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (renamingSession) return;
+    const { token, user, saved } = readAuthAndSession();
+    const targetId = renameTargetId || (typeof saved?.id === 'string' ? saved.id : '');
+    if (!token || !user?.id || !targetId) return;
+    const trimmed = renameInput.value.trim();
+    if (!trimmed) {
+      renameInput.focus();
+      showToast('请输入会话名称。', { kind: 'error' });
+      return;
+    }
+    const existing = sessionList.find((s) => s.id === targetId);
+    const currentName = existing?.name || saved?.name || '';
+    if (trimmed === currentName) {
+      closeRenameRow();
+      return;
+    }
+    renamingSession = true;
+    renameSaveBtn.textContent = '保存中…';
+    refreshChatInfo();
+    void new MskClient(token)
+      .renameSession(targetId, trimmed)
+      .then((updatedName) => {
+        const latest = readAuthAndSession();
+        if (latest.token !== token || latest.user?.id !== user.id) return;
+        const idx = sessionList.findIndex((s) => s.id === targetId);
+        const updatedSession: MskSession = idx >= 0
+          ? { ...sessionList[idx], name: updatedName }
+          : {
+              id: targetId,
+              name: updatedName,
+              characterId: typeof saved?.characterId === 'string' ? saved.characterId : '',
+              characterName: typeof saved?.characterName === 'string' ? saved.characterName : 'Aliya',
+            };
+        if (idx >= 0) sessionList[idx] = updatedSession;
+        if (latest.saved?.id === targetId) {
+          persistSelectedSession(user.id, updatedSession);
+        }
+        closeRenameRow();
+        showToast(`已重命名为：${updatedName}`, { kind: 'success' });
+      })
+      .catch((err) => {
+        showToast(err instanceof Error && err.message ? err.message : '重命名会话失败', { kind: 'error' });
+      })
+      .finally(() => {
+        renamingSession = false;
+        renameSaveBtn.textContent = '保存';
+        refreshChatInfo();
+      });
+  });
+
+  refreshSessionsBtn.addEventListener('click', () => {
+    void fetchSessions(true);
+  });
+
+  createSessionBtn.addEventListener('click', () => {
+    const { token, user } = readAuthAndSession();
+    if (!token || !user?.id || creatingSession) return;
+    creatingSession = true;
+    createSessionBtn.textContent = '创建中…';
+    refreshChatInfo();
+    void new MskClient(token)
+      .createSession()
+      .then((created) => {
+        const latest = readAuthAndSession();
+        if (latest.token !== token || latest.user?.id !== user.id) return;
+        sessionList = [created, ...sessionList.filter((s) => s.id !== created.id)];
+        cachedSessionKey = `${token}:${user.id}`;
+        lastSessionFetchAt = Date.now();
+        sessionFetchError = false;
+        const displayName = persistSelectedSession(user.id, created);
+        showToast(`已新建并切换到会话：${displayName}`, { kind: 'success' });
+      })
+      .catch((e) => {
+        showToast(e instanceof Error && e.message ? e.message : '新建会话失败', { kind: 'error' });
+      })
+      .finally(() => {
+        creatingSession = false;
+        createSessionBtn.textContent = '新建会话';
+        refreshChatInfo();
+      });
+  });
+
+  armTwoStepButton(logoutBtn, '再点一次确认', () => {
+    sessionFetchAbort?.abort();
+    sessionFetchAbort = null;
+    sessionFetchEpoch++;
+    cachedSessionKey = '';
+    sessionList = [];
+    loadingSessions = false;
+    sessionFetchError = false;
+    lastSessionFetchAt = 0;
+    closeRenameRow();
     try {
       localStorage.removeItem(MSK_TOKEN_KEY);
       localStorage.removeItem(MSK_USER_KEY);
@@ -1075,13 +1545,18 @@ let agentControls!: AgentControlHandle;
     }
     agentControls.close();
     refreshChatInfo();
-    agentControls.sync();
     showToast('已退出登录。', { kind: 'success' });
   });
 
   refreshChatInfo();
-  window.addEventListener('focus', refreshChatInfo);
-  window.addEventListener('storage', refreshChatInfo);
+  window.addEventListener('focus', () => {
+    refreshChatInfo();
+    if (activeTab === 'chat') void fetchSessions(false);
+  });
+  window.addEventListener('storage', () => {
+    refreshChatInfo();
+    if (activeTab === 'chat') void fetchSessions(false);
+  });
 
   const openRecords = async () => {
     if (platform === 'tauri') {
@@ -1273,22 +1748,25 @@ let agentControls!: AgentControlHandle;
       });
     }
 
-    remove.addEventListener('click', async () => {
-      try {
-        await deleteCustomBackground();
-      } catch {
-        /* 已不存在 */
-      }
-      hasCustom = false;
-      if (customUrl) URL.revokeObjectURL(customUrl);
-      customUrl = null;
-      update({
-        chatBackground:
-          settings.chatBackground === CUSTOM_BACKGROUND ? NO_BACKGROUND : settings.chatBackground,
-        chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1,
-      });
-      status.textContent = '';
-      sync();
+    armTwoStepButton(remove, '再点一次删除', () => {
+      void (async () => {
+        try {
+          await deleteCustomBackground();
+        } catch {
+          /* 已不存在 */
+        }
+        hasCustom = false;
+        if (customUrl) URL.revokeObjectURL(customUrl);
+        customUrl = null;
+        update({
+          chatBackground:
+            settings.chatBackground === CUSTOM_BACKGROUND ? NO_BACKGROUND : settings.chatBackground,
+          chatBackgroundRev: (settings.chatBackgroundRev ?? 0) + 1,
+        });
+        status.textContent = '';
+        sync();
+        showToast('已删除自定义背景');
+      })();
     });
     actions.append(replace, remove);
 
@@ -1313,6 +1791,7 @@ let agentControls!: AgentControlHandle;
         });
         status.textContent = '';
         status.remove();
+        showToast('已应用自定义背景', { kind: 'success' });
       } catch (e) {
         status.remove();
         showToast(e instanceof Error && e.message ? e.message : '图片保存失败，请重试', {
@@ -1419,6 +1898,10 @@ let agentControls!: AgentControlHandle;
 // ---------- 外部路由与跨窗口状态同步 ----------
 
 const openTarget = (target: string) => {
+  if (!isExplicitOpenTarget(target)) {
+    agentControls.close();
+    return;
+  }
   const plan = resolveOpenTarget(target);
   selectTab(plan.tab, { animate: true });
   if (plan.openSessionControl) {
@@ -1428,7 +1911,15 @@ const openTarget = (target: string) => {
   agentControls.close();
 };
 
-selectTab(DEFAULT_SETTINGS_TAB, { animate: platform !== 'tauri' });
+const initialTab = (() => {
+  try {
+    const saved = localStorage.getItem(SETTINGS_LAST_TAB_KEY);
+    return isValidSettingsTab(saved) ? saved : DEFAULT_SETTINGS_TAB;
+  } catch {
+    return DEFAULT_SETTINGS_TAB;
+  }
+})();
+selectTab(initialTab, { animate: platform !== 'tauri', persist: false });
 
 if (platform === 'tauri') {
   try {
@@ -1436,9 +1927,18 @@ if (platform === 'tauri') {
     await listen<{ target?: string }>('settings-open', (event) =>
       openTarget(event.payload?.target ?? '')
     );
+    await listen<{ enabled?: boolean }>('game-mode-changed', (event) => {
+      gameModeEpoch += 1;
+      applyGameModeState(Boolean(event.payload?.enabled));
+    });
   } catch {
     /* Browser preview has no Tauri event bus. */
   }
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.isComposing && !hotkeyRecordingActive && !document.querySelector('dialog[open]')) {
+      void import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().hide()).catch(() => {});
+    }
+  });
 }
 window.addEventListener('hashchange', () => openTarget(location.hash.slice(1)));
 if (location.hash) openTarget(location.hash.slice(1));

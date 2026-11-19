@@ -65,19 +65,26 @@ export class FaceCueTrack {
   private _holdMouthUntil = 0;
 
   /**
-   * 开始新时间轴。连续点击重播同一动作时，旧时间轴正显示的眼型/嘴型若在新
-   * 时间轴里还会出现，就一直保持到新区间开始，不先撤回再切回（否则多眨一次眼）。
+   * 开始新时间轴。连续点击或切到另一段带特殊眼型的动作时，直接衔接旧时间轴的眼型/嘴型
+   * 到新区间开始，避免中途闪回普通睁眼再闭合导致多余眨眼。
    */
-  start(spans: readonly FaceCueSpan[]): void {
-    const now = this._spans.length > 0 ? faceAt(this._spans, this._t) : { eye: null, mouth: null };
-    const eyeSpan = now.eye ? spans.find((s) => s.eye === now.eye) : undefined;
+  start(spans: readonly FaceCueSpan[], opts: { eyesClosed?: boolean } = {}): void {
+    const now = this._spans.length > 0 ? this._currentState() : { eye: null, mouth: null };
+    const nextEye = spans.find((s) => Boolean(s.eye));
     const mouthSpan = now.mouth ? spans.find((s) => s.mouth === now.mouth) : undefined;
-    this._holdEye = eyeSpan ? now.eye : null;
-    this._holdEyeUntil = eyeSpan?.from ?? 0;
+    this._holdEye = nextEye && (now.eye !== null || opts.eyesClosed) ? nextEye.eye! : null;
+    this._holdEyeUntil = this._holdEye && nextEye ? nextEye.from : 0;
     this._holdMouth = mouthSpan ? now.mouth : null;
     this._holdMouthUntil = mouthSpan?.from ?? 0;
     this._spans = spans;
     this._t = 0;
+  }
+
+  private _currentState(): FaceState {
+    const state = faceAt(this._spans, this._t);
+    if (this._holdEye && this._t < this._holdEyeUntil) state.eye ??= this._holdEye;
+    if (this._holdMouth && this._t < this._holdMouthUntil) state.mouth ??= this._holdMouth;
+    return state;
   }
 
   stop(): void {

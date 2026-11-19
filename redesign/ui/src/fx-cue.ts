@@ -129,7 +129,7 @@ export class FxChannel {
     this._motionIds = motionIds;
   }
 
-  /** 新动作接手：有 fx 时间轴则播放，没有则撤回动作符号（表情符号不受影响）。 */
+  /** 新动作接手：有 fx 时间轴则播放（压制并发的表情符号防首尾闪现），没有则撤回动作符号（表情符号不受影响）。 */
   startAction(spans: readonly FxSpan[] | undefined): void {
     const showing = this._actionFx();
     const same = showing ? spans?.find((s) => s.fx === showing) : undefined;
@@ -137,10 +137,19 @@ export class FxChannel {
     this._holdUntil = same?.from ?? 0;
     this._spans = spans ?? [];
     this._t = 0;
+    if (this._spans.length > 0) {
+      this._expression = null;
+      this._expressionLeft = 0;
+    }
   }
 
-  /** 表情切换时调用：对应表情冒一次符号，其余表情撤回表情符号。 */
+  /** 表情切换时调用：对应表情冒一次符号，其余表情撤回表情符号；动作符号时间轴进行中时不再叠出表情符号。 */
   setExpression(name: string | null): void {
+    if (this._spans.length > 0) {
+      this._expression = null;
+      this._expressionLeft = 0;
+      return;
+    }
     const fx = name ? EXPRESSION_FX[name] ?? null : null;
     this._expression = fx;
     this._expressionLeft = fx ? EXPRESSION_FX_SECONDS : 0;

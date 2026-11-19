@@ -86,3 +86,18 @@ test('resolveOpenTarget 正确映射外部唤醒 target 与 URL hash', () => {
     );
   }
 });
+
+test('isValidSettingsTab 与 isExplicitOpenTarget 区分通用唤醒与显式页签目标', () => {
+  const { isValidSettingsTab, isExplicitOpenTarget } = loadNavigation();
+  for (const id of ['stage', 'character', 'window', 'chat', 'about']) {
+    assert.equal(isValidSettingsTab(id), true);
+    assert.equal(isExplicitOpenTarget(id), true);
+    assert.equal(isExplicitOpenTarget(`#${id}`), true);
+  }
+  assert.equal(isExplicitOpenTarget('session-control'), true);
+  assert.equal(isExplicitOpenTarget('#session-control'), true);
+  for (const generic of ['', '  ', null, undefined, 'main', '#main', 'unknown']) {
+    assert.equal(isValidSettingsTab(generic), false);
+    assert.equal(isExplicitOpenTarget(generic), false);
+  }
+});

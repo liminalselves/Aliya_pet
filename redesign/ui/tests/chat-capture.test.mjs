@@ -94,7 +94,7 @@ function harness({ reducedMotion = true } = {}) {
     '../toast': { showToast: (message, options = {}) => toasts.push({ message, kind: options.kind ?? 'info' }) },
     './msk/config': { mskSessionKey: () => 'session' },
     './msk/control-bridge': { CONTROL_REQUEST_KEY: 'control', readControlRequest: store => JSON.parse(store?.getItem('control') ?? 'null') },
-    './msk/client': { MskClient, MAX_UPLOAD_BYTES: 20 * 1024 * 1024 },
+    './msk/client': { MskClient, ALIYA_CHARACTER_ID: 'aliya', MAX_UPLOAD_BYTES: 20 * 1024 * 1024 },
     './msk/provider': { MskChatProvider: class {} },
     './rendering/renderer': { MskMessageRenderer: class { cancelAll() {} } },
     './rendering/rules': { normalizeRegexRules: () => [] },
@@ -115,7 +115,7 @@ function harness({ reducedMotion = true } = {}) {
     Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer, AbortController, Error, console,
     setTimeout(fn, ms) { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id),
   });
-  const view = new exports.ChatView(controller, { token: 'token', savedUser: () => ({ id: 'user' }), logout() {} }, () => {}, storage);
+  const view = new exports.ChatView(controller, { token: 'token', storedToken: () => 'token', savedUser: () => ({ id: 'user' }), logout() {} }, () => {}, storage);
   view.screen = 'ready'; view.activeSession = { id: 's1' }; view.setOpen(true); view.syncComposerState();
   const capture = () => { get('.capture-screen').click(); return flush(); };
   const encode = async (index = captures.length - 1, raw = pixels()) => { captures[index].resolve(raw); await flush(); };
@@ -312,4 +312,27 @@ test('session、sequence、attachment身份独立守卫，旧异常也不能改�
     assert.equal(h.view.attachment, attachment); assert.equal(h.encodings.length, 0);
     assert.equal(h.get('.chat-status').textContent, '当前状态'); assert.equal(h.get('.capture-screen').disabled, false);
   }
+});
+
+test('设置页切换当前会话后，ChatView 响应 storage/focus 事件自动切入目标会话', async () => {
+  const h = harness();
+  assert.equal(h.view.activeSession.id, 's1');
+  h.storage.setItem('session', JSON.stringify({ id: 's2', name: '新对话', characterId: 'aliya' }));
+  await h.windowEvent('storage', { key: 'session' });
+  await flush();
+  assert.equal(h.view.activeSession.id, 's2');
+  assert.equal(h.view.activeSession.name, '新对话');
+
+  h.storage.setItem('session', JSON.stringify({ id: 's3', name: '夜聊', characterId: 'aliya' }));
+  await h.windowEvent('focus');
+  await flush();
+  assert.equal(h.view.activeSession.id, 's3');
+  assert.equal(h.view.activeSession.name, '夜聊');
+
+  h.storage.setItem('session', JSON.stringify({ id: 's3', name: '星舰夜话', characterId: 'aliya' }));
+  await h.windowEvent('storage', { key: 'session' });
+  await flush();
+  assert.equal(h.view.activeSession.id, 's3');
+  assert.equal(h.view.activeSession.name, '星舰夜话');
+  assert.equal(h.get('.session-pill').textContent, '星舰夜话');
 });

@@ -13,7 +13,7 @@ export interface PointerContext {
   normX: number;
   /** 相对渲染区域归一化 Y（0..1，上为 0） */
   normY: number;
-  /** 视口物理像素坐标（DPI 已换算） */
+  /** 视口坐标（CSS px，与 DPR 无关） */
   pxX: number;
   pxY: number;
   /** 距上一帧事件的时间（秒） */
@@ -22,6 +22,8 @@ export interface PointerContext {
   leftPressed: boolean;
   /** 是否为右键事件 */
   isSecondary: boolean;
+  /** 指针类型（mouse/touch/pen），用于区分悬停与触摸行为 */
+  pointerType?: string;
 }
 
 export interface PettingGestureResult {

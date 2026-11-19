@@ -334,3 +334,26 @@ for (const overlay of [false, true]) test(`${overlay ? 'overlay' : 'activity'}: 
     assert.equal(h.interaction.petting.dailyState.headPettingCountToday, 1); assert.equal(h.moves.length, 0);
   } finally { h.dispose(); }
 });
+
+test('overlay: 原生拖动传递抓点与节流速度到 LiftPose，结束按抬手坐标归属', () => {
+  const h = harness({ overlay: true });
+  const { LiftPose } = load('lift-pose', {}, {});
+  h.app._lift = new LiftPose();
+  h.app._modelPointAt = (cx, cy) => ({ x: (cx - 400) / 600, y: (400 - cy) / 600 });
+  h.app._wrapToRefNorm = (x, y) => ({ nx: x / 400, ny: y / 400 });
+  try {
+    h.app.onNativeDragStart(160, 120);
+    assert.ok(h.app._liftPivot && h.app._liftPivot.x < 0, '应记录原生抓点模型坐标');
+    assert.equal(h.interaction.procedural.isHolding, true);
+    for (let i = 0; i < 8; i++) {
+      h.app.onNativeDragMove(650, 0, 0.032);
+      h.advance(32);
+      h.app._lift.setHolding(true);
+      h.app._lift.update(0.032, false);
+    }
+    assert.ok(Math.abs(h.app._lift.angle) > 0.3, `Android 悬浮拖动也应产生可见摆角: ${h.app._lift.angle}`);
+    h.app.onNativeDragEnd(40, 20, 480, false, 180, 140);
+    assert.equal(h.app._nativeDragging, false);
+    assert.ok(h.lines.includes('drag.fast'));
+  } finally { h.dispose(); }
+});

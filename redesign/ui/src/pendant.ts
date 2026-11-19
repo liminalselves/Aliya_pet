@@ -18,6 +18,8 @@ import { clampPendantRope, clampPendantScale, loadSettings, type PetSettings } f
 const MAX_WIND = 1;
 const FPS_ACTIVE = 60;
 const FPS_IDLE = 30;
+const FRAME_WAKE_LEAD_MS = 6;
+const WIND_TAU_SECONDS = 0.08;
 
 const stage = document.getElementById('stage')!;
 const glCanvas = document.createElement('canvas');
@@ -44,9 +46,15 @@ let attach: { drawable: number; vertex: number } | null = null;
 let cursor: { x: number; y: number; wx: number; wy: number } | null = null;
 let dpr = 1;
 let running = false;
+let frameQueued = false;
+let timerId: ReturnType<typeof setTimeout> | null = null;
+let rafId: number | null = null;
 let lastTime = 0;
 let prevVx = 0;
 let prevVy = 0;
+let windX = 0;
+let windY = 0;
+let reducedMotionQuery: MediaQueryList | null = null;
 let tauriWindow: import('@tauri-apps/api/window').Window | null = null;
 
 function resizeCanvases(): void {
@@ -120,11 +128,17 @@ function resetAt(x: number, y: number): void {
   physics.reset(x, y);
   rope.reset(x, y, physics.x, physics.y);
   prevVx = prevVy = 0;
+  windX = windY = 0;
 }
 
-/** 惯性 + 身体倾斜 → Cubism 物理风力（模型坐标，单位为重力倍数）。 */
-function updatePhysicsWind(dt: number): void {
+/** 惯性 + 身体倾斜 → Cubism 物理风力（模型坐标，单位为重力倍数）；低通滤波吸收硬截断尖峰。 */
+function updatePhysicsWind(dt: number, reduce = false): void {
   if (!model || dt <= 0) return;
+  if (reduce) {
+    windX = windY = 0;
+    model.setPhysicsWind(0, 0);
+    return;
+  }
   const ax = (physics.vx - prevVx) / dt;
   const ay = (physics.vy - prevVy) / dt;
   prevVx = physics.vx;
@@ -142,7 +156,29 @@ function updatePhysicsWind(dt: number): void {
   let wx = -bx, wy = bDown - 1;
   const mag = Math.hypot(wx, wy);
   if (mag > MAX_WIND) { wx *= MAX_WIND / mag; wy *= MAX_WIND / mag; }
-  model.setPhysicsWind(wx, wy);
+  const k = 1 - Math.exp(-dt / WIND_TAU_SECONDS);
+  windX += (wx - windX) * k;
+  windY += (wy - windY) * k;
+  model.setPhysicsWind(windX, windY);
+}
+
+/** 将屏幕空间的锚点方向按 -physics.angle 转入模型局部视线坐标 (0..1)。 */
+function anchorLookTarget(): [number, number] {
+  if (!cursor) return [0.5, 1];
+  const dx = cursor.x - physics.x;
+  const dy = cursor.y - physics.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 1) return [0.5, 1];
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const cos = Math.cos(physics.angle);
+  const sin = Math.sin(physics.angle);
+  const localX = ux * cos + uy * sin;
+  const localY = ux * sin - uy * cos;
+  return [
+    Math.min(1, Math.max(0, 0.5 + 0.5 * localX)),
+    Math.min(1, Math.max(0, 0.5 + 0.5 * localY)),
+  ];
 }
 
 /** 绳子：两端分别是指针尾部与人物头顶的系绳顶点，中间是 Verlet 链的平滑折线。 */
@@ -190,43 +226,79 @@ function render(): void {
   drawRope(toLocal);
 }
 
-function frame(t: number): void {
-  if (!running) return;
-  const interval = 1000 / (physics.settled ? FPS_IDLE : FPS_ACTIVE);
-  if (t - lastTime < interval - 1) {
-    requestAnimationFrame(frame);
+function isReducedMotion(): boolean {
+  reducedMotionQuery ??= window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
+  return reducedMotionQuery?.matches ?? false;
+}
+
+function frameIntervalMs(): number {
+  return 1000 / (!isReducedMotion() && !physics.settled ? FPS_ACTIVE : FPS_IDLE);
+}
+
+function scheduleFrame(): void {
+  if (!running || document.hidden || frameQueued) return;
+  frameQueued = true;
+  const now = performance.now();
+  const wait = lastTime + frameIntervalMs() - now - FRAME_WAKE_LEAD_MS;
+  const due = wait > 1;
+  const run = () => {
+    timerId = null;
+    rafId = requestAnimationFrame((t) => {
+      rafId = null;
+      frameQueued = false;
+      frame(t, due);
+    });
+  };
+  if (due) timerId = setTimeout(run, wait);
+  else run();
+}
+
+function frame(t: number, due = false): void {
+  if (!running || document.hidden) return;
+  const interval = frameIntervalMs();
+  if (!due && t - lastTime < interval - 1) {
+    scheduleFrame();
     return;
   }
-  const dt = Math.min(0.05, (t - lastTime) / 1000);
+  const dt = Math.min(0.05, Math.max(0.001, (t - lastTime) / 1000));
   lastTime = t;
   resizeCanvases();
+  const reduce = isReducedMotion();
   if (cursor) {
-    if (physics.step(cursor.x, cursor.y, dt)) {
+    if (reduce) {
+      // 少动态效果：保持竖直垂挂于光标下方，不做甩动摆荡与物理风。
+      resetAt(cursor.x, cursor.y);
+    } else if (physics.step(cursor.x, cursor.y, dt)) {
       rope.step(physics.anchorX, physics.anchorY, physics.x, physics.y, physics.config.ropeLength, dt);
     } else {
       resetAt(cursor.x, cursor.y);
     }
   }
-  updatePhysicsWind(dt);
+  updatePhysicsWind(dt, reduce);
   if (model?.isReady()) {
-    // 抬头看着指针（吊着的人在下方，目标在正上方）。
-    model.setLookTarget(0.5, 1);
+    const [lx, ly] = anchorLookTarget();
+    model.setLookTarget(lx, ly);
     model.update(dt);
   }
   render();
-  requestAnimationFrame(frame);
+  scheduleFrame();
 }
 
 function start(): void {
   if (running) return;
   running = true;
   lastTime = performance.now();
-  requestAnimationFrame(frame);
+  scheduleFrame();
 }
 
 function stop(): void {
   running = false;
+  frameQueued = false;
+  if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
   cursor = null;
+  windX = windY = 0;
+  prevVx = prevVy = 0;
   // 清掉最后一帧，重新显示时不闪出旧位置。
   ctx2d.clearRect(0, 0, ropeCanvas.width, ropeCanvas.height);
   if (gl && !gl.isContextLost()) {
@@ -297,6 +369,12 @@ async function main(): Promise<void> {
   await ev.listen<PetSettings>('settings-changed', (e) => {
     if (e.payload && typeof e.payload === 'object') {
       applySettings({ ...settings, ...e.payload }).catch(error => console.error('[pendant] apply failed', error));
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && running) {
+      lastTime = performance.now();
+      scheduleFrame();
     }
   });
 

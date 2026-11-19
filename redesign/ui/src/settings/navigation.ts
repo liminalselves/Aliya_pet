@@ -58,6 +58,16 @@ export interface OpenTargetPlan {
 
 const VALID_TABS = new Set<SettingsTabId>(['stage', 'character', 'window', 'chat', 'about']);
 
+export function isValidSettingsTab(id: unknown): id is SettingsTabId {
+  return typeof id === 'string' && VALID_TABS.has(id as SettingsTabId);
+}
+
+/** 外部唤醒目标是否指定了具体页签或抽屉（'' / 'main' 视作通用打开，可沿用上次页签）。 */
+export function isExplicitOpenTarget(target: string | null | undefined): boolean {
+  const normalized = (target ?? '').trim().replace(/^#+/, '').toLowerCase();
+  return normalized === 'session-control' || VALID_TABS.has(normalized as SettingsTabId);
+}
+
 /** 将外部唤醒目标（Tauri settings-open target / Android URL hash）解析为页签切换与抽屉动作。 */
 export function resolveOpenTarget(target: string | null | undefined): OpenTargetPlan {
   const normalized = (target ?? '').trim().replace(/^#+/, '').toLowerCase();

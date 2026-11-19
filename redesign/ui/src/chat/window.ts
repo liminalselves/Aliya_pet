@@ -66,7 +66,7 @@ if (platform === 'tauri') {
     syncBackground();
     if (windowOpen) cardBg?.refreshAuto();
     if (view.isOpen !== e.payload.open) view.setOpen(e.payload.open);
-    else if (e.payload.open) view.playEnter();
+    else if (e.payload.open) { view.playEnter(); view.focusInput(); }
     // 隐藏期间轮询暂停，重新出现时立即补报一次掩码（窗口可能已随桌宠移动）。
     if (e.payload.open) relayHitMask();
   });

@@ -19,6 +19,7 @@ const BOTTOM_STICK_PX = 56;
 const FOCUS_REFRESH_MIN_MS = 30_000;
 
 const ICON_LOGO = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H13l-4.2 3.4a.6.6 0 0 1-1-.45V16.5h-.3A3.5 3.5 0 0 1 4 12.5Z"/><path d="M8.5 8.5h7M8.5 11.7h4.5"/></svg>';
+const ICON_CHAT = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H12l-4.2 3.4a.6.6 0 0 1-1-.45V16H7.5A3.5 3.5 0 0 1 4 12.5Z"/></svg>';
 const ICON_REFRESH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.46-5.74"/><path d="M20 3.6V8h-4.4"/></svg>';
 const ICON_DOWN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg>';
 const ICON_EMPTY = '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5.5a4 4 0 0 1-4 4h-4.6L8 19.8a.55.55 0 0 1-.9-.42V16.5H8a4 4 0 0 1-4-4Z"/><path d="M8.4 8.1h7.2M8.4 11.4h4.2"/></svg>';
@@ -112,7 +113,7 @@ class RecordsView {
     this.app.innerHTML = `<main class="records-shell">
       <header class="records-header">
         <div class="records-brand"><span class="records-logo">${ICON_LOGO}</span><div class="records-heading"><span class="records-kicker">ALIYA ARCHIVE</span><h1>聊天记录</h1></div></div>
-        <div class="records-side"><div class="records-session"><span class="records-title"></span><span class="records-meta"></span></div><button type="button" class="records-refresh" title="刷新" aria-label="刷新">${ICON_REFRESH}</button></div>
+        <div class="records-side"><div class="records-session"><span class="records-title"></span><span class="records-meta"></span></div><button type="button" class="records-header-chat" title="打开聊天" aria-label="打开聊天">${ICON_CHAT}</button><button type="button" class="records-refresh" title="刷新" aria-label="刷新">${ICON_REFRESH}</button></div>
       </header>
       <section class="records-list" aria-label="聊天记录"></section>
       <button type="button" class="records-tobottom" title="回到底部" aria-label="回到底部">${ICON_DOWN}</button>
@@ -120,6 +121,12 @@ class RecordsView {
     this.title = this.app.querySelector('.records-title')!;
     this.meta = this.app.querySelector('.records-meta')!;
     this.refreshButton = this.app.querySelector('.records-refresh')!;
+    const chatButton = this.app.querySelector<HTMLButtonElement>('.records-header-chat')!;
+    chatButton.hidden = platform === 'web';
+    chatButton.onclick = () => {
+      if (platform === 'android') shellAction('open-chat');
+      else if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_chat')).catch(() => {});
+    };
     this.list = this.app.querySelector('.records-list')!;
     this.toBottom = this.app.querySelector('.records-tobottom')!;
     this.refreshButton.onclick = () => { void this.load('manual'); };
@@ -129,9 +136,20 @@ class RecordsView {
     const cancelPin = () => cancelAnimationFrame(this.pinFrame);
     this.list.addEventListener('wheel', cancelPin, { passive: true });
     this.list.addEventListener('pointerdown', cancelPin, { passive: true });
+    window.addEventListener('keydown', event => {
+      if ((event.key === 'r' && (event.ctrlKey || event.metaKey)) || event.key === 'F5') {
+        event.preventDefault();
+        void this.load('manual');
+      } else if (event.key === 'Escape' && platform === 'tauri') {
+        void import('@tauri-apps/api/window').then(m => m.getCurrentWindow().hide()).catch(() => {});
+      }
+    });
     window.addEventListener('focus', () => {
+      const saved = savedContext();
+      const baseKey = `${saved.userId}:${saved.session?.id ?? ''}:${saved.session?.name ?? ''}`;
+      const contextChanged = !this.contextKey.startsWith(`${baseKey}:`);
       const now = Date.now();
-      if (now - this.lastFocusLoad < FOCUS_REFRESH_MIN_MS) return;
+      if (!contextChanged && now - this.lastFocusLoad < FOCUS_REFRESH_MIN_MS) return;
       this.lastFocusLoad = now;
       void this.load('auto');
     });
@@ -146,7 +164,7 @@ class RecordsView {
     const saved = savedContext();
     const request = readControlRequest(localStorage);
     const navigate = request?.action === 'navigate' && request.sessionId === saved.session?.id ? request : null;
-    const nextKey = `${saved.userId}:${saved.session?.id ?? ''}:${navigate?.at ?? ''}`;
+    const nextKey = `${saved.userId}:${saved.session?.id ?? ''}:${saved.session?.name ?? ''}:${navigate?.at ?? ''}`;
     // records-open 与 focus/storage 常同时触发：同上下文加载已在进行就别重复拉取。
     if (this.loading && nextKey === this.contextKey) return;
     this.contextKey = nextKey;
@@ -156,7 +174,7 @@ class RecordsView {
     this.loading = true;
     this.refreshButton.disabled = true;
     this.refreshButton.classList.add('loading');
-    hideToast();
+    if (mode !== 'auto') hideToast();
     // 无闪烁刷新：已有内容保留到本次数据落地再整体替换，只有空列表才上骨架屏。
     const animate = !this.hasContent;
     if (!this.hasContent) this.showSkeleton();
@@ -340,7 +358,7 @@ class RecordsView {
       requestAnimationFrame(() => {
         const target = this.list.querySelector<HTMLElement>('.record-target');
         if (target) {
-          target.scrollIntoView({ block: 'center' });
+          target.scrollIntoView({ block: 'center', behavior: 'instant' });
           target.focus({ preventScroll: true });
         }
         this.syncToBottom();

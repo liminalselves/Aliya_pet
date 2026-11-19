@@ -92,8 +92,19 @@ fn set_game_mode(app: &tauri::AppHandle, on: bool) {
     if on {
         let _ = chat_window::hide_chat(app.clone(), app.state());
     }
+    let _ = app.emit("game-mode-changed", json!({ "enabled": on }));
     #[cfg(debug_assertions)]
     println!("[game-mode] {on}");
+}
+
+#[tauri::command]
+fn get_game_mode() -> bool {
+    game_mode()
+}
+
+#[tauri::command]
+fn set_game_mode_enabled(app: tauri::AppHandle, enabled: bool) {
+    set_game_mode(&app, enabled);
 }
 
 /// 默认游戏模式快捷键；设置页可改（前端 `gameModeHotkey` 与此同值）。
@@ -1018,6 +1029,8 @@ fn main() {
             sync_click_through_menu,
             sync_top_menu,
             set_game_mode_hotkey,
+            get_game_mode,
+            set_game_mode_enabled,
             show_records,
             show_update,
             current_update_payload,

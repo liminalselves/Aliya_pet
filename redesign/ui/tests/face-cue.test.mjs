@@ -235,6 +235,39 @@ test('连续点击重播委屈：哭眼保持到新区间开始，只闭眼一�
   } finally { p.release(); }
 });
 
+test('飞吻/委屈/无语之间快速互相切换时不会出现多余的睁闭眨眼', async () => {
+  const p = await model();
+  try {
+    const m = p.getModel();
+    const param = name => m.getParameterValueById(CubismFramework.getIdManager().getId(name));
+    p._eyeBlink.setBlinkingInterval(1e6); p._eyeBlink._nextBlinkingTime = 1e6;
+    const pairs = [
+      ['sob', 1.0, 'deadpan'],
+      ['deadpan', 1.0, 'sob'],
+      ['sob', 1.0, 'kiss'],
+      ['deadpan', 1.0, 'kiss'],
+      ['kiss', 0.9, 'sob'],
+      ['kiss', 0.9, 'deadpan'],
+    ];
+    for (const [fromAction, waitSec, toAction] of pairs) {
+      p.startExpression(null); for (let i = 0; i < 120; i++) p.update(1 / 60);
+      assert.ok(p.playAction(fromAction));
+      for (let i = 0; i < Math.round(waitSec * 60); i++) p.update(1 / 60);
+      assert.equal(param('ParamEyeLOpen'), 0, `${fromAction}@${waitSec}s 切换前应处于闭眼态`);
+      assert.ok(p.playAction(toAction));
+      for (let i = 0; i < 48; i++) {
+        p.update(1 / 60);
+        assert.ok(param('ParamEyeLOpen') <= 0.02,
+          `${fromAction} -> ${toAction} 第 ${i + 1} 帧不应闪出多余睁眼: EyeL=${param('ParamEyeLOpen')}`);
+      }
+      if (toAction === 'sob' || toAction === 'deadpan') {
+        const sel = toAction === 'sob' ? 'Param34' : 'Param35';
+        assert.equal(param(sel), 1, `${fromAction} -> ${toAction} 切换后目标特殊眼应已就位`);
+      }
+    }
+  } finally { p.release(); }
+});
+
 const FX_MESH = { heart: 'heart', question: 'question', surprise: 'exclaim', gloom: 'gloom', sleep: 'zzz', sparkle: 'sparkle', music: 'music' };
 
 test('情绪符号时间轴解析：丢弃非法区间与未知符号', () => {
@@ -353,5 +386,52 @@ test('情绪符号动效：每个符号显示期间都在动（相对少动态�
     p.setReducedMotion(false); p.startExpression(null); p.playAction('nod');
     for (let i = 0; i < 600; i++) p.update(1 / 60);
     for (const d of drivers) assert.ok(Math.abs(param(d)) < 1, `${d} 残留 ${param(d)}`);
+  } finally { p.release(); }
+});
+
+test('得意单眼 wink 保持睁眼注视，且并发表情与动作不再闪出双情绪符号', async () => {
+  const p = await model();
+  try {
+    const m = p.getModel();
+    const ids = Array.from({ length: m.getDrawableCount() }, (_, i) => m.getDrawableId(i).getString());
+    const op = name => m.getDrawableOpacity(ids.indexOf(name));
+    const param = name => m.getParameterValueById(CubismFramework.getIdManager().getId(name));
+
+    // smug 左眼闭合、右眼睁开：EXPRESSION_GAZE.smug (+5) 与指针跟随必须生效。
+    p.startExpression('smug');
+    p.setLookTarget(0.85, 0.5);
+    for (let i = 0; i < 60; i++) p.update(1 / 60);
+    assert.equal(param('ParamEyeLOpen'), 0);
+    assert.ok(param('ParamEyeROpen') > 0.9);
+    assert.ok(param('ParamEyeBallX') > 12, `得意单眼时眼球应正常跟随，实际 ${param('ParamEyeBallX')}`);
+
+    // 表情+带 fx 动作同帧触发（两种顺序）不应先闪 music 再切 sparkle 或结尾回闪 music。
+    for (const order of ['expr-first', 'action-first']) {
+      p.startExpression(null);
+      for (let i = 0; i < 180; i++) p.update(1 / 60);
+      if (order === 'expr-first') {
+        p.startExpression('happy');
+        assert.ok(p.playAction('wave'));
+      } else {
+        assert.ok(p.playAction('wave'));
+        p.startExpression('happy');
+      }
+      let sparklePeak = 0;
+      for (let i = 0; i < 240; i++) {
+        p.update(1 / 60);
+        assert.ok(op('music') < 0.05, `${order}@${i}: happy 音符不应在 wave 期间闪现 (${op('music')})`);
+        sparklePeak = Math.max(sparklePeak, op('sparkle'));
+      }
+      assert.ok(sparklePeak > 0.99, `${order}: wave 闪光未正常显示`);
+    }
+
+    // 无 fx 的动作（nod）与 happy 同时触发时，happy 的音符应保留。
+    p.startExpression(null);
+    for (let i = 0; i < 180; i++) p.update(1 / 60);
+    p.startExpression('happy');
+    assert.ok(p.playAction('nod'));
+    let musicPeak = 0;
+    for (let i = 0; i < 90; i++) { p.update(1 / 60); musicPeak = Math.max(musicPeak, op('music')); }
+    assert.ok(musicPeak > 0.95, `无 fx 动作不应压制表情音符 (${musicPeak})`);
   } finally { p.release(); }
 });

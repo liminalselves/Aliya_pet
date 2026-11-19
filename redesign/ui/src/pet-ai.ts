@@ -18,9 +18,15 @@ export interface PetAIDeps {
   model: () => PetModel | null;
   stateEngine: () => StateEngine | null;
   /** 播放动作（motion 与 procedural 都经此入口）。 */
-  playAction: (name: string) => boolean;
+  playAction: (name: string, opts?: { areaId?: string; side?: number }) => boolean;
   /** 可播放的动作名。 */
   actionNames: () => string[];
+  /** 当前互动/说话/暂停状态（可选）。 */
+  coordinationState?: () => { interacting: boolean; speaking: boolean; paused: boolean };
+  /** 指针是否已释放视线（可选）。 */
+  gazeReleased?: () => boolean;
+  /** 当日有效抚摸次数（可选）。 */
+  headPettingCountToday?: () => number;
 }
 
 export class PetAI {
@@ -80,9 +86,9 @@ export class PetAI {
 
   // ---------- 动作 ----------
 
-  /** 播放动作（可被后续动作打断）。 */
-  play(name: string): boolean {
-    const ok = this._deps.playAction(name);
+  /** 播放动作（可被后续动作打断；支持传递 procedural 方位参数）。 */
+  play(name: string, opts?: { areaId?: string; side?: number }): boolean {
+    const ok = this._deps.playAction(name, opts);
     if (ok) this._emit('pet:action', { action: name });
     return ok;
   }
@@ -112,20 +118,43 @@ export class PetAI {
     expression: string | null;
     expressions: string[];
     actions: string[];
+    interacting: boolean;
+    speaking: boolean;
+    gazeReleased: boolean;
+    headPettingCountToday: number;
   } {
     const current = this._deps.stateEngine()?.current ?? { name: 'neutral', manual: null };
+    const coord = this._deps.coordinationState?.() ?? { interacting: false, speaking: false, paused: false };
     return {
       state: current.name,
       manual: current.manual,
       expression: this._deps.model()?.getCurrentExpression() ?? null,
       expressions: this.expressions(),
       actions: this._deps.actionNames(),
+      interacting: coord.interacting,
+      speaking: coord.speaking,
+      gazeReleased: this._deps.gazeReleased?.() ?? false,
+      headPettingCountToday: this._deps.headPettingCountToday?.() ?? 0,
     };
   }
 
   /** 状态引擎变化时由宿主转发。 */
   emitState(state: string, manual: string | null, previous: string): void {
     this._emit('pet:state', { state, manual, previous });
+  }
+
+  /** 互动事件总线（click / petting / drag），供外部 AI/插件观察。 */
+  emitInteraction(detail: unknown): void {
+    this._emit('pet:interaction', detail);
+  }
+
+  /** 外部临时表情变更同步（确保互动临时表情也发出 pet:expression 并取消旧定时）。 */
+  emitExpression(expression: string | null): void {
+    this._emit('pet:expression', { expression });
+  }
+
+  cancelExpressionTimer(): void {
+    this._clearTimer();
   }
 
   private _clearTimer(): void {

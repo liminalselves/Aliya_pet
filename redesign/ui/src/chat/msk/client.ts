@@ -212,6 +212,17 @@ export class MskClient {
     return { id, characterId: ALIYA_CHARACTER_ID, name: data.name as string | undefined };
   }
 
+  /** POST /api/agents/sessions/update：修改会话名称并返回最终名称。 */
+  async renameSession(sessionId: string, name: string, signal?: AbortSignal): Promise<string> {
+    const trimmed = name.trim();
+    if (!trimmed) fail('会话名称不能为空。');
+    const data = await this.post<{ name?: string }>('/agents/sessions/update', {
+      sessionId,
+      name: trimmed,
+    }, signal);
+    return typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : trimmed;
+  }
+
   /** POST /api/agents/messages/send：同步等待回复（上游最长 120s）。
    *  回执缺失时（空 200/204、网关 5xx、网络超时）按 Aliya_web 的成熟做法处理：
    *  消息多半已送达应用层，回复经时间线落库——轮询取回，而不是直接判失败。

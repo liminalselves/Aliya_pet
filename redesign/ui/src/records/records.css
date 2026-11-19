@@ -37,6 +37,11 @@ button { font: inherit; }
 .records-refresh:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 .records-refresh:disabled { cursor: default; opacity: .55; }
 .records-refresh.loading svg { animation: records-spin .9s linear infinite; }
+.records-header-chat { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--al-r-s); background: transparent; color: var(--al-text-3); cursor: pointer; transition: color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease); }
+.records-header-chat[hidden] { display: none; }
+.records-header-chat:hover { color: var(--al-accent-strong); background: var(--al-hover-fill); }
+.records-header-chat:active { transform: scale(.94); }
+.records-header-chat:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
 @keyframes records-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 消息列：居中阅读栏，宽窗不再半边空 ---------- */
@@ -69,8 +74,8 @@ button { font: inherit; }
 .record-message header strong { color: var(--al-accent); font-size: 12px; font-weight: 600; }
 .record-message header time { color: var(--al-text-4); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-/* 重播：平时收起，悬停/聚焦气泡时浮现 */
-.record-replay { margin: -2px -6px -2px auto; height: 22px; padding: 0 8px; border: 0; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease); }
+/* 重播：保留低透明度提示可发现，悬停/聚焦时完全显现 */
+.record-replay { margin: -2px -6px -2px auto; height: 22px; padding: 0 8px; border: 0; border-radius: var(--al-r-pill); background: transparent; color: var(--al-text-3); font-family: var(--al-font); font-size: 11px; cursor: pointer; opacity: .55; transition: opacity var(--al-t-fast) var(--al-ease), color var(--al-t-fast) var(--al-ease), background var(--al-t-fast) var(--al-ease); }
 .record-message:hover .record-replay, .record-message:focus-within .record-replay { opacity: 1; }
 .record-replay:hover { color: var(--al-text-1); background: var(--al-hover-fill); }
 .record-replay.busy { opacity: 1; color: var(--al-text-3); cursor: progress; }
@@ -153,7 +158,7 @@ button { font: inherit; }
 .message-text .msk-draw-btn:hover { border-color: var(--al-accent); }
 .message-text .msk-draw-btn[disabled] { cursor: wait; opacity: .5; }
 .message-text .msk-draw-card:has(img) .msk-draw-foot { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 0; }
-.message-text .msk-draw-card:has(img) .msk-draw-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-1); font-size: 0; opacity: 0; }
+.message-text .msk-draw-card:has(img) .msk-draw-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--al-overlay-chip); color: var(--al-text-1); font-size: 0; opacity: .65; }
 .message-text .msk-draw-card:has(img) .msk-draw-btn::after { content: '↻'; font-size: 16px; line-height: 1; }
 .message-text .msk-draw-card:has(img):hover .msk-draw-btn, .message-text .msk-draw-card:has(img) .msk-draw-btn:focus-visible { opacity: 1; }
 .message-text .msk-draw-card:has(img) .msk-draw-btn:hover { background: var(--al-overlay-chip-hover); }
@@ -193,7 +198,9 @@ button { font: inherit; }
 .android-records .records-header { height:56px; padding:0 8px 0 12px; }
 .android-records .records-session { flex-direction:column; align-items:flex-end; gap:0; }
 .records-back:focus-visible { outline:none; box-shadow:var(--al-focus-ring); }
+.android-records .records-header-chat { width:44px; height:44px; }
 .android-records .records-refresh { width:44px; height:44px; }
+.android-records .al-toast { bottom:calc(74px + env(safe-area-inset-bottom, 0px)); }
 .android-records .records-open-chat { height:40px; padding:0 22px; font-size:14px; }
 .android-records .record-message { max-width:94%; }
 .android-records .record-message header { flex-wrap:wrap; }

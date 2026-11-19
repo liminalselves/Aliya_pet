@@ -57,6 +57,7 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   // 外观契约钉死当前「茶夜」暗色主题：改主题须同步更新这里与 control.ts
   assert.equal(posts[0].message.appearance.colorScheme, 'dark');
   assert.equal(posts[0].message.appearance.accent, '#e29ba3');
+  assert.equal(posts[0].message.appearance.fontSize, '13px');
   control.setToken('rotated'); assert.equal(posts[1].message.type, 'misskey:agent-control:update-token');
   assert.equal(control.setPanel('worldbook'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:authenticated' } });
@@ -73,6 +74,23 @@ test('control protocol verifies both origin and frame, rotates tokens and destro
   assert.equal(control.setPanel('rules'), false);
   receive({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:ready' } });
   assert.equal(posts.length, 3);
+});
+
+test('Android 端托管配置 iframe 传递 15px 适配字号并保持暮石主题色', () => {
+  const config = loadMskConfig();
+  const listeners = new Set();
+  const posts = [];
+  const iframe = { contentWindow: { postMessage: message => posts.push(message) }, remove() {}, classList: { add() {} } };
+  const { AgentControlFrame } = load('control', config, {
+    document: { body: { classList: { contains: name => name === 'platform-android' } }, createElement: () => iframe },
+    window: { addEventListener: (_, cb) => listeners.add(cb), removeEventListener: () => {} },
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  new AgentControlFrame({ append() {} }, 's1', 'model', () => 'tk', () => {});
+  [...listeners][0]({ origin: config.MSK_BASE, source: iframe.contentWindow, data: { type: 'misskey:agent-control:ready' } });
+  assert.equal(posts[0].appearance.fontSize, '15px');
+  assert.equal(posts[0].appearance.colorScheme, 'dark');
+  assert.equal(posts[0].appearance.accent, '#e29ba3');
 });
 
 test('control request accepts replay only with a message id', () => {
@@ -115,4 +133,20 @@ test('只读接口网络瞬断重试一次，写接口与超时不重发', async
   calls.length = 0; failures = 1;
   await assert.rejects(client.post('/agents/sessions/read', { sessionId: 's' }), /网络异常/);
   assert.equal(calls.length, 1, '写接口不重发');
+});
+
+test('renameSession 校验非空并调用 agents/sessions/update 返回新名称', async () => {
+  const config = loadMskConfig();
+  const { MskClient } = load('client', config, { AbortSignal, crypto });
+  const calls = [];
+  const client = new MskClient('tk', async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, json: async () => ({ id: 's1', name: '新的星海会话' }) };
+  });
+  await assert.rejects(client.renameSession('s1', '   '), /会话名称不能为空/);
+  assert.equal(calls.length, 0);
+  const nextName = await client.renameSession('s1', '  新的星海会话  ');
+  assert.equal(nextName, '新的星海会话');
+  assert.match(calls[0].url, /\/api\/agents\/sessions\/update$/);
+  assert.deepEqual(calls[0].body, { i: 'tk', sessionId: 's1', name: '新的星海会话' });
 });

@@ -552,3 +552,94 @@ test('字面 <br> 还原为换行（与 MSK marked 放行一致），代码围�
   // 其他 HTML 依旧转义，不放行
   assert.ok(!render.renderMarkdown('<div>x</div>').includes('<div>'));
 });
+
+test('台词显式分页重平衡保留英文词间空格，不粘连单词', () => {
+  const { paginate } = load('dialogue/dialogue');
+  const pages = paginate('Hello\\world\\again\\today', 12, 2);
+  assert.ok(pages.length <= 2);
+  assert.ok(pages.map(p => p.text).join(' ').includes('Hello world'));
+  assert.ok(!pages.map(p => p.text).join('').includes('Helloworld'));
+});
+
+test('GAL 播放跳过首段 cue 空白与 0/N 页码，支持回看上一页与结尾 cue 立即收起', () => {
+  const timers = new Map();
+  let nextTimer = 0;
+  const { ChatView } = load('chat/view', {
+    './controller': {},
+    './msk/auth': {},
+    './typewriter': {
+      Typewriter: class {
+        typing = false;
+        start() { this.typing = true; }
+        finish() { this.typing = false; this.onDone?.(); }
+        cancel() { this.typing = false; }
+      },
+    },
+    './msk/config': loadMskConfig(),
+    './msk/control-bridge': {},
+    './msk/client': { MskClient: class {} },
+    './msk/provider': {},
+    './rendering/renderer': {},
+    './rendering/rules': {},
+    './rendering/emoji': {},
+    '../platform': { platform: 'tauri' },
+    '../settings': {},
+    '../toast': {},
+    './chat.css': {},
+  }, {
+    setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
+    clearTimeout: id => timers.delete(id),
+    window: { matchMedia: () => ({ matches: true }) },
+  });
+  const cues = [], reads = [];
+  const makePage = (cue = false, express = 'happy') => ({
+    hidden: true,
+    dataset: cue ? { express } : {},
+    classList: { contains: name => cue && name === 'msk-cue', add() {}, remove() {} },
+  });
+  const dots = { removed: false, remove() { this.removed = true; } };
+  const footer = { classList: { toggle() {} } };
+  const hint = { textContent: '', classList: { toggle() {}, remove() {} } };
+  const prevBtn = { hidden: true };
+  const panel = { hidden: false, style: { removeProperty() {}, setProperty() {}, getPropertyValue: () => '' }, classList: { toggle() {}, contains: () => false } };
+  const view = Object.create(ChatView.prototype);
+  Object.assign(view, {
+    controller: { onCue: c => cues.push(c), onCancelPerformance() {} },
+    screen: 'ready', replyActive: true, replyToken: 'r1', playing: true,
+    historyVisible: false, segments: [makePage(true, 'happy'), makePage(), makePage(), makePage(true, 'shy')],
+    pageIndex: 0, typewriter: null, cueTimer: null, pendingDots: dots, replyPageShown: false,
+    panel,
+    root: { querySelector: s => (s === '.prev-page' ? prevBtn : null), classList: { add() {}, remove() {} } },
+    content: { scrollTop: 0, scrollHeight: 100, ownerDocument: { getSelection: () => null } },
+    get: s => (s === '.gal-footer' ? footer : s === '.page-hint' ? hint : panel),
+    lockPanel: () => 100, reportLayout() {}, clearRendering() {}, hidePanelAnimated() { panel.hidden = true; },
+    updateLayoutMode() {}, markSessionRead() { reads.push(1); },
+  });
+  // 首段即 cue：保留打点占位且不渲染 0/2
+  view.showPage(0, true);
+  assert.equal(dots.removed, false);
+  assert.equal(cues.at(-1).expression, 'happy');
+  assert.equal(hint.textContent, '');
+  // cue 停顿结束切到第 1 可见页后撤掉打点，并可正常推进/回翻
+  const [id, entry] = timers.entries().next().value; timers.delete(id); entry.fn();
+  assert.equal(dots.removed, true);
+  assert.equal(view.pageIndex, 1);
+  assert.equal(prevBtn.hidden, true);
+  view.typewriter.finish();
+  assert.equal(hint.textContent, '点击继续 1/2');
+  view.advanceReply();
+  assert.equal(view.pageIndex, 2);
+  view.typewriter.finish();
+  assert.equal(prevBtn.hidden, false);
+  view.prevPage();
+  assert.equal(view.pageIndex, 1);
+  assert.equal(view.typewriter, null, '回翻页直接静态展示不重打字');
+  view.advanceReply();
+  view.typewriter.finish();
+  assert.equal(hint.textContent, '点击收起 2/2');
+  // 末页点击收起时直接派发尾随 cue 并收起，不在空白面板停 400ms
+  view.advanceReply();
+  assert.equal(cues.at(-1).expression, 'shy');
+  assert.equal(reads.length, 1);
+  assert.equal(panel.hidden, true);
+});

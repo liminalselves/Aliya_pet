@@ -232,3 +232,36 @@ test('未知状态回落到平静的待机池', () => {
   for (let i = 0; i < 10; i++) assert.ok(neutral[h.b.randomActionName()] > 0);
   h.b.stop();
 });
+
+test('GazeController 眼球先于头部跟随，且正常眨眼周期保持瞳孔开度上限不回中', () => {
+  const gazeExports = {};
+  vm.runInNewContext(source('gaze'), { exports: gazeExports, require: () => ({}) });
+  const { GazeController } = gazeExports;
+  const lookCalls = [];
+  const look = { updateParameters(_m, fx, fy) { lookCalls.push([fx, fy]); } };
+  const values = new Map();
+  const model = {
+    getParameterValueById: id => values.get(id) ?? 0,
+    setParameterValueById: (id, v) => values.set(id, v),
+    addParameterValueById: (id, v) => values.set(id, (values.get(id) ?? 0) + v),
+  };
+  const g = new GazeController(look, 'eyeX', 'eyeY');
+  g.setTarget(1, 0.5);
+  g.update(model, 0.05, { motionActive: false, reduction: 1, eyeOpenness: 1, blinking: false });
+  const eyeNorm = (values.get('eyeX') ?? 0) / 18;
+  const [headNorm] = lookCalls.at(-1);
+  assert.ok(eyeNorm > headNorm * 1.2, `眼球应先于头部转向目标 (eye=${eyeNorm.toFixed(3)}, head=${headNorm.toFixed(3)})`);
+
+  for (let i = 0; i < 120; i++) {
+    values.set('eyeX', 0); values.set('eyeY', 0);
+    g.update(model, 1 / 60, { motionActive: false, reduction: 1, eyeOpenness: 1, blinking: false });
+  }
+  const steadyX = values.get('eyeX');
+  assert.ok(steadyX > 17.9);
+  values.set('eyeX', 0); values.set('eyeY', 0);
+  g.update(model, 1 / 60, { motionActive: false, reduction: 1, eyeOpenness: 0, blinking: true });
+  assert.ok(values.get('eyeX') >= steadyX - 1e-6, `短暂自然眨眼期间瞳孔不应回中跳变 (got ${values.get('eyeX')} vs ${steadyX})`);
+  values.set('eyeX', 0); values.set('eyeY', 0);
+  g.update(model, 1 / 60, { motionActive: false, reduction: 1, eyeOpenness: 0, blinking: false });
+  assert.equal(values.get('eyeX'), 0, '非眨眼全闭眼应使瞳孔回中');
+});

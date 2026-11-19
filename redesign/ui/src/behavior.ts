@@ -88,11 +88,14 @@ export class BehaviorService {
   private readonly _now: () => number;
   private _lastPointerX = Number.NaN;
   private _lastPointerY = Number.NaN;
+  private _lastRawX = Number.NaN;
+  private _lastRawY = Number.NaN;
   private _lastPointerMoveMs: number;
   private _gazeReleased = false;
   private _lastNoticeMs = -Infinity;
   /** 当前（最近一次）动作是否是自动抽出的视线类演出。 */
   private _lastAutoWasGaze = false;
+  private _lastAutoAction: string | null = null;
 
   constructor(getHost: () => PetBehaviorHost | null, now: () => number = () => performance.now()) {
     this._getHost = getHost;
@@ -107,6 +110,7 @@ export class BehaviorService {
 
   /** 同步当前状态（状态引擎每次变化时调用）。 */
   setState(name: string): void {
+    if (this._state !== name) this._lastAutoAction = null;
     this._state = name;
   }
 
@@ -181,7 +185,12 @@ export class BehaviorService {
       ) + AUTO_ACTION_MIN_SECONDS;
     this._autoActionTimer = setTimeout(() => {
       if (this.petRunning && this.autoActions && !this.isDragging && this.canIdle() && !this._getHost()?.isActionPlaying) {
-        const name = this.randomActionName();
+        let name = this.randomActionName();
+        if (name === this._lastAutoAction) {
+          const retry = this.randomActionName();
+          if (retry !== this._lastAutoAction) name = retry;
+        }
+        this._lastAutoAction = name;
         this.playAction(name);
         this._lastAutoWasGaze = isGazeAction(name);
       }
@@ -232,18 +241,21 @@ export class BehaviorService {
     // 窗口坐标向下为正，但 Live2D 视线向上为正，因此翻转 y
     const y01 = clamp01(1 - pointerNormY);
 
-    // 静止检测：桌面端每帧都会重复上报同一坐标，只有真正移动才刷新计时。
+    // 静止检测：用未钳制坐标比较移动，防止窗外沿屏边滑动被 clamp01 折算为静止并误触发 notice。
     const now = this._now();
-    const moved = newContact || !(Math.abs(x01 - this._lastPointerX) <= POINTER_MOVE_EPSILON &&
-      Math.abs(y01 - this._lastPointerY) <= POINTER_MOVE_EPSILON);
+    const moved = newContact || !(Math.abs(pointerNormX - this._lastRawX) <= POINTER_MOVE_EPSILON &&
+      Math.abs(pointerNormY - this._lastRawY) <= POINTER_MOVE_EPSILON);
     if (moved) {
       const stillSeconds = (now - this._lastPointerMoveMs) / 1000;
+      this._lastRawX = pointerNormX;
+      this._lastRawY = pointerNormY;
       this._lastPointerX = x01;
       this._lastPointerY = y01;
       this._lastPointerMoveMs = now;
       if (this._gazeReleased) {
         this._gazeReleased = false;
-        this._maybeNotice(now, stillSeconds);
+        const nearPet = pointerNormX >= -0.35 && pointerNormX <= 1.35 && pointerNormY >= -0.35 && pointerNormY <= 1.35;
+        if (nearPet) this._maybeNotice(now, stillSeconds);
       }
       this._scheduleGazeRelease();
     } else {
@@ -260,6 +272,7 @@ export class BehaviorService {
   clearLookTarget(): void {
     this._cancelGazeRelease();
     this._lastPointerX = this._lastPointerY = Number.NaN;
+    this._lastRawX = this._lastRawY = Number.NaN;
     this._lastPointerMoveMs = this._now();
     this._gazeReleased = false;
     this._getHost()?.clearLookTarget();

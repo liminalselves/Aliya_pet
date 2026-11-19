@@ -47,11 +47,14 @@
 .al-toast-text { min-width: 0; overflow-wrap: anywhere; }
 
 /* 聊天界面底部是输入框：提示改放顶部，不遮输入。
-   Windows 聊天窗的卡片上方是透明穿透区；Android 主界面顶部是角色头顶留白。 */
+   Windows 聊天窗的卡片上方是透明穿透区；Android 主界面顶部是角色头顶留白（右侧留出菜单钮空间）。 */
 body.chat-window .al-toast,
 body.android-main .al-toast {
   top: calc(16px + env(safe-area-inset-top, 0px));
   bottom: auto;
+}
+body.android-main .al-toast {
+  max-width: min(360px, calc(100vw - 128px));
 }
 body.chat-window .al-toast.in, body.android-main .al-toast.in { --al-rise: -8px; }
 body.chat-window .al-toast.out, body.android-main .al-toast.out { --al-sink: -4px; }

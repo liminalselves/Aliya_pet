@@ -9,19 +9,51 @@
   position: fixed;
   inset: 8px 8px auto;
   z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
   max-height: calc(100% - 16px);
   overflow: auto;
   box-sizing: border-box;
-  padding: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--al-line-strong);
+  border-left: 3px solid var(--al-warning);
   border-radius: var(--al-r-m);
   background: var(--al-surface-card-strong);
+  box-shadow: var(--al-shadow-2);
   color: var(--al-text-1);
-  font: 12px/1.5 var(--al-font-serif);
+  font: 12px/1.5 var(--al-font);
   overflow-wrap: anywhere;
+  animation: al-rise-in var(--al-t-med) var(--al-ease);
 }
-.pet-startup-notice p { margin: 0 0 6px; }
-.pet-startup-notice button { cursor: pointer; }
+.pet-startup-notice p { flex: 1 1 180px; margin: 0; color: var(--al-text-2); }
+.pet-startup-notice button {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--al-r-pill);
+  background: var(--al-accent);
+  color: var(--al-on-accent);
+  font: 600 12px/1 var(--al-font);
+  cursor: pointer;
+  transition: background var(--al-t-fast) var(--al-ease), transform var(--al-t-fast) var(--al-ease);
+}
+.pet-startup-notice button:hover:not(:disabled) { background: var(--al-accent-strong); }
+.pet-startup-notice button:active:not(:disabled) { transform: scale(.96); }
+.pet-startup-notice button:disabled { opacity: .5; cursor: default; }
+.pet-startup-notice button:focus-visible { outline: none; box-shadow: var(--al-focus-ring); }
+.pet-startup-notice button.pet-startup-notice-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--al-bg-3);
+  color: var(--al-text-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+.pet-startup-notice button.pet-startup-notice-close:hover { background: var(--al-bg-4); color: var(--al-text-1); }
 
 /* 贴边完成后短暂提示，不改变拖动中的视觉与命中区域。
    画在舞台（#stage）上，不画在整个外窗上：桌面外窗是固定容量的，缩小后舞台只占其中一块，
@@ -138,6 +170,8 @@ body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; displ
 }
 
 body.android-main { background:var(--al-bg-0); }
+/* Android 主界面：气泡在角色头顶独立空间，点击可提前翻页/收起；桌面/悬浮窗仍保持穿透不挡抚摸。 */
+body.android-main #dialogue-bubble { pointer-events: auto; cursor: pointer; }
 /* 主界面舞台位置与大小静态：不为输入框、回复卡或软键盘让位（它们直接盖在角色上）。
    高度钉住首个视口（--stage-h 由 pet-app 写入，只在旋转屏幕时更新），键盘弹出 WebView
    变矮时角色不缩小、不上移，与聊天背景层同一口径。 */
