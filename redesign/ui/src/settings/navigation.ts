@@ -40,7 +40,7 @@ export function getSettingsTabs(platform: PlatformKind): readonly SettingsTabMet
       title: '聊天',
       description: isAndroid
         ? 'Misskey 会话连接、展示偏好与主界面背景'
-        : 'Misskey 会话连接与回复展示偏好',
+        : 'Misskey 会话连接、展示偏好与聊天背景',
     },
     {
       id: 'about',

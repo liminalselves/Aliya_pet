@@ -34,12 +34,15 @@ import { ACTIONS, EXPRESSIONS, STATES } from './catalog';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from './chat/msk/config';
 import { mountAgentControls, type AgentControlHandle } from './chat/msk/control-drawer';
 import {
+  AUTO_BACKGROUND,
   CHAT_SCENES,
   CUSTOM_BACKGROUND,
   NO_BACKGROUND,
   deleteCustomBackground,
   loadCustomBackground,
+  resolveAutoScene,
   saveCustomBackground,
+  type ChatScene,
 } from './chat-background';
 import { checkForUpdate } from './update/check';
 import { OFFICIAL_SITE_URL } from './update/config';
@@ -71,6 +74,8 @@ type Listen = (event: string, cb: () => void) => void;
 
 let emitToPet: Emit = () => {};
 let emitToPendant: Emit = () => {};
+let emitToChat: Emit = () => {};
+let emitToRecords: Emit = () => {};
 let onSettingsChanged: Listen = () => {};
 /** pet 窗口推送的状态：manual=null 表示自动。 */
 type PetStatePayload = { state: string; manual: string | null };
@@ -85,6 +90,12 @@ if (platform === 'tauri') {
     };
     emitToPendant = (event, payload) => {
       ev.emitTo('pendant', event, payload).catch(() => {});
+    };
+    emitToChat = (event, payload) => {
+      ev.emitTo('chat', event, payload).catch(() => {});
+    };
+    emitToRecords = (event, payload) => {
+      ev.emitTo('records', event, payload).catch(() => {});
     };
     onSettingsChanged = (event, cb) => {
       ev.listen(event, cb).catch(() => {});
@@ -108,6 +119,8 @@ function update(patch: Partial<PetSettings>): void {
   saveSettings(settings);
   emitToPet('settings-changed', settings);
   emitToPendant('settings-changed', settings);
+  emitToChat('settings-changed', settings);
+  emitToRecords('settings-changed', settings);
   // 安卓：设置页与桌宠页是两个 WebView，经壳桥转发实时生效
   if (platform === 'android') {
     try {
@@ -1099,17 +1112,45 @@ let agentControls!: AgentControlHandle;
   ).input;
   refs.showGeneratedImages.setAttribute('aria-label', '显示生成配图');
 
-  // 卡片 3：聊天背景（仅 Android 主界面）
-  if (platform === 'android') {
+  // 卡片 3：聊天背景（全端通用：Android 主界面/记录页、Windows 对话面板/记录窗、Web 舞台/记录页）
+  {
+    const bgDesc =
+      platform === 'android'
+        ? '主界面与记录页内置场景、插画、自定义图及暗化强度'
+        : platform === 'tauri'
+          ? '对话面板与记录窗口内置场景、插画、自定义图及暗化强度'
+          : '舞台与记录页内置场景、插画、自定义图及暗化强度';
     const bgCard = createCard(group, {
       title: '聊天背景',
-      desc: '主界面内置场景、自定义图与暗化强度',
+      desc: bgDesc,
     });
-    const grid = document.createElement('div');
-    grid.className = 'bg-grid';
-    grid.setAttribute('role', 'radiogroup');
-    grid.setAttribute('aria-label', '聊天背景');
-    bgCard.body.appendChild(grid);
+    const groupsWrap = document.createElement('div');
+    groupsWrap.setAttribute('role', 'radiogroup');
+    groupsWrap.setAttribute('aria-label', '聊天背景');
+    bgCard.body.appendChild(groupsWrap);
+
+    const addSectionGrid = (heading: string, extraClass = '') => {
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = heading;
+      const grid = document.createElement('div');
+      grid.className = `bg-grid ${extraClass}`.trim();
+      groupsWrap.append(hint, grid);
+      return grid;
+    };
+
+    const baseGrid = addSectionGrid('模式与自定义', 'bg-grid-base');
+    const autoNote = document.createElement('p');
+    autoNote.className = 'bg-auto-note';
+    autoNote.hidden = true;
+    groupsWrap.appendChild(autoNote);
+
+    const actions = document.createElement('div');
+    actions.className = 'bg-actions';
+    groupsWrap.appendChild(actions);
+
+    const animatedGrid = addSectionGrid('动态场景', 'bg-grid-animated');
+    const illusGrid = addSectionGrid('主题插画', 'bg-grid-illus');
 
     const status = document.createElement('p');
     status.className = 'hint bg-status';
@@ -1123,8 +1164,30 @@ let agentControls!: AgentControlHandle;
 
     let customUrl: string | null = null;
     let hasCustom = false;
+    let lastAutoSceneId = '';
     const tiles = new Map<string, HTMLButtonElement>();
-    const tile = (id: string, name: string, preview: HTMLElement | null, extraClass = '') => {
+
+    const sceneThumbnail = (scene: ChatScene): HTMLElement => {
+      if (scene.kind === 'illustration' && scene.imageUrl) {
+        const img = document.createElement('img');
+        img.className = 'bg-thumb-img';
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.src = scene.imageUrl;
+        if (scene.focusPosition) img.style.objectPosition = scene.focusPosition;
+        return img;
+      }
+      return scene.build();
+    };
+
+    const tile = (
+      targetGrid: HTMLElement,
+      id: string,
+      name: string,
+      preview: HTMLElement | null,
+      extraClass = ''
+    ) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `bg-tile ${extraClass}`.trim();
@@ -1136,13 +1199,11 @@ let agentControls!: AgentControlHandle;
       label.className = 'bg-name';
       label.textContent = name;
       b.append(thumb, label);
-      grid.appendChild(b);
+      targetGrid.appendChild(b);
       tiles.set(id, b);
       return b;
     };
 
-    const actions = document.createElement('div');
-    actions.className = 'bg-actions';
     const replace = document.createElement('button');
     replace.type = 'button';
     replace.className = 'act';
@@ -1155,6 +1216,22 @@ let agentControls!: AgentControlHandle;
 
     let dimHandle!: SliderRowHandle;
     const sync = () => {
+      const autoMatch = resolveAutoScene();
+      const autoTile = tiles.get(AUTO_BACKGROUND);
+      if (autoTile) {
+        const autoThumb = autoTile.querySelector<HTMLElement>('.bg-thumb')!;
+        autoThumb.dataset.autoBadge = autoMatch.periodName;
+        if (autoMatch.scene.id !== lastAutoSceneId) {
+          lastAutoSceneId = autoMatch.scene.id;
+          autoThumb.replaceChildren(sceneThumbnail(autoMatch.scene));
+        }
+      }
+      const isAuto = settings.chatBackground === AUTO_BACKGROUND;
+      autoNote.hidden = !isAuto;
+      if (isAuto) {
+        autoNote.textContent = `当前时段为「${autoMatch.periodName}」，已匹配「${autoMatch.scene.name}」（清晨·轨道晨晓 / 昼间·深空培育室 / 黄昏·永恒黄昏 / 夜航·星舰观测室 / 深夜·星海月湾）`;
+      }
+
       for (const [id, b] of tiles) {
         const on = settings.chatBackground === id;
         b.classList.toggle('on', on);
@@ -1171,17 +1248,15 @@ let agentControls!: AgentControlHandle;
     };
     refs.chatBgSync = sync;
 
-    tile(NO_BACKGROUND, '无背景', null, 'plain').addEventListener('click', () => {
+    tile(baseGrid, NO_BACKGROUND, '无背景', null, 'plain').addEventListener('click', () => {
       update({ chatBackground: NO_BACKGROUND });
       sync();
     });
-    for (const p of CHAT_SCENES) {
-      tile(p.id, p.name, p.build()).addEventListener('click', () => {
-        update({ chatBackground: p.id });
-        sync();
-      });
-    }
-    tile(CUSTOM_BACKGROUND, '上传图片', null, 'custom').addEventListener('click', () => {
+    tile(baseGrid, AUTO_BACKGROUND, '随时间流转', null, 'auto').addEventListener('click', () => {
+      update({ chatBackground: AUTO_BACKGROUND });
+      sync();
+    });
+    tile(baseGrid, CUSTOM_BACKGROUND, '上传图片', null, 'custom').addEventListener('click', () => {
       if (hasCustom) {
         update({ chatBackground: CUSTOM_BACKGROUND });
         sync();
@@ -1189,6 +1264,14 @@ let agentControls!: AgentControlHandle;
         picker.click();
       }
     });
+
+    for (const p of CHAT_SCENES) {
+      const targetGrid = p.kind === 'illustration' ? illusGrid : animatedGrid;
+      tile(targetGrid, p.id, p.name, sceneThumbnail(p)).addEventListener('click', () => {
+        update({ chatBackground: p.id });
+        sync();
+      });
+    }
 
     remove.addEventListener('click', async () => {
       try {
@@ -1208,7 +1291,6 @@ let agentControls!: AgentControlHandle;
       sync();
     });
     actions.append(replace, remove);
-    bgCard.body.appendChild(actions);
 
     picker.addEventListener('change', async () => {
       const file = picker.files?.[0];
@@ -1253,6 +1335,7 @@ let agentControls!: AgentControlHandle;
     refs.chatBgDim = dimHandle;
 
     sync();
+    window.addEventListener('focus', sync);
     void loadCustomBackground().then((blob) => {
       if (!blob) return;
       hasCustom = true;

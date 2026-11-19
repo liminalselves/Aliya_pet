@@ -47,6 +47,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 /* ---- 回复/连接面板 ---- */
 .gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - var(--chat-composer-height,52px) - 8px); border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; transform-origin:50% 100%; }
+.gal-panel.has-chat-bg { background:var(--al-bg-2); }
 .chat-shell.with-panel .gal-panel { min-height:min(88px,calc(100% - var(--chat-composer-height,52px) - 8px)); }
 /* 关闭钮自带底色圆片浮在内容上（同生图重生成按钮的处理），内容区不再为它预留右侧全高 padding。 */
 .close-panel { position:absolute; top:8px; right:8px; z-index:2; display:grid!important; place-items:center; width:22px; height:22px; padding:0!important; border-radius:50%!important; background:transparent!important; color:var(--al-text-3); opacity:.8; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),opacity var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
@@ -54,7 +55,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-panel:hover .close-panel { opacity:1; }
 .close-panel:hover { background:var(--al-overlay-chip-hover)!important; color:var(--al-text-1); }
 .close-panel:active { transform:scale(.88); }
-.gal-content { flex:1; min-height:0; padding:14px 34px 10px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font-serif); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content { position:relative; z-index:1; flex:1; min-height:0; padding:14px 34px 10px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font-serif); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
 .gal-content::selection,.message-text::selection { background:var(--al-selection); }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
 .gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
@@ -157,7 +158,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .unread-dot { position:relative; width:5px; height:5px; border-radius:50%; background:var(--al-gold); }
 /* 呼吸涟漪：会话列表里「有新消息」的等待性提醒（Magic UI pulsating 思路的纯 CSS 版） */
 .unread-dot::after { content:''; position:absolute; inset:-3px; border-radius:50%; border:1px solid var(--al-gold); animation:al-pulse-ring 1.8s var(--al-ease) infinite; }
-.gal-footer { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:10px; height:0; padding:0 16px; overflow:hidden; opacity:0; color:var(--al-text-4); font-size:10.5px; font-variant-numeric:tabular-nums; transition:opacity var(--al-t-med) var(--al-ease); }
+.gal-footer { position:relative; z-index:1; display:flex; flex:none; align-items:center; justify-content:flex-end; gap:10px; height:0; padding:0 16px; overflow:hidden; opacity:0; color:var(--al-text-4); font-size:10.5px; font-variant-numeric:tabular-nums; transition:opacity var(--al-t-med) var(--al-ease); }
 .gal-footer.show { height:24px; padding:0 16px 8px; opacity:1; }
 .page-hint { display:flex; align-items:center; gap:6px; }
 /* 本页播完：提示变亮，前面一枚小三角轻轻呼吸，示意可点 */

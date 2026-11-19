@@ -1,119 +1,625 @@
 /**
- * 内置聊天背景场景（chat-scenes.ts 构建 DOM）。
- * 场景根是 size 容器：子元素尺寸用 cqw/cqh/cqmin，全屏与缩略图同构，任意宽高比都重新排布。
- * 构图避让：角色站在中线、脚底约在 78% 高度，回复卡与输入框在下方，装饰集中在上方与两侧。
- * 守 tokens.css 红线：平涂色块与细线，不用光晕、模糊与发光；动效只走 transform/opacity。
+ * 聊天背景层与内置场景（chat-background.ts + chat-scenes.ts）。
+ * 场景根是 size 容器：子元素尺寸用 cqw/cqh/cqmin，在全屏舞台、记录页、对话卡片与设置缩略图中同构排布。
+ * 构图避让：中央区域留白低对比衬托 Aliya 剪影，顶部 y<22%（避开猫耳）与两侧布置细节，
+ * 下方 y>=74% 提供清晰地面/台面承接角色站立。
+ * 动效仅驱动 transform/opacity；省电模式、后台、覆盖及减少动态时自动暂停。
  */
-.bg-scene { position:absolute; inset:0; overflow:hidden; container-type:size; border-radius:inherit; }
-.bg-scene > *, .bg-scene svg { position:absolute; }
-.bg-scene.still *, .bg-scene.still *::before, .bg-scene.still *::after { animation-play-state:paused !important; }
+
+/* ---------- 共享背景容器层（舞台 / 记录页 / 对话卡） ---------- */
+.chat-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--al-t-slow) var(--al-ease);
+}
+.chat-bg[data-surface='records'],
+.chat-bg[data-surface='card'] {
+  position: absolute;
+}
+.chat-bg.active {
+  opacity: 1;
+}
+.chat-bg-slot {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--al-t-slow) var(--al-ease);
+}
+.chat-bg-slot.shown {
+  opacity: 1;
+}
+.chat-bg-img,
+.bg-scene .illus-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.chat-bg-dim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--al-bg-0);
+  opacity: var(--bg-dim, 0.35);
+  transition: opacity var(--al-t-med) var(--al-ease);
+}
+/* 对话卡与记录页需保障大段阅读文本的高对比度，为暗化遮罩提供最小可读保底。 */
+.chat-bg[data-surface='card'] .chat-bg-dim {
+  opacity: calc(0.46 + var(--bg-dim, 0.35) * 0.46);
+}
+.chat-bg[data-surface='records'] .chat-bg-dim {
+  opacity: calc(0.2 + var(--bg-dim, 0.35) * 0.72);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .bg-scene *, .bg-scene *::before, .bg-scene *::after { animation-play-state:paused !important; }
+  .chat-bg,
+  .chat-bg-slot {
+    transition: none;
+  }
 }
 
-/* ---------- 星夜：低饱和夜空、新月、三层远山、偶发流星 ---------- */
-/* 天色自上而下：夜紫 → 黛灰 → 地平线处一抹暮粉（取腮红主色压暗），远山剪影压在暮色上。 */
-.scene-starry { background:linear-gradient(180deg, #120f1b 0%, #1a1524 38%, #2a1e2c 64%, #3d2833 80%, #2a1d25 100%); }
-.scene-starry .stars { inset:0; animation:scene-twinkle 6s ease-in-out infinite alternate; }
-.scene-starry .stars.b { animation-duration:8.5s; animation-delay:-3s; }
-.scene-starry .stars.c { animation-duration:11s; animation-delay:-6s; }
-.scene-starry .star { position:absolute; width:max(1.2px, var(--sz)); height:max(1.2px, var(--sz)); border-radius:50%; background:#efe6dc; opacity:var(--o); }
-.scene-starry .star.gold { background:#d9b47c; }
-.scene-starry .star.blush { background:#e29ba3; }
-@keyframes scene-twinkle { from { opacity:1; } to { opacity:.32; } }
+/* ---------- 场景容器与公共星点层 ---------- */
+.bg-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  container-type: size;
+  border-radius: inherit;
+}
+.bg-scene > *,
+.bg-scene svg {
+  position: absolute;
+}
+.bg-scene.still *,
+.bg-scene.still *::before,
+.bg-scene.still *::after {
+  animation-play-state: paused !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-scene *,
+  .bg-scene *::before,
+  .bg-scene *::after {
+    animation-play-state: paused !important;
+  }
+}
 
-/* 新月：内阴影切出月牙（无模糊半径），外圈极淡的地照圆盘交代月体。 */
+.bg-scene .stars {
+  inset: 0;
+  animation: scene-twinkle 6s ease-in-out infinite alternate;
+}
+.bg-scene .stars.b {
+  animation-duration: 8.5s;
+  animation-delay: -3s;
+}
+.bg-scene .stars.c {
+  animation-duration: 11s;
+  animation-delay: -6s;
+}
+.bg-scene .star {
+  position: absolute;
+  width: max(1.2px, var(--sz));
+  height: max(1.2px, var(--sz));
+  border-radius: 50%;
+  background: #efe6dc;
+  opacity: var(--o);
+}
+.bg-scene .star.gold {
+  background: #d9b47c;
+}
+.bg-scene .star.blush {
+  background: #e29ba3;
+}
+.bg-scene .star.violet {
+  background: #aba4e0;
+}
+
+@keyframes scene-twinkle {
+  from { opacity: 1; }
+  to { opacity: 0.3; }
+}
+@keyframes scene-float {
+  from { transform: translateY(-0.5cqh); }
+  to { transform: translateY(0.7cqh); }
+}
+
+/* ---------- 1. 星夜：山巅观星石台 + 新月 + 远山薄雾 + 微弱灯柱 ---------- */
+.scene-starry {
+  background: linear-gradient(180deg, #0d0c19 0%, #171529 36%, #291e31 62%, #3a2634 76%, #18141b 100%);
+}
+.scene-starry .milky-way {
+  left: -18cqw;
+  top: 2cqh;
+  width: 140cqw;
+  height: 44cqh;
+  transform: rotate(-16deg);
+  background: radial-gradient(ellipse 68% 45% at 52% 50%, rgba(171, 164, 224, 0.14), rgba(226, 155, 163, 0.07) 50%, transparent 78%);
+}
+.scene-starry .moon-glow {
+  --g: min(36cqmin, 40cqh);
+  left: 15cqw;
+  top: 7.5cqh;
+  width: var(--g);
+  height: var(--g);
+  transform: translate(-32%, -32%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(239, 226, 211, 0.2), rgba(226, 155, 163, 0.07) 48%, transparent 72%);
+}
 .scene-starry .moon {
-  --m:min(22cqmin, 26cqh);
-  top:11cqh; right:13cqw; width:var(--m); height:var(--m); border-radius:50%;
-  box-shadow:inset calc(var(--m) * -.24) calc(var(--m) * .1) 0 0 #efe2d3;
-  background:rgba(239, 226, 211, .06);
-  animation:scene-float 14s ease-in-out infinite alternate;
+  --m: min(14cqmin, 15cqh);
+  left: 15cqw;
+  top: 7.5cqh;
+  width: var(--m);
+  height: var(--m);
+  border-radius: 50%;
+  box-shadow: inset calc(var(--m) * -0.25) calc(var(--m) * 0.1) 0 0 #efe2d3;
+  background: rgba(239, 226, 211, 0.05);
+  animation: scene-float 14s ease-in-out infinite alternate;
 }
-@keyframes scene-float { from { transform:translateY(-.5cqh); } to { transform:translateY(.7cqh); } }
-
 .scene-starry .meteor {
-  top:16cqh; left:12cqw; width:26cqmin; height:max(1px, .22cqmin); border-radius:1px;
-  background:linear-gradient(90deg, rgba(239, 226, 211, 0), rgba(239, 226, 211, .85));
-  transform-origin:100% 50%; opacity:0;
-  animation:scene-meteor 17s cubic-bezier(.3, 0, .2, 1) infinite; animation-delay:4s;
+  top: 13cqh;
+  left: 34cqw;
+  width: 24cqmin;
+  height: max(1px, 0.22cqmin);
+  border-radius: 1px;
+  background: linear-gradient(90deg, rgba(239, 226, 211, 0), rgba(239, 226, 211, 0.9));
+  transform-origin: 100% 50%;
+  opacity: 0;
+  animation: scene-meteor 17s cubic-bezier(0.3, 0, 0.2, 1) infinite;
+  animation-delay: 4s;
 }
 @keyframes scene-meteor {
-  0%, 88% { opacity:0; transform:rotate(24deg) translateX(0) scaleX(.4); }
-  90% { opacity:1; }
-  96%, 100% { opacity:0; transform:rotate(24deg) translateX(44cqmin) scaleX(1); }
+  0%, 88% { opacity: 0; transform: rotate(22deg) translateX(0) scaleX(0.4); }
+  90% { opacity: 1; }
+  96%, 100% { opacity: 0; transform: rotate(22deg) translateX(42cqmin) scaleX(1); }
 }
+.scene-starry .hills {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 40cqh;
+}
+.scene-starry .hills .far { fill: #352536; }
+.scene-starry .hills .far-rim { stroke: rgba(226, 155, 163, 0.24); }
+.scene-starry .hills .mid { fill: #251b29; }
+.scene-starry .hills .near { fill: #19141d; }
+.scene-starry .terrace { fill: #1b171f; }
+.scene-starry .terrace-edge { stroke: rgba(239, 226, 211, 0.18); }
+.scene-starry .terrace-seams line { stroke: rgba(239, 226, 211, 0.08); }
+.scene-starry .terrace-posts .wall-wing { fill: #231e28; stroke: rgba(255, 246, 236, 0.14); stroke-width: 1; }
+.scene-starry .terrace-posts .lantern-housing,
+.scene-starry .terrace-posts path { fill: #2b2430; stroke: rgba(255, 246, 236, 0.16); stroke-width: 1; }
+.scene-starry .terrace-posts .lantern-core { fill: rgba(243, 198, 138, 0.88); }
+.scene-starry .mist {
+  left: 0;
+  right: 0;
+  bottom: 24cqh;
+  height: 15cqh;
+  background: linear-gradient(180deg, transparent, rgba(226, 155, 163, 0.12) 55%, transparent);
+}
+.scene-starry .lantern-halo {
+  bottom: 20cqh;
+  width: 24cqw;
+  height: 20cqh;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(243, 198, 138, 0.22), transparent 68%);
+}
+.scene-starry .lantern-halo.left { left: -4cqw; }
+.scene-starry .lantern-halo.right { right: -4cqw; }
 
-.scene-starry .hills { left:0; bottom:0; width:100%; height:34cqh; }
-.scene-starry .hills .far { fill:#3a2836; }
-.scene-starry .hills .mid { fill:#271c27; }
-.scene-starry .hills .near { fill:#161218; }
-
-/* ---------- 圆窗：暖墨墙面中的月洞窗，窗外月色与花枝，花瓣慢落 ---------- */
-.scene-window { background:linear-gradient(180deg, #1d1918 0%, #221c1b 70%, #1a1514 100%); }
-.scene-window .floor { left:0; right:0; bottom:0; height:22cqh; background:#171211; box-shadow:inset 0 1px 0 rgba(255, 246, 236, .07); }
-/* 窗框是两道无模糊的扩散阴影，窗心对准角色头肩，人物像站在月洞窗前。 */
+/* ---------- 2. 圆窗：高月洞拱门 + 明月繁花 + 游廊木阶 + 飘瓣 ---------- */
+.scene-window {
+  background: linear-gradient(180deg, #1b1616 0%, #241d1c 66%, #181312 100%);
+}
+.scene-window .wall-wash {
+  inset: 0;
+  background: radial-gradient(circle at 50% 34cqh, rgba(226, 155, 163, 0.11), transparent 64%);
+}
 .scene-window .win {
-  --d:min(78cqw, 47cqh);
-  left:50%; top:39cqh; width:var(--d); height:var(--d); border-radius:50%; overflow:hidden;
-  transform:translate(-50%, -50%);
-  background:linear-gradient(180deg, #23223a 0%, #3a2f47 62%, #533a4a 100%);
-  box-shadow:0 0 0 max(3px, 1.3cqmin) #3a302c, 0 0 0 max(4px, 1.9cqmin) #2a2220;
+  left: 50%;
+  top: 40cqh;
+  width: min(82cqw, 64cqh);
+  height: min(124cqw, 70cqh);
+  border-radius: 999px 999px 0 0;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(180deg, #171a31 0%, #2b2743 44%, #493448 82%, #291e27 100%);
+  box-shadow: inset 0 10px 28px rgba(0, 0, 0, 0.45);
 }
-.scene-window .win-moon { position:absolute; left:26%; top:20%; width:20%; height:20%; border-radius:50%; background:#e8d9c8; opacity:.92; animation:scene-float 16s ease-in-out infinite alternate; }
-.scene-window .win-view { inset:0; width:100%; height:100%; }
-.scene-window .ridge { fill:#241c2a; }
-.scene-window .branch { stroke:#1a1316; }
-.scene-window .blossom { fill:#d98f99; }
-.scene-window .blossom.light { fill:#f0c4c9; }
-.scene-window .branch, .scene-window .blossom {
-  transform-box:view-box; transform-origin:100% 30%;
-  animation:scene-sway 9s ease-in-out infinite alternate;
+.scene-window .win-glow {
+  position: absolute;
+  left: 25%;
+  top: 18%;
+  width: 46%;
+  height: 40%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(239, 224, 206, 0.28), transparent 70%);
 }
-@keyframes scene-sway { from { transform:rotate(-1.4deg); } to { transform:rotate(1.2deg); } }
-
+.scene-window .win-moon {
+  position: absolute;
+  left: 17%;
+  top: 10%;
+  width: min(17%, 20cqmin);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 36%, #faf2e8 0%, #e8d9c8 74%, #ccb8b0 100%);
+  box-shadow: 0 0 18px rgba(232, 217, 200, 0.32);
+  animation: scene-float 16s ease-in-out infinite alternate;
+}
+.scene-window .win-view { inset: 0; width: 100%; height: 100%; }
+.scene-window .ridge { fill: #241b2a; }
+.scene-window .foliage-side path { fill: #1c1722; }
+.scene-window .branch { stroke: #181115; }
+.scene-window .blossom { fill: #df959f; }
+.scene-window .blossom.light { fill: #f4cdd2; }
+.scene-window .branch,
+.scene-window .blossom {
+  transform-box: view-box;
+  transform-origin: 100% 18%;
+  animation: scene-sway 9s ease-in-out infinite alternate;
+}
+@keyframes scene-sway {
+  from { transform: rotate(-1.4deg); }
+  to { transform: rotate(1.2deg); }
+}
+.scene-window .alcove-frame {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.scene-window .alcove-trim { stroke: #483a34; }
+.scene-window .alcove-lattice { stroke: rgba(239, 226, 211, 0.12); }
+.scene-window .veranda { fill: #1a1413; }
+.scene-window .veranda-edge { stroke: rgba(255, 246, 236, 0.16); }
+.scene-window .veranda-seams line { stroke: rgba(255, 246, 236, 0.08); }
+.scene-window .side-lantern .lantern-base,
+.scene-window .side-lantern .lantern-cap {
+  fill: #2c221f;
+  stroke: rgba(255, 246, 236, 0.14);
+  stroke-width: 1;
+}
+.scene-window .side-lantern .lantern-paper {
+  fill: rgba(243, 198, 138, 0.82);
+  stroke: #493831;
+  stroke-width: 1.5;
+}
+.scene-window .veranda-glow {
+  bottom: 12cqh;
+  width: 28cqw;
+  height: 22cqh;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(243, 198, 138, 0.2), transparent 68%);
+}
+.scene-window .veranda-glow.left { left: -6cqw; }
+.scene-window .veranda-glow.right { right: -6cqw; }
 .scene-window .petal {
-  top:-4cqh; width:max(4px, 1.7cqmin); height:max(3px, 1.15cqmin);
-  border-radius:70% 0 70% 0; background:#e29ba3; opacity:0;
-  animation:scene-petal linear infinite;
+  top: -4cqh;
+  width: max(4px, 1.7cqmin);
+  height: max(3px, 1.15cqmin);
+  border-radius: 70% 0 70% 0;
+  background: #e29ba3;
+  opacity: 0;
+  animation: scene-petal linear infinite;
 }
 @keyframes scene-petal {
-  0% { opacity:0; transform:translate(0, 0) rotate(0) scale(var(--s)); }
-  8% { opacity:var(--o); }
-  85% { opacity:var(--o); }
-  100% { opacity:0; transform:translate(var(--dx), 110cqh) rotate(var(--r)) scale(var(--s)); }
+  0% { opacity: 0; transform: translate(0, 0) rotate(0) scale(var(--s)); }
+  8% { opacity: var(--o); }
+  85% { opacity: var(--o); }
+  100% { opacity: 0; transform: translate(var(--dx), 110cqh) rotate(var(--r)) scale(var(--s)); }
 }
 
-/* ---------- 涟漪：极简几何，脚下水纹扩散，两道轨道缓转 ---------- */
-/* 冷暖分层：上方瞳紫的深夜，下方腮红地面；背后一轮实心淡月盘托住角色轮廓。 */
-.scene-ripple { background:linear-gradient(180deg, #14121d 0%, #1b1726 55%, #261c26 78%, #1d161c 100%); }
-.scene-ripple .disc { left:50%; top:40cqh; width:min(70cqw, 44cqh); height:min(70cqw, 44cqh); border-radius:50%; transform:translate(-50%, -50%); background:linear-gradient(180deg, rgba(171, 164, 224, .1), rgba(226, 155, 163, .07)); }
-.scene-ripple .horizon { left:0; right:0; top:78cqh; height:1px; background:linear-gradient(90deg, transparent, rgba(226, 155, 163, .28) 30%, rgba(226, 155, 163, .28) 70%, transparent); }
-.scene-ripple .orbit, .scene-ripple .orbiter {
-  left:50%; top:44cqh; border-radius:50%; transform:translate(-50%, -50%);
+/* ---------- 3. 涟漪：星轨浑天水镜 + 细密星盘光环 + 脚下清波 ---------- */
+.scene-ripple {
+  background: linear-gradient(180deg, #10101e 0%, #1b182e 48%, #2c2036 74%, #15121c 100%);
 }
-.scene-ripple .outer { width:min(120cqw, 76cqh); height:min(120cqw, 76cqh); }
-.scene-ripple .inner { width:min(84cqw, 53cqh); height:min(84cqw, 53cqh); }
-.scene-ripple .orbit.outer { box-shadow:inset 0 0 0 1px rgba(255, 246, 236, .1); }
-.scene-ripple .orbit.inner { box-shadow:inset 0 0 0 1px rgba(171, 164, 224, .18); }
-.scene-ripple .orbiter { animation:scene-orbit 90s linear infinite; }
-.scene-ripple .orbiter.inner { animation-duration:64s; animation-direction:reverse; }
+.scene-ripple .disc {
+  left: 50%;
+  top: 40cqh;
+  width: min(88cqw, 56cqh);
+  height: min(88cqw, 56cqh);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(171, 164, 224, 0.22) 0%, rgba(226, 155, 163, 0.11) 52%, transparent 74%);
+}
+.scene-ripple .astrolabe {
+  --a: min(94cqw, 58cqh);
+  left: 50%;
+  top: 41cqh;
+  width: var(--a);
+  height: var(--a);
+  transform: translate(-50%, -50%);
+  animation: scene-orbit 120s linear infinite;
+}
+.scene-ripple .astro-ring {
+  fill: none;
+  stroke: rgba(239, 226, 211, 0.18);
+  stroke-width: 1;
+}
+.scene-ripple .astro-ring.accent {
+  stroke: rgba(171, 164, 224, 0.34);
+  stroke-width: 1.25;
+}
+.scene-ripple .astro-spokes line {
+  stroke: rgba(217, 180, 124, 0.26);
+}
+.scene-ripple .astro-nodes circle {
+  fill: rgba(217, 180, 124, 0.72);
+}
+.scene-ripple .horizon {
+  left: 0;
+  right: 0;
+  top: 74cqh;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(226, 155, 163, 0.45) 26%, rgba(171, 164, 224, 0.45) 74%, transparent);
+}
+.scene-ripple .water-mirror {
+  left: 0;
+  right: 0;
+  top: 74cqh;
+  bottom: 0;
+  background:
+    radial-gradient(ellipse 36% 78% at 50% 0%, rgba(171, 164, 224, 0.18), transparent 72%),
+    linear-gradient(180deg, rgba(35, 25, 42, 0.75) 0%, #14111a 100%);
+}
+.scene-ripple .orbit,
+.scene-ripple .orbiter {
+  left: 50%;
+  top: 41cqh;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.scene-ripple .outer { width: min(114cqw, 70cqh); height: min(114cqw, 70cqh); }
+.scene-ripple .inner { width: min(86cqw, 52cqh); height: min(86cqw, 52cqh); }
+.scene-ripple .orbit.outer { box-shadow: inset 0 0 0 1px rgba(255, 246, 236, 0.18); }
+.scene-ripple .orbit.inner { box-shadow: inset 0 0 0 1px rgba(171, 164, 224, 0.28); }
+.scene-ripple .orbiter { animation: scene-orbit 90s linear infinite; }
+.scene-ripple .orbiter.inner { animation-duration: 64s; animation-direction: reverse; }
 .scene-ripple .orbiter::after {
-  content:''; position:absolute; left:50%; top:0; width:max(3px, .9cqmin); height:max(3px, .9cqmin);
-  border-radius:50%; background:#d9b47c; transform:translate(-50%, -50%);
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: max(3.5px, 1.15cqmin);
+  height: max(3.5px, 1.15cqmin);
+  border-radius: 50%;
+  background: #d9b47c;
+  box-shadow: 0 0 8px rgba(217, 180, 124, 0.75);
+  transform: translate(-50%, -50%);
 }
-.scene-ripple .orbiter.inner::after { background:#aba4e0; width:max(2.5px, .7cqmin); height:max(2.5px, .7cqmin); }
-@keyframes scene-orbit { from { transform:translate(-50%, -50%) rotate(0); } to { transform:translate(-50%, -50%) rotate(360deg); } }
-
-.scene-ripple .ground, .scene-ripple .ring {
-  --w:min(92cqw, 58cqh);
-  left:50%; top:78cqh; width:var(--w); height:calc(var(--w) * .2); border-radius:50%;
-  transform:translate(-50%, -50%);
+.scene-ripple .orbiter.inner::after {
+  background: #aba4e0;
+  box-shadow: 0 0 8px rgba(171, 164, 224, 0.75);
+  width: max(3px, 0.9cqmin);
+  height: max(3px, 0.9cqmin);
 }
-.scene-ripple .ground { background:rgba(226, 155, 163, .07); box-shadow:inset 0 0 0 1px rgba(226, 155, 163, .2); }
-.scene-ripple .ring { box-shadow:inset 0 0 0 1px rgba(226, 155, 163, .5); opacity:0; animation:scene-ripple 10s cubic-bezier(.2, .6, .3, 1) infinite; }
+@keyframes scene-orbit {
+  from { transform: translate(-50%, -50%) rotate(0); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+.scene-ripple .ground,
+.scene-ripple .ring {
+  --w: min(94cqw, 60cqh);
+  left: 50%;
+  top: 82cqh;
+  width: var(--w);
+  height: calc(var(--w) * 0.22);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.scene-ripple .ground {
+  background: radial-gradient(ellipse, rgba(226, 155, 163, 0.14), rgba(171, 164, 224, 0.06) 65%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(226, 155, 163, 0.34);
+}
+.scene-ripple .ring {
+  box-shadow: inset 0 0 0 1.2px rgba(226, 155, 163, 0.65);
+  opacity: 0;
+  animation: scene-ripple 10s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
 @keyframes scene-ripple {
-  0% { opacity:0; transform:translate(-50%, -50%) scale(.25); }
-  12% { opacity:.55; }
-  100% { opacity:0; transform:translate(-50%, -50%) scale(1.45); }
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.25); }
+  12% { opacity: 0.68; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.45); }
+}
+
+/* ---------- 4. 永恒黄昏：暮粉紫霞、清晰落日山岬、海面金波与海滨栈道 ---------- */
+.scene-dusk {
+  background: linear-gradient(180deg, #161428 0%, #2a1d37 26%, #573047 48%, #8f4e5c 62%, #c97f69 68%, #211822 70%);
+}
+.scene-dusk .sun-halo {
+  --h: min(38cqmin, 42cqh);
+  left: 15cqw;
+  top: 61cqh;
+  width: var(--h);
+  height: var(--h);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(247, 210, 166, 0.44), rgba(226, 155, 163, 0.16) 50%, transparent 74%);
+}
+.scene-dusk .sun {
+  --s: min(13cqmin, 14cqh);
+  left: 15cqw;
+  top: 61cqh;
+  width: var(--s);
+  height: var(--s);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff2dc 0%, #f0b78b 72%, #d9827b 100%);
+  box-shadow: 0 0 22px rgba(240, 183, 139, 0.5);
+}
+.scene-dusk .dusk-clouds {
+  left: -8cqw;
+  top: 9cqh;
+  width: 116cqw;
+  height: 36cqh;
+  opacity: 0.58;
+  animation: dusk-cloud 26s ease-in-out infinite alternate;
+}
+.scene-dusk .cloud-a { fill: rgba(226, 155, 163, 0.26); }
+.scene-dusk .cloud-b { fill: rgba(217, 180, 124, 0.22); }
+@keyframes dusk-cloud {
+  from { transform: translateX(-2cqw); }
+  to { transform: translateX(3cqw); }
+}
+.scene-dusk .sea {
+  left: 0;
+  right: 0;
+  top: 68cqh;
+  height: 32cqh;
+  background: linear-gradient(180deg, #4b2b3a 0%, #2a1a27 42%, #151118 100%);
+  overflow: hidden;
+}
+.scene-dusk .horizon-glow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(247, 210, 166, 0.78) 12%, rgba(226, 155, 163, 0.45) 52%, rgba(171, 164, 224, 0.18) 92%);
+}
+.scene-dusk .glint {
+  position: absolute;
+  height: max(1.5px, 0.35cqh);
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(247, 210, 166, 0.72), transparent);
+  transform: translateX(-50%);
+  animation: dusk-glint ease-in-out infinite alternate;
+}
+@keyframes dusk-glint {
+  from { opacity: 0.24; transform: translateX(-50%) scaleX(0.85); }
+  to { opacity: 0.82; transform: translateX(-50%) scaleX(1.12); }
+}
+.scene-dusk .dusk-shore {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 36cqh;
+}
+.scene-dusk .dusk-shore .cape { fill: #261824; }
+.scene-dusk .dusk-shore .promenade { fill: #1c141c; }
+.scene-dusk .dusk-shore .promenade-rim { stroke: rgba(240, 183, 139, 0.28); }
+.scene-dusk .dusk-shore .promenade-seams line { stroke: rgba(255, 246, 236, 0.08); }
+.scene-dusk .dusk-shore .shore-rails .wall-wing { fill: #251a25; stroke: rgba(255, 246, 236, 0.14); stroke-width: 1; }
+.scene-dusk .dusk-shore .shore-rails rect,
+.scene-dusk .dusk-shore .shore-rails path { fill: #2c202c; stroke: rgba(255, 246, 236, 0.16); stroke-width: 1; }
+.scene-dusk .dusk-shore .shore-rails .bollard-glow { fill: rgba(245, 200, 141, 0.9); }
+
+/* ---------- 5. 月海初雪：清冷高月、雪顶远山、雪夜栈桥与飘雪 ---------- */
+.scene-snow {
+  background: linear-gradient(180deg, #0d111f 0%, #171e34 46%, #262942 74%, #121520 100%);
+}
+.scene-snow .snow-moon-halo {
+  --h: min(38cqmin, 42cqh);
+  left: 15cqw;
+  top: 7.5cqh;
+  width: var(--h);
+  height: var(--h);
+  transform: translate(-30%, -30%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232, 224, 240, 0.3), rgba(171, 164, 224, 0.12) 52%, transparent 74%);
+}
+.scene-snow .snow-moon {
+  --m: min(14cqmin, 15cqh);
+  left: 15cqw;
+  top: 7.5cqh;
+  width: var(--m);
+  height: var(--m);
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 36%, #faf5ee 0%, #e4d9d2 75%, #c9bfd2 100%);
+  box-shadow: 0 0 18px rgba(239, 232, 224, 0.45);
+  animation: scene-float 16s ease-in-out infinite alternate;
+}
+.scene-snow .snow-hills {
+  left: 0;
+  bottom: 24cqh;
+  width: 100%;
+  height: 18cqh;
+}
+.scene-snow .snow-hills .far { fill: #23273d; }
+.scene-snow .snow-hills .crest { stroke: rgba(242, 238, 248, 0.38); }
+.scene-snow .snow-hills .near { fill: #191d30; }
+.scene-snow .snow-sea {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 26cqh;
+  background: linear-gradient(180deg, #21253a 0%, #161825 55%, #11121a 100%);
+  box-shadow: inset 0 1px 0 rgba(232, 224, 240, 0.22);
+}
+.scene-snow .snow-reflect {
+  position: absolute;
+  left: 9cqw;
+  top: 0;
+  width: 24cqw;
+  height: 45%;
+  background: radial-gradient(ellipse 52% 85% at 50% 0%, rgba(239, 232, 224, 0.28), transparent 76%);
+}
+.scene-snow .snow-pier {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 30cqh;
+}
+.scene-snow .pier-deck { fill: #181a26; stroke: rgba(232, 224, 240, 0.14); stroke-width: 1; }
+.scene-snow .pier-rim { stroke: rgba(232, 224, 240, 0.34); }
+.scene-snow .pier-rails line { stroke: rgba(232, 224, 240, 0.22); }
+.scene-snow .pier-planks line { stroke: rgba(232, 224, 240, 0.1); }
+.scene-snow .snow-bank path { fill: rgba(238, 235, 246, 0.24); }
+.scene-snow .pier-posts rect { fill: #252635; stroke: rgba(232, 224, 240, 0.18); stroke-width: 1; }
+.scene-snow .pier-posts .warm-lamp { fill: rgba(242, 207, 148, 0.9); }
+.scene-snow .flake {
+  top: -5cqh;
+  width: max(3px, var(--sz));
+  height: max(3px, var(--sz));
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(248, 245, 255, 0.95) 0%, rgba(248, 245, 255, 0) 74%);
+  opacity: 0;
+  animation: snow-fall linear infinite;
+}
+.scene-snow .flake.far {
+  opacity: 0;
+}
+@keyframes snow-fall {
+  0% { opacity: 0; transform: translate(0, 0); }
+  10% { opacity: var(--o); }
+  88% { opacity: var(--o); }
+  100% { opacity: 0; transform: translate(var(--dx), 110cqh); }
+}
+
+/* ---------- 6-9. 主题插画叠加微粒（图片 + 轻动效） ---------- */
+.scene-illus .ambient-spore {
+  width: max(2.5px, var(--sz));
+  height: max(2.5px, var(--sz));
+  border-radius: 50%;
+  background: #f2cf94;
+  box-shadow: 0 0 8px 1px rgba(217, 180, 124, 0.55);
+  opacity: 0;
+  animation: spore-float ease-in-out infinite;
+}
+@keyframes spore-float {
+  0%, 100% { opacity: 0.12; transform: translateY(0) scale(0.85); }
+  50% { opacity: 0.85; transform: translateY(var(--dy)) scale(1.12); }
+}
+.scene-illus .ambient-mote {
+  width: max(2px, var(--sz));
+  height: max(2px, var(--sz));
+  border-radius: 50%;
+  background: #f5d6c6;
+  opacity: 0;
+  animation: mote-drift linear infinite;
+}
+@keyframes mote-drift {
+  0% { opacity: 0; transform: translate(0, 0); }
+  25% { opacity: 0.55; }
+  75% { opacity: 0.45; }
+  100% { opacity: 0; transform: translate(var(--dx), -6cqh); }
 }

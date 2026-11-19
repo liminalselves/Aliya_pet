@@ -5,8 +5,15 @@ html, body, #app { width: 100%; height: 100%; }
 body { margin: 0; overflow: hidden; background: var(--al-bg-0); color: var(--al-text-1); font: 13.5px/1.7 var(--al-font); }
 button { font: inherit; }
 
-/* 壳：平铺纸色，层次靠发线与留白 */
-.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--al-bg-0); }
+/* 壳：平铺纸色或共享聊天背景，层次靠发线与留白 */
+.records-shell { position: relative; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--al-bg-0); }
+.records-header, .records-list { position: relative; z-index: 1; }
+.records-shell.has-chat-bg .records-header { background: var(--al-surface-header); }
+.records-shell.has-chat-bg .record-message { background: rgba(33, 31, 30, 0.91); box-shadow: inset 0 0 0 1px var(--al-line); }
+.records-shell.has-chat-bg .record-user { background: rgba(45, 42, 62, 0.91); box-shadow: inset 0 0 0 1px rgba(171, 164, 224, 0.22); }
+.records-shell.has-chat-bg .record-system { background: transparent; box-shadow: none; }
+.records-shell.has-chat-bg .record-day { width: fit-content; margin-inline: auto; padding: 2px 12px; border-radius: var(--al-r-pill); background: rgba(20, 19, 18, 0.72); }
+.records-shell.has-chat-bg .records-empty { background: rgba(20, 19, 18, 0.48); border-radius: var(--al-r-l); padding: 28px 24px; margin: auto; }
 /* 窗口/页面进入：整壳纯淡入（不带位移）。记录列表自身有错落入场/钉底滚动，
    壳级再平移就是双重位移——用户看到的「开记录窗口抽一下」。 */
 .records-shell.enter { animation:al-fade-in var(--al-t-med) var(--al-ease); }

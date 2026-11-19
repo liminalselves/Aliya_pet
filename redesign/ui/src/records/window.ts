@@ -1,5 +1,6 @@
 import { openUrl, platform, shellAction } from '../platform';
-import { loadSettings } from '../settings';
+import { loadSettings, type PetSettings } from '../settings';
+import { ChatBackgroundLayer } from '../chat-background';
 import { MSK_TOKEN_KEY, MSK_USER_KEY, mskSessionKey } from '../chat/msk/config';
 import { CONTROL_REQUEST_KEY, readControlRequest } from '../chat/msk/control-bridge';
 import { ALIYA_CHARACTER_ID, MskClient, type MskSession, type MskTimelineMessage } from '../chat/msk/client';
@@ -464,6 +465,36 @@ class RecordsView {
 }
 
 const view = new RecordsView();
+const shellEl = document.querySelector<HTMLElement>('.records-shell');
+const recordsBg = shellEl
+  ? new ChatBackgroundLayer({
+    container: shellEl,
+    pinViewport: false,
+    surface: 'records',
+    onActiveChange: (active) => shellEl.classList.toggle('has-chat-bg', active),
+  })
+  : null;
+let recordsBgKey = '';
+const syncRecordsBackground = (s: PetSettings = loadSettings()) => {
+  if (!recordsBg) return;
+  const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
+  if (key !== recordsBgKey) {
+    recordsBgKey = key;
+    void recordsBg.apply(s.chatBackground, s.chatBackgroundDim);
+  }
+  recordsBg.setStill(document.hidden || !!s.batterySaver);
+};
+syncRecordsBackground();
+window.addEventListener('storage', () => syncRecordsBackground());
+window.addEventListener('focus', () => {
+  syncRecordsBackground();
+  recordsBg?.refreshAuto();
+});
+document.addEventListener('visibilitychange', () => {
+  syncRecordsBackground();
+  if (!document.hidden) recordsBg?.refreshAuto();
+});
+
 /** 入场动画（records.css .enter）：重放前先移除再强制 reflow，连续打开也能重新触发。 */
 function playEnter(): void {
   const shell = document.querySelector('.records-shell');
@@ -481,7 +512,15 @@ if (platform === 'android') {
 }
 if (platform === 'tauri') {
   const { listen } = await import('@tauri-apps/api/event');
-  await listen('records-open', () => { playEnter(); void view.load('open'); });
+  await listen<PetSettings>('settings-changed', e => {
+    if (e.payload && typeof e.payload === 'object') syncRecordsBackground(e.payload);
+  });
+  await listen('records-open', () => {
+    syncRecordsBackground();
+    recordsBg?.refreshAuto();
+    playEnter();
+    void view.load('open');
+  });
 } else {
   playEnter();
   void view.load('open');

@@ -753,17 +753,26 @@ export class PetApp {
     this._syncChatLauncherVisible();
     this._chatView?.setLauncherEnabled(s.showChatButton);
 
+    // 舞台背景（Android 主界面与 Web 预览舞台；悬浮窗、桌面透明桌宠与官网嵌入页不加载背景）
+    if ((platform === 'android' && !this._wrapWindow) || (platform === 'web' && !isEmbed)) {
+      if (!this._chatBackground && typeof ChatBackgroundLayer === 'function') {
+        this._chatBackground = new ChatBackgroundLayer({
+          surface: 'stage',
+          onActiveChange: (active) => {
+            document.body?.classList?.toggle?.('with-chat-bg', active);
+          },
+        });
+      }
+      const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
+      if (this._chatBackground && key !== this._chatBackgroundKey) {
+        this._chatBackgroundKey = key;
+        void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
+      }
+      this._syncBackgroundMotion();
+    }
+
     // 窗口层
     if (platform === 'android') {
-      if (!this._wrapWindow) {
-        this._chatBackground ??= new ChatBackgroundLayer();
-        const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
-        if (key !== this._chatBackgroundKey) {
-          this._chatBackgroundKey = key;
-          void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
-        }
-        this._syncBackgroundMotion();
-      }
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
     }
@@ -1181,6 +1190,12 @@ export class PetApp {
 
   /** 设置窗口/托盘事件接线；模型重载时复用注册任务，避免重复监听。 */
   private _wireSettingsSync(): Promise<void> {
+    if (platform === 'web' && !isEmbed && typeof window !== 'undefined' && !this._settingsSyncTask) {
+      window.addEventListener?.('storage', (e) => {
+        if (e.key === 'aliya_pet_settings_v1') this.applySettings(loadSettings(), false);
+      });
+      return this._settingsSyncTask = Promise.resolve();
+    }
     if (platform !== 'tauri') return Promise.resolve();
     return this._settingsSyncTask ??= import('@tauri-apps/api/event').then(async (ev) => {
       const installed = this._settingsSyncListeners ??= new Set<string>();
@@ -2230,6 +2245,7 @@ export class PetApp {
       this._chatPerformance?.cancel();
     }
     if (!paused && this._running) {
+      this._chatBackground?.refreshAuto?.();
       this._lastFrameTime = performance.now();
       this._scheduleFrame();
     }
@@ -2244,7 +2260,10 @@ export class PetApp {
       this._covered = covered;
       this._syncBackgroundMotion();
       // 设置页（另一 WebView）可能已退出登录：回到主界面时对齐聊天的连接状态。
-      if (!covered) this._chatView?.syncAuth();
+      if (!covered) {
+        this._chatView?.syncAuth();
+        this._chatBackground?.refreshAuto?.();
+      }
       if (!covered && this._running && !this._paused) {
         this._lastFrameTime = performance.now();
         this._scheduleFrame();
