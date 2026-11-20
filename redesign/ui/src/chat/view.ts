@@ -80,6 +80,9 @@ export class ChatView {
   private pageIndex = 0;
   private typewriter: Typewriter | null = null;
   private cueTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingDots: HTMLElement | null = null;
+  private replyPageShown = false;
+  private autoScroll = true;
   /** 面板收起动画计时器：动画结束才补 hidden；重新展示前必须取消。 */
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
   /** 整体入场一次性 class 的摘除计时器（关→开跳变时由 playEnter 挂上）。 */
@@ -96,9 +99,12 @@ export class ChatView {
   private readonly composer: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly status: HTMLElement;
+  private readonly prevPageBtn: HTMLButtonElement;
   /** 待发送图片：选中即本地预览；发送时上传，拿到 Drive 文件后缓存（失败重发不重复上传）。 */
   private attachment: { blob: Blob; name: string; url: string; uploaded: import('./rendering/types').DriveFileLike | null } | null = null;
   private uploading = false;
+  private uploadAbort: AbortController | null = null;
+  private logoutConfirmTimer = 0;
 
   constructor(readonly controller: ChatController, private readonly auth: MskAuth,
     private readonly onOpen: (open: boolean) => void, private readonly storage?: ChatStorage) {
@@ -109,22 +115,29 @@ export class ChatView {
         <section class="gal-panel" aria-label="Aliya 对话" hidden>
           <button class="close-panel" aria-label="关闭对话框"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
           <div class="gal-content" tabindex="0"></div>
-          <footer class="gal-footer"><span class="page-hint"></span></footer>
+          <footer class="gal-footer"><button type="button" class="prev-page" aria-label="上一页" hidden>‹ 上一页</button><span class="page-hint"></span></footer>
         </section>
         <form class="chat-composer" hidden>
           <div class="composer-attachment" hidden><img alt="待发送的图片"><button type="button" class="remove-attachment" title="移除图片" aria-label="移除图片"><svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button><span class="attachment-state"></span></div>
           <div class="composer-row"><textarea aria-label="对 Aliya 说" placeholder="对 Aliya 说……" rows="1" maxlength="2000"></textarea><span class="composer-action"><button type="button" class="stop" title="停止等待回复" aria-label="停止等待回复" disabled><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg></button><button type="submit" class="send" title="发送（Enter）" aria-label="发送"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
-          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="chat-status" role="status"></span><button type="button" class="attach" title="发送图片" aria-label="发送图片"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7.2" cy="8.2" r="1.45" fill="currentColor"/><path d="M3.2 14.2l4.1-3.9 2.9 2.6 2.4-2.1 4.2 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></button><input type="file" class="attach-input" accept="image/*" hidden><button type="button" class="attach capture-screen" title="截取当前屏幕（发送前可预览、移除）" aria-label="截取当前屏幕" hidden><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 16.5h6M10 13.5v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+          <div class="composer-toolbar"><button type="button" class="history">记录</button><button type="button" class="sessions">会话</button><button type="button" class="session-config" title="配置当前会话">配置</button><button type="button" class="app-settings" title="打开桌宠设置">设置</button><span class="session-pill" hidden></span><span class="chat-status" role="status"></span><button type="button" class="attach" title="发送图片" aria-label="发送图片"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7.2" cy="8.2" r="1.45" fill="currentColor"/><path d="M3.2 14.2l4.1-3.9 2.9 2.6 2.4-2.1 4.2 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></button><input type="file" class="attach-input" accept="image/*" hidden><button type="button" class="attach capture-screen" title="截取当前屏幕（发送前可预览、移除）" aria-label="截取当前屏幕" hidden><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 16.5h6M10 13.5v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><button type="button" class="close-window" title="关闭" aria-label="关闭聊天窗口"><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
         </form>
       </div>`;
     document.body.append(this.root);
     this.panel = this.get('.gal-panel'); this.content = this.get('.gal-content');
     this.composer = this.get('.chat-composer'); this.input = this.get('textarea'); this.status = this.get('.chat-status');
+    this.prevPageBtn = this.get<HTMLButtonElement>('.prev-page');
+    this.prevPageBtn.onclick = e => { e?.stopPropagation?.(); this.prevPage(); };
     this.get('.chat-launcher').onclick = () => this.setOpen(true);
     this.get('.close-window').onclick = () => this.close();
     this.get('.close-panel').onclick = () => { if (this.screen === 'ready') this.hideReply(); else this.close(); };
     // 捕获阶段挂面板：先于渲染器冒泡监听（图片外部打开）消费点击，纯图片页也点得动。
     this.panel.addEventListener('click', e => this.onPanelClick(e), true);
+    this.content.addEventListener?.('scroll', () => {
+      if (!this.typewriter?.typing) return;
+      const gap = (this.content.scrollHeight ?? 0) - (this.content.scrollTop ?? 0) - (this.content.clientHeight ?? 0);
+      this.autoScroll = gap <= 28;
+    }, { passive: true });
     this.get('.history').onclick = () => {
       if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('show_records')).catch(() => {});
       else if (platform === 'android') shellAction('open-records');
@@ -141,7 +154,14 @@ export class ChatView {
       else if (platform === 'android') shellAction('open-settings');
     };
     this.get('.app-settings').hidden = platform === 'web';
-    this.get('.stop').onclick = () => { this.controller.stop(); showToast('已停止等待，回复可能稍后出现在记录里'); };
+    this.get('.stop').onclick = () => {
+      if (this.uploading) {
+        this.uploadAbort?.abort();
+        return;
+      }
+      this.controller.stop();
+      showToast('已停止等待，回复可能稍后出现在记录里');
+    };
     this.composer.onsubmit = e => { e.preventDefault(); this.send(); };
     const picker = this.get<HTMLInputElement>('.attach-input');
     this.get('.attach').onclick = () => { if (!this.attachBlocked()) { this.invalidateCapture(); picker.click(); } };
@@ -202,23 +222,45 @@ export class ChatView {
     };
     this.input.oninput = () => {
       this.syncComposerState();
-      const max = platform === 'android' ? 112 : 88;
-      this.input.style.height = 'auto'; this.input.style.height = `${Math.min(max, this.input.scrollHeight)}px`;
+      this.resizeInput();
       this.reportLayout();
     };
     this.input.onfocus = () => this.notify(); this.input.onblur = () => this.notify();
     this.root.onpointerdown = () => { this.pointerActive = true; };
     window.addEventListener('pointerup', () => { this.pointerActive = false; });
     window.addEventListener('blur', () => { this.pointerActive = false; this.notify(); });
-    this.root.onkeydown = e => { if (e.key === 'Escape' && !e.isComposing) { e.stopPropagation(); this.hideReply(); } };
+    this.root.onkeydown = e => {
+      if (e.isComposing) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        if (this.screen === 'ready' && !this.panel.hidden) this.hideReply();
+        else if (this.isOpen) this.close();
+        return;
+      }
+      if (this.screen !== 'ready' || !this.replyActive || this.historyVisible || !this.segments.length) return;
+      const active = document.activeElement as HTMLElement | null;
+      const inControl = active === this.input || !!active?.closest?.('input,textarea,a,button');
+      const emptyInput = active === this.input && !this.input.value;
+      if (e.key === 'ArrowLeft' && (!inControl || emptyInput)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.prevPage();
+      } else if ((e.key === 'ArrowRight' && (!inControl || emptyInput)) || (!inControl && (e.key === ' ' || e.key === 'Enter'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.advanceReply();
+      }
+    };
     controller.persist = false;
     controller.onChange = () => this.changed();
     window.addEventListener('storage', e => {
       if (e.key === CONTROL_REQUEST_KEY) void this.applyControlRequest();
       else if (e.key === MSK_TOKEN_KEY) this.syncAuth();
+      else if (e.key === this.sessionKey()) this.syncSessionFromStorage();
     });
     window.addEventListener('focus', () => {
       this.syncAuth();
+      this.syncSessionFromStorage();
       // 焦点回归只消化新鲜请求；陈旧的直接清掉，不再补播（见常量注释）。
       const request = readControlRequest(this.storage);
       if (request && Date.now() - request.at > CONTROL_FOCUS_MAX_AGE_MS) {
@@ -291,11 +333,21 @@ export class ChatView {
     this.panel.hidden = !open || (this.screen === 'ready' && !this.historyVisible);
     if (this.panel.hidden) this.panel.style.animation = '';
     // 独立窗口打开即聚焦，点完「聊天」按钮直接可以打字；内嵌模式不抢软键盘。
-    if (open && this.screen === 'ready' && platform === 'tauri') this.input.focus();
+    this.focusInput();
     document.body.classList.toggle('chat-open', open);
     if (open && !wasOpen) this.playEnter();
     this.updateLayoutMode();
     this.onOpen(open); this.notify();
+  }
+  /** 独立聊天窗口处于就绪态时聚焦输入框；内嵌模式不主动抢软键盘。 */
+  focusInput(): void {
+    if (this.isOpen && this.screen === 'ready' && platform === 'tauri') this.input?.focus?.();
+  }
+  private resizeInput(): void {
+    if (!this.input?.style) return;
+    const max = platform === 'android' ? 112 : 88;
+    this.input.style.height = 'auto';
+    this.input.style.height = `${Math.min(max, this.input.scrollHeight)}px`;
   }
   /**
    * 聊天整体入场动画（chat.css .shell-enter）：挂一次性 class，播完摘除。
@@ -303,6 +355,7 @@ export class ChatView {
    * 彼时 isOpen 已是 true，走不到 setOpen 的跳变分支）。
    */
   playEnter(): void {
+    this.focusInput();
     if (!this.isOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const shell = this.get('.chat-shell');
     shell.classList.remove('shell-enter');
@@ -357,17 +410,23 @@ export class ChatView {
   private syncComposerState(): void {
     if (!this.composer?.classList || !this.input) return;
     const busy = this.controller.busy === true;
+    const blocking = busy || this.uploading === true;
     const ready = this.screen === 'ready';
     this.composer.classList.toggle('empty', !this.input.value.trim() && !this.attachment);
     this.composer.querySelectorAll<HTMLButtonElement>('.attach').forEach(b => {
       b.disabled = this.attachBlocked() || (b.classList.contains('capture-screen') && this.capturing);
     });
     const remove = this.composer.querySelector<HTMLButtonElement>('.remove-attachment');
-    if (remove) remove.disabled = this.uploading || busy;
-    this.composer.classList.toggle('busy', busy);
+    if (remove) remove.disabled = blocking;
+    this.composer.classList.toggle('busy', blocking);
+    const sendBtn = this.root?.querySelector?.<HTMLButtonElement>('.send');
+    const stopBtn = this.root?.querySelector?.<HTMLButtonElement>('.stop');
+    if (sendBtn) sendBtn.disabled = !ready || blocking;
+    if (stopBtn) stopBtn.disabled = !blocking;
     this.input.disabled = !ready;
-    this.input.readOnly = ready && (busy || this.uploading);
-    const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
+    this.input.readOnly = ready && blocking;
+    this.updateSessionPill();
+    const hint = !ready ? (this.screen === 'connect' ? '先连接 Misskey…' : '先选择会话…') : this.uploading ? '正在上传图片……' : busy ? 'Aliya 正在想……' : '对 Aliya 说……';
     if (this.input.placeholder === hint) return;
     this.input.placeholder = hint;
     // 占位符换字时淡入（有输入内容时占位符不可见，不必播）。
@@ -376,12 +435,25 @@ export class ChatView {
     void this.input.offsetWidth;
     this.input.classList.add('hint-in');
   }
+  private updateSessionPill(): void {
+    const pill = this.root?.querySelector?.<HTMLElement>('.session-pill');
+    const sessionsBtn = this.root?.querySelector?.<HTMLButtonElement>('.sessions');
+    const name = this.activeSession ? (this.activeSession.name || this.activeSession.characterName || 'Aliya') : '';
+    if (pill) {
+      pill.textContent = name;
+      pill.title = name ? `当前会话：${name}` : '';
+      pill.hidden = !name || this.screen !== 'ready';
+    }
+    if (sessionsBtn) sessionsBtn.title = name ? `切换会话（当前：${name}）` : '选择会话';
+  }
   private notify(): void {
     // 运行态经壳汇总后全局广播 chat-state {busy, typing, open}（open 由壳按窗口可见性裁定）。
     if (platform === 'tauri') void import('@tauri-apps/api/core').then(m => m.invoke('set_chat_state', { busy: this.controller.busy, typing: this.typing, replying: this.replyActive })).catch(() => {});
   }
   private reset(): AbortSignal {
     this.invalidateCapture();
+    if (this.logoutConfirmTimer) { clearTimeout(this.logoutConfirmTimer); this.logoutConfirmTimer = 0; }
+    this.uploadAbort?.abort(); this.uploadAbort = null;
     this.operation?.abort(); this.operation = new AbortController(); ++this.sequence;
     if (this.uploading) {
       this.uploading = false;
@@ -478,7 +550,11 @@ export class ChatView {
   private showConnect(status = '', cancellable = false): void {
     this.screen = 'connect'; this.clearRendering();
     this.syncComposerState();
-    this.content.innerHTML = `<h2>连接 Misskey</h2><p>在浏览器中授权，然后选择与 Aliya 的会话。</p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
+    this.content.innerHTML = `<h2>连接 Misskey</h2><p class="connect-desc">在浏览器中授权，然后选择与 Aliya 的会话。</p><p class="muted-note auth-host" hidden></p><div class="auth-actions"><button class="authorize btn-primary">打开浏览器授权</button><button class="reconnect ghost">重试连接</button><button class="cancel-auth ghost">取消</button></div><details><summary>使用已有 token</summary><form class="manual"><input type="password" autocomplete="off" aria-label="Misskey token"><button class="btn-primary">连接</button></form></details><p class="auth-status" role="status"></p>`;
+    let host = '';
+    try { host = MSK_BASE ? new URL(MSK_BASE).host : ''; } catch { host = MSK_BASE ?? ''; }
+    const hostEl = this.content.querySelector<HTMLElement>('.auth-host');
+    if (hostEl && host) { hostEl.textContent = `实例：${host}`; hostEl.hidden = false; }
     this.get('.auth-status').textContent = status;
     this.get('.authorize').onclick = () => { void this.login(); };
     this.get('.reconnect').hidden = !this.auth.token;
@@ -568,7 +644,25 @@ export class ChatView {
       const manage = document.createElement('button'); manage.textContent = 'Misskey'; manage.className = 'ghost';
       manage.onclick = () => { void openUrl(`${MSK_BASE}/chat`); }; actions.append(manage);
       const refresh = document.createElement('button'); refresh.textContent = '刷新'; refresh.className = 'ghost'; refresh.onclick = () => { void this.loadSessions(); }; actions.append(refresh);
-      const logout = document.createElement('button'); logout.textContent = '退出登录'; logout.className = 'ghost'; logout.onclick = () => this.disconnect(); actions.append(logout);
+      const logout = document.createElement('button'); logout.textContent = '退出登录'; logout.className = 'ghost';
+      logout.onclick = () => {
+        if (logout.dataset.confirm !== '1') {
+          logout.dataset.confirm = '1';
+          logout.textContent = '再点一次退出';
+          logout.classList.add('confirming');
+          if (this.logoutConfirmTimer) clearTimeout(this.logoutConfirmTimer);
+          this.logoutConfirmTimer = setTimeout(() => {
+            this.logoutConfirmTimer = 0;
+            logout.dataset.confirm = '';
+            logout.textContent = '退出登录';
+            logout.classList.remove('confirming');
+          }, 3000) as unknown as number;
+          return;
+        }
+        if (this.logoutConfirmTimer) { clearTimeout(this.logoutConfirmTimer); this.logoutConfirmTimer = 0; }
+        this.disconnect();
+      };
+      actions.append(logout);
       this.content.append(actions);
       // 加载占位→列表一次性成型：不换屏只换内容，纯淡入盖住替换帧，不重放面板入场。
       this.animateContent('stagger');
@@ -602,6 +696,7 @@ export class ChatView {
       // 直接 hidden 会让「正在打开会话……」凭空消失一帧（用户视频的闪烁帧）。
       this.hidePanelAnimated();
       this.updateLayoutMode();
+      this.focusInput();
       // 存 id+名称：名称供设置主菜单「当前会话」展示。
       try {
         this.storage?.setItem(this.sessionKey(), JSON.stringify({
@@ -624,6 +719,33 @@ export class ChatView {
   /** 其他页面（设置页）退出登录后对齐：本地存储里的 token 已被清除时回到连接屏。 */
   syncAuth(): void {
     if (this.auth.token && !this.auth.storedToken()) this.disconnect(false);
+  }
+  /** 其他页面（设置页）切换会话后对齐：自动切到存储中的当前会话。 */
+  syncSessionFromStorage(): void {
+    if (!this.auth.token || !this.auth.storedToken()) return;
+    if (this.screen === 'connect' || this.controller.busy || this.uploading) return;
+    let saved: { id?: unknown; name?: unknown; characterId?: unknown; characterName?: unknown } | null = null;
+    try {
+      saved = JSON.parse(this.storage?.getItem(this.sessionKey()) ?? 'null');
+    } catch {
+      return;
+    }
+    const id = typeof saved?.id === 'string' ? saved.id : '';
+    if (!id) return;
+    if (this.screen === 'ready' && this.activeSession?.id === id) {
+      const nextName = typeof saved?.name === 'string' ? saved.name : '';
+      if (nextName && this.activeSession.name !== nextName) {
+        this.activeSession = { ...this.activeSession, name: nextName };
+        this.updateSessionPill();
+      }
+      return;
+    }
+    void this.enterSession({
+      id,
+      name: typeof saved?.name === 'string' ? saved.name : undefined,
+      characterId: typeof saved?.characterId === 'string' ? saved.characterId : ALIYA_CHARACTER_ID,
+      characterName: typeof saved?.characterName === 'string' ? saved.characterName : undefined,
+    });
   }
   private attachBlocked(): boolean {
     return this.screen !== 'ready' || this.controller?.busy === true || this.uploading;
@@ -674,7 +796,7 @@ export class ChatView {
       // 提交结果前结束本次请求；setAttachment 会递增版本，阻止任何旧结果复活。
       this.capturing = false;
       this.setAttachment(blob, 'screen');
-      if (!this.input.value.trim()) { this.input.value = '看看我现在在干什么？'; this.syncComposerState(); }
+      if (!this.input.value.trim()) { this.input.value = '看看我现在在干什么？'; this.resizeInput(); this.syncComposerState(); }
     } catch (e) {
       if (current()) {
         this.status.textContent = '';
@@ -730,16 +852,27 @@ export class ChatView {
     const state = this.get('.attachment-state');
     let file = attachment.uploaded;
     if (!file) {
+      const uploadAbort = new AbortController();
+      this.uploadAbort = uploadAbort;
+      const onOpAbort = () => uploadAbort.abort();
+      this.operation?.signal?.addEventListener?.('abort', onOpAbort, { once: true });
       this.uploading = true; box.classList.remove('failed'); box.classList.add('uploading');
       state.textContent = '上传中'; this.status.textContent = ''; this.syncComposerState();
       try {
-        file = await new MskClient(this.auth.token).uploadFile(attachment.blob, attachment.name, this.operation?.signal);
+        file = await new MskClient(this.auth.token).uploadFile(attachment.blob, attachment.name, uploadAbort.signal);
       } catch (e) {
         if (sequence !== this.sequence || this.attachment !== attachment) return;
+        if (uploadAbort.signal.aborted) {
+          state.textContent = '';
+          showToast('已取消图片上传');
+          return;
+        }
         box.classList.add('failed'); state.textContent = '上传失败';
         showToast(this.error(e), { kind: 'error' });
         return;
       } finally {
+        this.operation?.signal?.removeEventListener?.('abort', onOpAbort);
+        if (this.uploadAbort === uploadAbort) this.uploadAbort = null;
         if (sequence === this.sequence) { this.uploading = false; box.classList.remove('uploading'); this.syncComposerState(); }
       }
       // 上传期间换了会话/图片：本次结果作废。
@@ -753,8 +886,9 @@ export class ChatView {
   private changed(): void {
     const c = this.controller;
     if (c.busy) this.invalidateCapture();
-    this.get<HTMLButtonElement>('.send').disabled = c.busy || this.screen !== 'ready';
-    this.get<HTMLButtonElement>('.stop').disabled = !c.busy;
+    const blocking = c.busy || !!this.uploading;
+    this.get<HTMLButtonElement>('.send').disabled = blocking || this.screen !== 'ready';
+    this.get<HTMLButtonElement>('.stop').disabled = !blocking;
     // 等待提示在输入框占位里显示（等待期间不可输入）；失败原因由回复面板的「未完成」页展示。
     // 状态行只留进行中的状态（截图中），一次性反馈统一走轻提示。
     if (c.busy) this.status.textContent = '';
@@ -810,6 +944,7 @@ export class ChatView {
     this.replyActive = true; this.notify();
     const dots = document.createElement('div'); dots.className = 'typing-dots'; dots.setAttribute('aria-label', 'Aliya 正在输入');
     dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+    this.pendingDots = dots;
     // 渲染器先构建整条回复；准备期间必须脱离布局，不能只设 visibility:hidden。
     const text = document.createElement('div'); text.className = 'message-text'; text.hidden = true;
     this.content.append(dots, text);
@@ -825,8 +960,7 @@ export class ChatView {
     if (!task) { this.replyActive = false; this.notify(); this.updateHint(); return; }
     void task.settled.then(() => {
       if (!this.replyActive || this.replyToken !== token) return;
-      // 打点立即移除（占位高度影响翻页量高），正文淡入接管视觉衔接；面板高度由 onPanelResize 补间。
-      dots.remove(); text.hidden = false; text.classList.add('gal-text-in');
+      text.hidden = false; text.classList.add('gal-text-in');
       this.playing = true;
       this.resyncPages();
     });
@@ -899,9 +1033,39 @@ export class ChatView {
     this.applyPage(index);
     this.startPage(index, animate);
   }
+  private prevVisibleIndex(from: number): number {
+    for (let i = from - 1; i >= 0; i--) {
+      if (!this.segments[i]?.classList?.contains('msk-cue')) return i;
+    }
+    return -1;
+  }
+  private nextVisibleIndex(from: number): number {
+    for (let i = from + 1; i < this.segments.length; i++) {
+      if (!this.segments[i]?.classList?.contains('msk-cue')) return i;
+    }
+    return -1;
+  }
+  private dispatchCueSegment(page: HTMLElement): void {
+    if (!page?.classList?.contains('msk-cue') || page.dataset?.dispatched) return;
+    if (page.dataset) page.dataset.dispatched = '1';
+    const cue: PerformanceCue = {};
+    if (page.dataset?.express) cue.expression = page.dataset.express;
+    if (page.dataset?.play) cue.action = page.dataset.play;
+    this.controller.onCue(cue);
+  }
   private applyPage(index: number): void {
     this.pageIndex = index;
-    this.segments.forEach((s, i) => { s.hidden = i !== index; });
+    const target = this.segments[index];
+    const isCue = !!target?.classList?.contains('msk-cue');
+    if (!isCue) {
+      this.pendingDots?.remove?.();
+      this.pendingDots = null;
+      this.replyPageShown = true;
+      this.segments.forEach((s, i) => { s.hidden = i !== index; });
+    } else if (!this.replyPageShown) {
+      // 首段即为表演指令：保留打点占位，隐藏其余内容页以免闪出空白面板。
+      this.segments.forEach((s, i) => { s.hidden = i !== index; });
+    }
     this.typewriter?.cancel(); this.typewriter = null;
     this.clearCueTimer();
     this.updateHint();
@@ -910,13 +1074,7 @@ export class ChatView {
     const page = this.segments[index];
     if (page && page.classList.contains('msk-cue')) {
       // 指令页：不建打字机；首次翻到时派发表演（幂等标记防 resync 重入重放），短暂停顿后自动翻页
-      if (animate && !page.dataset.dispatched) {
-        page.dataset.dispatched = '1';
-        const cue: PerformanceCue = {};
-        if (page.dataset.express) cue.expression = page.dataset.express;
-        if (page.dataset.play) cue.action = page.dataset.play;
-        this.controller.onCue(cue);
-      }
+      if (animate) this.dispatchCueSegment(page);
       this.cueTimer = setTimeout(() => {
         this.cueTimer = null;
         if (!this.replyActive || this.pageIndex !== index) return;
@@ -929,13 +1087,18 @@ export class ChatView {
     // 页脚先落定，再按当前完整页一次锁高；后续逐字揭示不改变卡片尺寸。
     this.updateHint();
     this.lockPanel();
+    this.autoScroll = true;
     if (page && animate) {
       page.classList.add('gal-page-in');
       this.typewriter = new Typewriter(page);
-      // 播放中跟随最新冒出的文字；播完回到页首——超高页（大图/长文）默认从顶部读起。
-      this.typewriter.onProgress = () => { this.content.scrollTop = this.content.scrollHeight; };
+      // 播放中仅在用户未手动上翻时跟随最新冒出的文字；播完平滑回到页首。
+      this.typewriter.onProgress = () => { if (this.autoScroll) this.content.scrollTop = this.content.scrollHeight; };
       this.typewriter.onDone = () => {
-        this.content.scrollTop = 0;
+        if (this.autoScroll && (this.content.scrollTop ?? 0) > 0) {
+          const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+          if (typeof this.content.scrollTo === 'function') this.content.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+          else this.content.scrollTop = 0;
+        }
         this.updateHint();
         // 图片等异步资源可能在播放结束后才载入完成，补一次量高。
         this.reportLayout();
@@ -947,6 +1110,39 @@ export class ChatView {
   }
   private clearCueTimer(): void {
     if (this.cueTimer) { clearTimeout(this.cueTimer); this.cueTimer = null; }
+  }
+  private prevPage(): void {
+    if (!this.replyActive || this.screen !== 'ready' || this.historyVisible || !this.segments.length) return;
+    if (this.typewriter?.typing) { this.typewriter.finish(); return; }
+    const target = this.prevVisibleIndex(this.pageIndex);
+    if (target < 0) return;
+    this.showPage(target, false);
+    const page = this.segments[target];
+    if (page) {
+      page.classList?.remove?.('gal-page-in');
+      void page.offsetWidth;
+      page.classList?.add?.('gal-page-in');
+    }
+  }
+  private advanceReply(): void {
+    if (this.typewriter?.typing) { this.typewriter.finish(); return; }
+    const current = this.segments[this.pageIndex];
+    const nextVisible = this.nextVisibleIndex(this.pageIndex);
+    if (current?.classList?.contains('msk-cue')) {
+      if (nextVisible >= 0) this.showPage(nextVisible, true);
+      else this.completeReply();
+      return;
+    }
+    if (this.pageIndex < this.segments.length - 1) {
+      if (nextVisible < 0) {
+        for (let i = this.pageIndex + 1; i < this.segments.length; i++) this.dispatchCueSegment(this.segments[i]!);
+        this.completeReply();
+        return;
+      }
+      this.showPage(this.pageIndex + 1, true);
+      return;
+    }
+    this.completeReply();
   }
   /**
    * GAL 式推进：播放中点击直接补完本页，播完点击翻下一页，末页点击收起。
@@ -963,28 +1159,32 @@ export class ChatView {
     e.preventDefault();
     // 保险：清掉播放开始前（非 replying 态）遗留的选区。
     this.content.ownerDocument.getSelection()?.removeAllRanges();
-    if (this.typewriter?.typing) { this.typewriter.finish(); return; }
-    if (this.pageIndex < this.segments.length - 1) this.showPage(this.pageIndex + 1, true);
-    else this.completeReply();
+    this.advanceReply();
   }
   private updateHint(): void {
     const footer = this.get('.gal-footer');
     const hint = this.get('.page-hint');
+    const prev = this.root?.querySelector?.<HTMLButtonElement>('.prev-page');
     this.panel.classList.toggle('replying', this.screen === 'ready' && this.replyActive);
-    const showFooter = this.screen === 'ready' && this.replyActive && this.playing;
-    footer.classList.toggle('show', showFooter);
-    if (!showFooter) { hint.textContent = ''; hint.classList.remove('blink'); return; }
+    const current = this.segments[this.pageIndex];
+    const onCue = !!current?.classList?.contains('msk-cue');
     // 页脚计数只计文本页：指令页不展示，数进去会让「2/5」跳到看不见的页
     const total = this.segments.filter(s => !s.classList.contains('msk-cue')).length;
     const page = this.segments.slice(0, this.pageIndex + 1).filter(s => !s.classList.contains('msk-cue')).length;
-    hint.classList.toggle('blink', !this.typewriter?.typing && total > 0);
+    const showFooter = this.screen === 'ready' && this.replyActive && this.playing && total > 0 && !(onCue && page === 0);
+    footer.classList.toggle('show', showFooter);
+    if (prev) prev.hidden = !showFooter || this.prevVisibleIndex(this.pageIndex) < 0;
+    if (!showFooter) { hint.textContent = ''; hint.classList.remove('blink'); return; }
+    hint.classList.toggle('blink', !this.typewriter?.typing && !onCue && total > 0);
     if (!total) hint.textContent = '';
-    else if (this.typewriter?.typing) hint.textContent = total > 1 ? `${page}/${total}` : '';
+    else if (this.typewriter?.typing || onCue) hint.textContent = total > 1 ? `${page}/${total}` : '';
     else if (page < total) hint.textContent = `点击继续 ${page}/${total}`;
     else hint.textContent = total > 1 ? `点击收起 ${page}/${total}` : '点击收起';
   }
   private clearPlayback(keepLock = false): void {
     if (!keepLock) this.unlockPanel();
+    this.pendingDots?.remove?.(); this.pendingDots = null;
+    this.replyPageShown = false;
     // 表情属于正在展示的回复：读完、收起或替换展示时释放，而非等下次发送。
     const wasReplying = this.replyActive;
     if (wasReplying) this.controller.onCancelPerformance();
@@ -1018,7 +1218,7 @@ export class ChatView {
     this.clearPlayback(); this.clearRendering(); this.historyVisible = true; this.content.replaceChildren(); this.showPanel('记录');
     const tools = document.createElement('div'); tools.className = 'panel-tools';
     const refresh = document.createElement('button'); refresh.textContent = '刷新记录'; refresh.className = 'ghost';
-    refresh.onclick = () => { void this.refreshHistory(); }; tools.append(refresh); this.content.append(tools);
+    refresh.onclick = () => { void this.refreshHistory(refresh); }; tools.append(refresh); this.content.append(tools);
     if (!this.controller.messages.length) {
       const empty = document.createElement('p'); empty.className = 'muted-note'; empty.textContent = '还没有聊天记录，说点什么吧。'; this.content.append(empty);
     }
@@ -1030,23 +1230,31 @@ export class ChatView {
       this.content.append(note);
     }
     for (const message of this.controller.messages.slice(start)) {
-      const article = document.createElement('article'); const label = document.createElement('small'); label.className = message.role === 'user' ? 'who-user' : 'who-aliya'; label.textContent = message.role === 'user' ? '你' : 'Aliya';
+      const article = document.createElement('article');
+      article.className = message.role === 'user' ? 'role-user' : 'role-aliya';
+      const label = document.createElement('small'); label.className = message.role === 'user' ? 'who-user' : 'who-aliya'; label.textContent = message.role === 'user' ? '你' : 'Aliya';
       const text = document.createElement('div'); text.className = 'message-text'; article.append(label, text); this.content.append(article); this.bindMessage(message, text);
     }
     this.animateContent('stagger');
     // 记录按时间正序追加，打开即停在最底部的最新消息。
     requestAnimationFrame(() => { this.content.scrollTop = this.content.scrollHeight; });
   }
-  private async refreshHistory(): Promise<void> {
+  private async refreshHistory(button?: HTMLButtonElement): Promise<void> {
     if (!this.activeSession || this.controller.busy) return;
     const seq = this.sequence;
+    if (button) { button.disabled = true; button.textContent = '刷新中…'; }
     try {
       const list = await new MskClient(this.auth.token).timeline(this.activeSession.id, HISTORY_FETCH_LIMIT, this.operation?.signal);
       if (seq !== this.sequence) return;
       this.historyMayHaveMore = list.length >= HISTORY_FETCH_LIMIT;
       this.controller.replaceHistory(list.map(m => ({ id: m.id, messageId: m.id, role: m.role as 'user' | 'assistant', text: m.content, file: m.file, status: 'complete' })));
       this.showHistory();
-    } catch (e) { if (seq === this.sequence) showToast(this.error(e), { kind: 'error' }); }
+    } catch (e) {
+      if (seq === this.sequence) {
+        if (button) { button.disabled = false; button.textContent = '刷新记录'; }
+        showToast(this.error(e), { kind: 'error' });
+      }
+    }
   }
   private async applyControlRequest(): Promise<void> {
     if (this.screen !== 'ready' || this.controller.busy || this.controlRequestActive) return;

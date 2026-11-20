@@ -108,3 +108,131 @@ test('吊坠设置值钳制到范围内，非法输入回到默认', () => {
   assert.equal(clampPendantRope(Number.NaN), 80);
   assert.equal(clampPendantRope(80.4), 80);
 });
+
+test('吊坠视图：节拍调度、后台暂停、少动态、风力低通滤波与随身体倾角反旋视线', async () => {
+  const vm = (await import('node:vm')).default;
+  let now = 1000, nextId = 1, hidden = false, reduceMotion = false;
+  const timers = new Map(), rafs = new Map(), listeners = new Map(), docListeners = new Map();
+  const winds = [], looks = [], modelUpdates = [];
+  const ctx2d = { clearRect() {}, beginPath() {}, moveTo() {}, quadraticCurveTo() {}, lineTo() {}, stroke() {} };
+  const gl = {
+    FRAMEBUFFER_BINDING: 0, COLOR_BUFFER_BIT: 1, DEPTH_BUFFER_BIT: 2, DEPTH_TEST: 3, LEQUAL: 4,
+    getParameter: () => null, isContextLost: () => false, viewport() {}, clearColor() {},
+    enable() {}, depthFunc() {}, clearDepth() {}, clear() {},
+  };
+  const canvasFactory = () => ({
+    style: {}, width: 100, height: 100,
+    getContext: (kind) => kind === 'webgl2' ? gl : ctx2d,
+  });
+  class FakePetModel {
+    async loadFromSetting() {}
+    setCatEarsVisible() {}
+    update(dt) { modelUpdates.push(dt); }
+    isReady() { return true; }
+    getStaticBounds() { return { minX: -0.5, maxX: 0.5, minY: -0.5, maxY: 0.5 }; }
+    getModel() { return { getDrawableCount: () => 1, getDrawableOpacity: () => 1, getDrawableVertices: () => [0, 0] }; }
+    isEarDrawable() { return false; }
+    getModelMatrix() { return { setMatrix() {} }; }
+    draw() {}
+    setPhysicsWind(wx, wy) { winds.push([wx, wy]); }
+    setLookTarget(x, y) { looks.push([x, y]); }
+  }
+  const pendantCode = ts.transpileModule(readFileSync(new URL('../src/pendant.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
+  }).outputText;
+  const settingsModule = await import(`data:text/javascript,${encodeURIComponent(settingsJs)}`);
+  const physicsModule = await import(`data:text/javascript,${encodeURIComponent(js)}`);
+  const windowObj = {
+    devicePixelRatio: 1,
+    matchMedia: () => ({ get matches() { return reduceMotion; } }),
+  };
+  const storage = { getItem: () => JSON.stringify({ pendantEnabled: true, pendantScale: 1, pendantRopeLength: 100 }), setItem() {} };
+  const deps = {
+    '@framework/live2dcubismframework': { CubismFramework: { startUp() {}, initialize() {} } },
+    '@framework/math/cubismmatrix44': { CubismMatrix44: class { scale() {} translate() {} } },
+    './pet-model': { PetModel: FakePetModel },
+    './pendant-physics': physicsModule,
+    './settings': settingsModule,
+    '@tauri-apps/api/window': { getCurrentWindow: () => ({ show: async () => {}, hide: async () => {} }) },
+    '@tauri-apps/api/event': { listen: async (name, cb) => { listeners.set(name, cb); } },
+  };
+  const context = vm.createContext({
+    console, Math, Number, Array, Promise,
+    Float32Array, Uint8Array, ArrayBuffer,
+    localStorage: storage,
+    fetch: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+    Live2DCubismCore: { Version: { csmGetLatestMocVersion: () => 1, csmGetMocVersion() {} } },
+    window: windowObj,
+    document: {
+      get hidden() { return hidden; },
+      getElementById: () => ({ clientWidth: 1920, clientHeight: 1080, appendChild() {} }),
+      createElement: canvasFactory,
+      addEventListener: (ev, cb) => docListeners.set(ev, cb),
+    },
+    performance: { now: () => now },
+    setTimeout: (fn, delay) => { const id = nextId++; timers.set(id, { at: now + delay, fn }); return id; },
+    clearTimeout: (id) => timers.delete(id),
+    requestAnimationFrame: (fn) => { const id = nextId++; rafs.set(id, fn); return id; },
+    cancelAnimationFrame: (id) => rafs.delete(id),
+    exports: {},
+    require: (id) => {
+      if (deps[id]) return deps[id];
+      throw new Error(`unexpected require: ${id}`);
+    },
+  });
+  vm.runInContext(pendantCode, context);
+  for (let i = 0; i < 12; i++) await new Promise(setImmediate);
+
+  // 通过 settings-changed 显式开启吊坠（不依赖模块外 ESM global localStorage），并等待模型与节拍器就绪。
+  await listeners.get('settings-changed')({ payload: { pendantEnabled: true, pendantScale: 1, pendantRopeLength: 100 } });
+  for (let i = 0; i < 12; i++) await new Promise(setImmediate);
+
+  // 1) 首次 cursor 到达：静止时用 setTimeout 预睡眠等待 30fps 间隔，而非每 vsync 空转 rAF。
+  listeners.get('pendant-cursor')({ payload: { x: 400, y: 200, wx: 0, wy: 0 } });
+  assert.equal(timers.size, 1, '30fps 空闲态应使用 setTimeout 睡眠对齐，避免高刷屏空转 rAF');
+  assert.equal(rafs.size, 0);
+
+  // 推进一帧，光标陡移激发风力，验证风力被平滑滤波（单帧不瞬间飙到 MAX_WIND=1）。
+  const stepFrame = (advanceMs) => {
+    now += advanceMs;
+    for (const [id, t] of [...timers]) { if (t.at <= now) { timers.delete(id); t.fn(); } }
+    for (const [id, fn] of [...rafs]) { rafs.delete(id); fn(now); }
+  };
+  stepFrame(40);
+  listeners.get('pendant-cursor')({ payload: { x: 900, y: 200, wx: 0, wy: 0 } });
+  stepFrame(20);
+  const firstWind = winds.at(-1);
+  assert.ok(Math.hypot(firstWind[0], firstWind[1]) > 0 && Math.hypot(firstWind[0], firstWind[1]) < 0.5,
+    `突跳加速度的风力应经低通平滑而非单帧打满: ${JSON.stringify(firstWind)}`);
+  // 刚向右拉开、身体倾角尚未追上绳角时，局部视线应向右偏往锚点。
+  assert.ok(looks.at(-1)[0] > 0.6, `锚点在身体右上方时局部视线应偏右，实际 ${JSON.stringify(looks.at(-1))}`);
+
+  // 2) 摆荡越过下方（倾角仍朝右、锚点转为左上方）时，局部视线应反旋到左侧追踪锚点。
+  for (let i = 0; i < 10; i++) {
+    listeners.get('pendant-cursor')({ payload: { x: 900 + i * 25, y: 200, wx: 0, wy: 0 } });
+    stepFrame(18);
+  }
+  const latestLook = looks.at(-1);
+  assert.ok(latestLook[0] < 0.5 && latestLook[1] > 0.5,
+    `身体顺时针过冲后锚点落在头部左上方，局部视线应偏左上，实际 ${JSON.stringify(latestLook)}`);
+
+  // 3) 少动态效果下关闭摆荡与风力，只保持 30fps 垂挂。
+  reduceMotion = true;
+  stepFrame(40);
+  assert.deepEqual(winds.at(-1), [0, 0]);
+  assert.equal(timers.size, 1);
+
+  // 4) 后台 hidden 暂停调度，回到可见后恢复。
+  hidden = true;
+  stepFrame(40);
+  assert.equal(timers.size, 0);
+  assert.equal(rafs.size, 0);
+  hidden = false;
+  docListeners.get('visibilitychange')?.();
+  assert.equal(timers.size + rafs.size > 0, true, '切回可见后应恢复渲染调度');
+
+  // 清理避免进程残留定时器。
+  await listeners.get('settings-changed')({ payload: { pendantEnabled: false } });
+  assert.equal(timers.size, 0);
+  assert.equal(rafs.size, 0);
+});

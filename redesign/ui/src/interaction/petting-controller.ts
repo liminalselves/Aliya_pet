@@ -44,22 +44,48 @@ export interface PettingDialogueHost {
   isDialogueActive(): boolean;
 }
 
+/** 抚摸触觉震动脉冲描述（由 Android 等支持震动的端消费）。 */
+export interface PettingHapticPulse {
+  kind: 'start' | 'stroke' | 'reverse';
+  durationMs: number;
+  amplitude: number;
+}
+
 /** 播放触发键下的反应组；返回说出的台词 id（没说话为 null）。 */
 export type PettingReact = (trigger: string, excludeIds: Set<string>) => string | null;
 
-type EyeState = 'idle' | 'closing' | 'opening';
+/** 当日互动统计持久化接口（由上层接入 localStorage 等跨刷新存储）。 */
+export interface DailyInteractionPersistence {
+  load(): { day: string; headPettingCountToday: number; headPettingDurationTodayMs: number; longestPettingDurationMs: number };
+  save(stats: { day: string; headPettingCountToday: number; headPettingDurationTodayMs: number; longestPettingDurationMs: number }): void;
+}
 
-/** 当日互动状态（跨天自动清零）。 */
+/** 当日互动状态（跨天自动清零，可选持久化）。 */
 class DailyInteractionState {
   headPettingCountToday = 0;
   headPettingDurationTodayMs = 0;
   longestPettingDurationMs = 0;
   readonly lastPettingDialogueIds: string[] = [];
   private _lastDay = DailyInteractionState._today();
+  private readonly _persistence?: DailyInteractionPersistence;
+
+  constructor(persistence?: DailyInteractionPersistence) {
+    this._persistence = persistence;
+    this._restoreFromPersistence();
+  }
 
   private static _today(): string {
     const n = new Date();
     return `${n.getFullYear()}-${n.getMonth()}-${n.getDate()}`;
+  }
+
+  private _restoreFromPersistence(): void {
+    if (!this._persistence) return;
+    const saved = this._persistence.load();
+    if (saved.day !== this._lastDay) return;
+    this.headPettingCountToday = saved.headPettingCountToday;
+    this.headPettingDurationTodayMs = saved.headPettingDurationTodayMs;
+    this.longestPettingDurationMs = saved.longestPettingDurationMs;
   }
 
   ensureDayFresh(): void {
@@ -70,6 +96,15 @@ class DailyInteractionState {
       this.headPettingDurationTodayMs = 0;
       this.longestPettingDurationMs = 0;
       this.lastPettingDialogueIds.length = 0;
+      return;
+    }
+    if (this._persistence) {
+      const saved = this._persistence.load();
+      if (saved.day === today && saved.headPettingCountToday > this.headPettingCountToday) {
+        this.headPettingCountToday = saved.headPettingCountToday;
+        this.headPettingDurationTodayMs = saved.headPettingDurationTodayMs;
+        this.longestPettingDurationMs = saved.longestPettingDurationMs;
+      }
     }
   }
 
@@ -84,6 +119,12 @@ class DailyInteractionState {
     if (durationMs > this.longestPettingDurationMs) {
       this.longestPettingDurationMs = durationMs;
     }
+    this._persistence?.save({
+      day: this._lastDay,
+      headPettingCountToday: this.headPettingCountToday,
+      headPettingDurationTodayMs: this.headPettingDurationTodayMs,
+      longestPettingDurationMs: this.longestPettingDurationMs,
+    });
   }
 
   recordDialogueId(id: string): void {
@@ -99,7 +140,7 @@ class DailyInteractionState {
 
 export class PettingController {
   readonly recognizer = new PettingGestureRecognizer();
-  readonly dailyState = new DailyInteractionState();
+  readonly dailyState: DailyInteractionState;
 
   state: PettingState = 'inactive';
 
@@ -146,10 +187,10 @@ export class PettingController {
   private _targetAngleX = 0;
   private _targetAngleY = 0;
   private _targetAngleZ = 0;
+  private _targetBodyX = 0;
+  private _curCheek = 0;
 
-  // 眼睛
-  private _eyeState: EyeState = 'idle';
-  private _eyeOpenness = 1.0;
+  // 眼睛（抚摸期间保持闭合，释放直接退出覆盖通道由 EyeOverrideChannel 按当前表情平滑睁眼）
   private _eyeOverrideActive = false;
 
   // ---- 头部跟随参数（度）----
@@ -168,25 +209,41 @@ export class PettingController {
   private _lastVel = 0;
   private _lastDir = 0;
   private _lastInputMs = 0;
+  private _lastRawPxX = 0;
+  private _lastRawPxY = 0;
 
   private static readonly _headTauSeconds = 0.1;
   private static readonly _returnTauSeconds = 0.16;
 
   private _lastLookAtReduction = false;
 
+  // 触觉震动节律跟踪
+  private _hapticLastMs = 0;
+  private _hapticLastX = 0;
+  private _hapticLastY = 0;
+  private _hapticAccumPx = 0;
+
   /** 抚摸会话结束回调（上层用于收尾光标等）。 */
   onSessionEnded: ((reason: PettingEndReason) => void) | null = null;
+  /** 抚摸阶段事件通知（用于 PetAI 观察）。 */
+  onStageEvent: ((stage: 'start' | 'soft' | 'active' | 'fast' | 'long' | 'repeat' | 'end') => void) | null = null;
+  /** 抚摸触觉震动回调（用于移动端短促反馈）。 */
+  onHaptic: ((pulse: PettingHapticPulse) => void) | null = null;
 
   constructor(deps: {
     hitAreas: HitAreas;
     getTarget: () => InteractionTarget | null;
     host: PettingDialogueHost;
     react: PettingReact;
+    persistence?: DailyInteractionPersistence;
+    onHaptic?: (pulse: PettingHapticPulse) => void;
   }) {
     this._hitAreas = deps.hitAreas;
     this._getTarget = deps.getTarget;
     this._host = deps.host;
     this._react = deps.react;
+    this.onHaptic = deps.onHaptic ?? null;
+    this.dailyState = new DailyInteractionState(deps.persistence);
   }
 
   get isPettingModeActive(): boolean {
@@ -219,16 +276,35 @@ export class PettingController {
 
     if (this.state === 'pressed' || this.state === 'petting') {
       const result = this.recognizer.update(ctx);
-      this._lastInputMs = performance.now();
+      const now = performance.now();
+      const moved = Math.hypot(ctx.pxX - this._lastRawPxX, ctx.pxY - this._lastRawPxY) >= 1.5;
+      if (moved) {
+        this._lastRawPxX = ctx.pxX;
+        this._lastRawPxY = ctx.pxY;
+        this._lastInputMs = now;
+      }
+      if (result.directionReversed && this.state === 'petting') {
+        this._lastInputMs = now;
+      }
       if (this.state === 'petting' || result.isValid) {
-        this.setVelocity(result.smoothedVelX, true);
+        if (moved || result.isValid || result.directionReversed) {
+          this.setVelocity(result.smoothedVelX, true, moved || result.directionReversed);
+        }
       }
       if (result.isValid && this.state === 'pressed') {
         this._recognized = true;
-        this._sessionStartMs = performance.now();
+        this._sessionStartMs = now;
+        this._lastInputMs = now;
         this._beginEyeClose(); // 识别到抚摸手势（按住并滑动）后闭眼
         this._setState('petting');
         this._onPettingStarted();
+        this._hapticLastX = ctx.pxX;
+        this._hapticLastY = ctx.pxY;
+        this._hapticAccumPx = 0;
+        this._hapticLastMs = now;
+        this._emitHaptic('start', result.smoothedVelX);
+      } else if (this.state === 'petting') {
+        this._updatePettingHaptic(ctx, result.directionReversed, result.smoothedVelX, now);
       }
       return true;
     }
@@ -254,7 +330,9 @@ export class PettingController {
     this._recognized = false;
     this._longTriggered = false;
     this._endDialogueTriggered = false;
-    this._lastInputMs = performance.now();
+    this._lastInputMs = this._sessionStartMs;
+    this._lastRawPxX = ctx.pxX;
+    this._lastRawPxY = ctx.pxY;
     this.recognizer.startGesture(ctx);
     this.dailyState.beginPetting();
     this._setState('pressed');
@@ -291,22 +369,30 @@ export class PettingController {
     }
   }
 
-  /** 统一结束方法：停止采样 → Finishing → 睁眼恢复 → 头部回正。 */
+  /** 统一结束方法：未识别的按压直接复位；已识别抚摸 → Finishing → 释放眼覆盖由通道按表情睁眼。 */
   endPettingSession(reason: PettingEndReason): void {
     if (!this.isPettingSessionActive || this._sessionEnding) return;
     this._sessionEnding = true;
 
     this.recognizer.endGesture();
+    if (!this._recognized) {
+      // 未识别成有效抚摸的 pressed 直接退出，不误触发睁眼与 600ms finishing 忙碌期。
+      this.resetAll();
+      this._sessionEnding = false;
+      this._setState('inactive');
+      this.onSessionEnded?.(reason);
+      return;
+    }
+
     this._setState('finishing');
     this.setVelocity(0, false);
-    this._beginEyeOpen();
+    this._eyeOverrideActive = false;
 
     const durationMs = performance.now() - this._sessionStartMs;
-    if (this._recognized) this.dailyState.endPetting(durationMs);
+    this.dailyState.endPetting(durationMs);
 
     // 结束台词：仅用户主动结束且时长 > 1s 时小概率触发
     if (
-      this._recognized &&
       durationMs > 1000 &&
       !this._endDialogueTriggered &&
       reason === 'mouseReleased' &&
@@ -314,6 +400,7 @@ export class PettingController {
     ) {
       this._endDialogueTriggered = true;
       this._playTag('petting.end');
+      this.onStageEvent?.('end');
     }
 
     this._finishingStartMs = performance.now();
@@ -325,9 +412,12 @@ export class PettingController {
     if (this.state !== 'finishing') return null;
     const pose: InteractionPose = {
       headX: this._curAngleX, headY: this._curAngleY, headZ: this._curAngleZ,
-      bodyX: this._curBodyX, eyeEnabled: this._eyeOverrideActive && this._hasEyes,
-      eyeLeft: this._eyeLMin + this._eyeOpenness * (this._eyeLMax - this._eyeLMin),
-      eyeRight: this._eyeRMin + this._eyeOpenness * (this._eyeRMax - this._eyeRMin),
+      bodyX: this._curBodyX, eyeEnabled: false,
+      eyeLeft: 0,
+      eyeRight: 0,
+      earL: 0,
+      earR: 0,
+      cheek: this._curCheek,
     };
     this.recognizer.endGesture();
     this._applyLookAtReduction(false);
@@ -338,9 +428,8 @@ export class PettingController {
 
   // ---------- 反应：目标计算 ----------
 
-  /** 按平滑水平速度设置头部目标（petting=false 时全部回正）。 */
-  setVelocity(velXPxPerSec: number, petting: boolean): void {
-    this._lastInputMs = performance.now();
+  /** 按平滑水平速度设置头部目标（petting=false 时全部回正；镜像时翻转方向）。 */
+  setVelocity(velXPxPerSec: number, petting: boolean, refreshInput = true): void {
     if (!petting) {
       this._pettingActive = false;
       this._lastVel = 0;
@@ -348,11 +437,16 @@ export class PettingController {
       this._targetAngleX = 0;
       this._targetAngleY = 0;
       this._targetAngleZ = 0;
+      this._targetBodyX = 0;
       this._applyLookAtReduction(false);
       return;
     }
+    if (refreshInput && Math.abs(velXPxPerSec) > 20) {
+      this._lastInputMs = performance.now();
+    }
+    const modelVel = this._hitAreas.mirrored ? -velXPxPerSec : velXPxPerSec;
     this._pettingActive = true;
-    this._lastVel = Math.min(Math.max(velXPxPerSec, -800), 800);
+    this._lastVel = Math.min(Math.max(modelVel, -800), 800);
     if (Math.abs(this._lastVel) > 20) {
       this._lastDir = Math.sign(this._lastVel);
     }
@@ -385,33 +479,33 @@ export class PettingController {
     this._targetAngleX = angleX;
     this._targetAngleZ = angleZ;
     this._targetAngleY = -PettingController._maxAngleY; // 轻微低头
+    this._targetBodyX = angleX * 0.3;
   }
 
   private _beginEyeClose(): void {
-    this._eyeState = 'closing';
-    this._eyeOverrideActive = true;
-  }
-
-  private _beginEyeOpen(): void {
-    this._eyeState = 'opening';
     this._eyeOverrideActive = true;
   }
 
   /** 立即复位全部互动参数（退出抚摸/异常恢复）。 */
   resetAll(): void {
     this._curAngleX = this._curAngleY = this._curAngleZ = this._curBodyX = 0;
-    this._targetAngleX = this._targetAngleY = this._targetAngleZ = 0;
-    this._eyeState = 'idle';
-    this._eyeOpenness = 1.0;
+    this._targetAngleX = this._targetAngleY = this._targetAngleZ = this._targetBodyX = 0;
+    this._curCheek = 0;
     this._eyeOverrideActive = false;
     this._pettingActive = false;
     this._lastDir = 0;
+    this._hapticLastMs = 0;
+    this._hapticLastX = 0;
+    this._hapticLastY = 0;
+    this._hapticAccumPx = 0;
     this._applyLookAtReduction(false, true);
     const target = this._getTarget();
     if (target) {
       try {
         target.setInteractionOffsets(0, 0, 0, 0);
         target.setEyeOverride(false, 0, 0);
+        target.setEarInteraction(false, 0, 0);
+        target.setFaceCheek(false, 0);
       } catch {
         // 写入失败不影响互动流程
       }
@@ -445,8 +539,6 @@ export class PettingController {
 
     const dt = Math.min(Math.max(dtMs / 1000, 0.001), 0.1);
 
-    this._updateEye(dt);
-
     // 目标选择：运动中 → 运动目标；短暂停止 → 放松静止姿态；长时间停止 → 回中
     const idleSec = (performance.now() - this._lastInputMs) / 1000;
     if (this._pettingActive) {
@@ -462,14 +554,16 @@ export class PettingController {
           PettingController._idleHoldAngleZ *
           PettingController._pettingDirectionSign;
         this._targetAngleY = -PettingController._idleHoldAngleY;
+        this._targetBodyX = this._targetAngleX * 0.25;
       } else {
         this._targetAngleX = 0;
         this._targetAngleZ = 0;
         this._targetAngleY = 0;
+        this._targetBodyX = 0;
       }
     }
 
-    // 头部一阶滞后：运动响应快，回正慢
+    // 头部与身体一阶滞后：运动响应快，回正慢
     const tau = this._pettingActive
       ? PettingController._headTauSeconds
       : PettingController._returnTauSeconds;
@@ -499,9 +593,17 @@ export class PettingController {
         this._curAngleZ) *
       k;
     this._curBodyX +=
-      (PettingController._clampHead(this._bodyXMin, this._bodyXMax, 0) -
+      (PettingController._clampHead(this._bodyXMin, this._bodyXMax, this._targetBodyX) -
         this._curBodyX) *
       k;
+
+    // 渐进红晕（只在识别到抚摸后激活，结束时平滑回 0；耳朵不额外压耳）
+    const targetCheek = this.state === 'petting'
+      ? Math.min(0.55, 0.12 + (this._sessionElapsedMs / 8000) * 0.43 + Math.min(0.1, this.dailyState.headPettingCountToday * 0.03))
+      : 0;
+    const cheekK = 1.0 - Math.exp(-dt / (this.state === 'petting' ? 0.35 : 0.22));
+    this._curCheek += (targetCheek - this._curCheek) * cheekK;
+    if (this._curCheek < 0.001) this._curCheek = 0;
 
     // 写入
     try {
@@ -513,45 +615,17 @@ export class PettingController {
       );
       const eyeEnabled = this._eyeOverrideActive && this._hasEyes;
       if (eyeEnabled) {
-        target.setEyeOverride(
-          true,
-          this._eyeLMin + this._eyeOpenness * (this._eyeLMax - this._eyeLMin),
-          this._eyeRMin + this._eyeOpenness * (this._eyeRMax - this._eyeRMin)
-        );
+        target.setEyeOverride(true, this._eyeLMin, this._eyeRMin);
       } else {
         target.setEyeOverride(false, 0, 0);
       }
+      target.setEarInteraction(false, 0, 0);
+      target.setFaceCheek(this._curCheek > 0, this._curCheek);
     } catch {
       // 写入失败不影响互动流程
     }
 
     this._updateSession(dtMs);
-  }
-
-  private _updateEye(dt: number): void {
-    switch (this._eyeState) {
-      case 'closing': {
-        const k = 1.0 - Math.exp(-dt / 0.25);
-        this._eyeOpenness += (0 - this._eyeOpenness) * k;
-        if (this._eyeOpenness < 0.02) {
-          this._eyeOpenness = 0;
-          this._eyeState = 'idle'; // 维持闭合
-        }
-        break;
-      }
-      case 'opening': {
-        const k = 1.0 - Math.exp(-dt / 0.38);
-        this._eyeOpenness += (1 - this._eyeOpenness) * k;
-        if (this._eyeOpenness > 0.98) {
-          this._eyeOpenness = 1;
-          this._eyeState = 'idle';
-          this._eyeOverrideActive = false; // 恢复自动眨眼
-        }
-        break;
-      }
-      case 'idle':
-        break;
-    }
   }
 
   /** 会话台词计时（替代 Flutter 的 33ms Timer）。 */
@@ -560,7 +634,7 @@ export class PettingController {
 
     if (this.state === 'finishing') {
       // 完整恢复后释放参数所有权，下一次按下重新开始。
-      if (performance.now() - this._finishingStartMs >= 600 && !this._eyeOverrideActive) {
+      if (performance.now() - this._finishingStartMs >= 600) {
         this.resetAll();
         this._sessionEnding = false;
         this._setState('inactive');
@@ -583,6 +657,7 @@ export class PettingController {
     ) {
       this._fastTriggered = true;
       this._playTag('petting.fast');
+      this.onStageEvent?.('fast');
       return;
     }
 
@@ -590,6 +665,7 @@ export class PettingController {
     if (!this._longTriggered && this._sessionElapsedMs >= 10000) {
       this._longTriggered = true;
       this._playTag('petting.long');
+      this.onStageEvent?.('long');
       return;
     }
 
@@ -603,18 +679,21 @@ export class PettingController {
     ) {
       this._softActiveCount++;
       this._lastSoftOrActiveMs = this._sessionElapsedMs;
-      this._playTag(Math.random() < 0.5 ? 'petting.soft' : 'petting.active');
+      const stage = Math.random() < 0.5 ? 'soft' : 'active';
+      this._playTag(`petting.${stage}`);
+      this.onStageEvent?.(stage);
     }
   }
 
   private _onPettingStarted(): void {
-    if (this._host.isDialogueActive()) return;
-    if (Math.random() >= 0.4) return;
-
     const count = this.dailyState.headPettingCountToday;
     const repeatChance =
       count >= 2 ? Math.min(0.8, 0.25 + 0.15 * (count - 2)) : 0.0;
-    this._playTag(Math.random() < repeatChance ? 'petting.repeat' : 'petting.start');
+    const stage = Math.random() < repeatChance ? 'repeat' : 'start';
+    this.onStageEvent?.(stage);
+    if (this._host.isDialogueActive()) return;
+    if (Math.random() >= 0.4) return;
+    this._playTag(`petting.${stage}`);
   }
 
   private _playTag(trigger: string): void {
@@ -658,6 +737,54 @@ export class PettingController {
 
   private _setState(next: PettingState): void {
     this.state = next;
+  }
+
+  private _updatePettingHaptic(
+    ctx: PointerContext,
+    directionReversed: boolean,
+    velX: number,
+    now: number
+  ): void {
+    const stepPx = Math.hypot(ctx.pxX - this._hapticLastX, ctx.pxY - this._hapticLastY);
+    this._hapticLastX = ctx.pxX;
+    this._hapticLastY = ctx.pxY;
+    // 忽略手指静止时的亚像素传感器抖动
+    if (stepPx >= 1.0) this._hapticAccumPx += stepPx;
+
+    const elapsed = now - this._hapticLastMs;
+    if (directionReversed && elapsed >= 42 && this._hapticAccumPx >= 5) {
+      this._hapticAccumPx = 0;
+      this._hapticLastMs = now;
+      this._emitHaptic('reverse', velX);
+      return;
+    }
+    if (elapsed >= 45 && this._hapticAccumPx >= 11) {
+      this._hapticAccumPx = 0;
+      this._hapticLastMs = now;
+      this._emitHaptic('stroke', velX);
+    }
+  }
+
+  private _emitHaptic(kind: PettingHapticPulse['kind'], velX: number): void {
+    if (!this.onHaptic) return;
+    const speedNorm = Math.min(1, Math.max(0, (Math.abs(velX) - 60) / 260));
+    if (kind === 'start') {
+      this.onHaptic({ kind, durationMs: 16, amplitude: 90 });
+      return;
+    }
+    if (kind === 'reverse') {
+      this.onHaptic({
+        kind,
+        durationMs: Math.round(12 + speedNorm * 3),
+        amplitude: Math.round(80 + speedNorm * 35),
+      });
+      return;
+    }
+    this.onHaptic({
+      kind,
+      durationMs: Math.round(10 + speedNorm * 3),
+      amplitude: Math.round(55 + speedNorm * 45),
+    });
   }
 
   private static _clampHead(min: number, max: number, v: number): number {

@@ -9,10 +9,9 @@ import {
   BreathParameterData,
   CubismBreath,
 } from '@framework/effect/cubismbreath';
-import { CubismEyeBlink } from '@framework/effect/cubismeyeblink';
+import { CubismEyeBlink, EyeState } from '@framework/effect/cubismeyeblink';
 import { CubismLook, LookParameterData } from '@framework/effect/cubismlook';
-import { ContinuousEyeBlinkUpdater, FadingExpressionUpdater } from './animation-updaters';
-import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
+import { AttenuatedBreathUpdater, ContinuousEyeBlinkUpdater, FadingExpressionUpdater } from './animation-updaters';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
@@ -89,6 +88,7 @@ export class PetModel
 
   // 动作
   private readonly _motions = new Map<string, CubismMotion>();
+  private readonly _motionBaseFadeIn = new WeakMap<CubismMotion, number>();
   private _motionUpdated = false;
 
   // 表情（exp3.json；眼睑乘法，其余安全参数加性叠加）。
@@ -115,6 +115,7 @@ export class PetModel
   // 猫耳显隐：部件不透明度逐帧逼近目标（部件不进 saveParameters，每帧显式写入）。
   private _earPartIndex = -1;
   private _earsVisible = true;
+  private _earBlend = 1;
   private _earOpacity = 1;
   private static readonly _earFadeSeconds = 0.18;
   private static readonly _lookReductionScale = 0.25;
@@ -141,6 +142,7 @@ export class PetModel
   private _face: FaceState = { eye: null, mouth: null };
   /** 特殊眼型（流泪/无语/受击）切换：先闭眼，流泪/无语再在闭眼下渐变。 */
   private readonly _eyeTransition = new EyeVariantTransition();
+  private _holdClosedRemaining = 0;
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -259,18 +261,20 @@ export class PetModel
       )
     );
 
-    // 呼吸（待机基础动画，参数与官方 Demo 一致）
+    // 呼吸（收敛强绑定头侧倾，加入与呼吸同频的轻胸腔俯仰，并在动作期间平滑减幅头身摆动）
     this._breath = CubismBreath.create();
     const id = (s: string) => CubismFramework.getIdManager().getId(s);
+    const idBreath = id(CubismDefaultParameterId.ParamBreath);
     this._breath.setParameters([
-      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleX), 0.0, 15.0, 6.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleX), 0.0, 9.0, 6.5345, 0.5),
       new BreathParameterData(id(CubismDefaultParameterId.ParamAngleY), 0.0, 8.0, 3.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0.0, 10.0, 5.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 0.0, 4.0, 15.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamBreath), 0.5, 0.5, 3.2345, 1.0),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0.0, 4.5, 5.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 0.0, 3.5, 15.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleY), 0.0, 1.4, 3.2345, 0.5),
+      new BreathParameterData(idBreath, 0.5, 0.5, 3.2345, 1.0),
     ]);
     this._updateScheduler.addUpdatableList(
-      new CubismBreathUpdater(this._breath)
+      new AttenuatedBreathUpdater(() => this._motionUpdated, this._breath, idBreath, 0.35)
     );
 
     // 视线跟随增益（GazeController 内合成；头部按 Q 版模型调低：官方 ±30
@@ -552,8 +556,10 @@ export class PetModel
           motion.setEffectIds(this._eyeBlinkIds, []);
           const fadeIn = this._setting.getMotionFadeInTimeValue(group, i);
           const fadeOut = this._setting.getMotionFadeOutTimeValue(group, i);
-          motion.setFadeInTime(fadeIn >= 0 ? fadeIn : 1.0);
+          const baseFadeIn = fadeIn >= 0 ? fadeIn : 1.0;
+          motion.setFadeInTime(baseFadeIn);
           motion.setFadeOutTime(fadeOut >= 0 ? fadeOut : 1.0);
+          this._motionBaseFadeIn.set(motion, baseFadeIn);
           this._motions.set(name, motion);
         } catch (e) {
           console.warn(`[pet] motion ${name} load failed`, e);
@@ -573,6 +579,14 @@ export class PetModel
     );
   }
 
+  /** 空闲起播用更紧凑的淡入以保留 0.1–0.25s 预备动作，打断进行中动作保留完整交叉淡化。 */
+  private _prepareMotionFadeIn(motion: CubismMotion): void {
+    const baseFadeIn = this._motionBaseFadeIn?.get(motion);
+    if (baseFadeIn === undefined || typeof motion.setFadeInTime !== 'function') return;
+    const interrupting = !this._motionManager.isFinished();
+    motion.setFadeInTime(interrupting ? baseFadeIn : Math.min(baseFadeIn, 0.22));
+  }
+
   /** 播放指定动作。低优先级不打断播放中的高优先级动作。 */
   public startMotion(group: string, index: number, priority: number): number {
     if (!this._ready) return INVALID_MOTION_HANDLE;
@@ -581,6 +595,7 @@ export class PetModel
     }
     const motion = this._motions.get(`${group}_${index}`);
     if (!motion) return INVALID_MOTION_HANDLE;
+    this._prepareMotionFadeIn(motion);
     // SDK startMotion 会让旧动作淡出，不提前清空它的参数贡献。
     const handle = this._motionManager.startMotionPriority(motion, false, priority);
     if (handle !== INVALID_MOTION_HANDLE) {
@@ -595,10 +610,17 @@ export class PetModel
 
   /** 新动作接管脸部时间轴；没有提示的动作会清掉被打断动作的眼型/嘴型。 */
   private _startFaceCue(name: string): void {
+    const lidL = this._eyeBlinkIds?.[0];
+    const lidR = this._eyeBlinkIds?.[1] ?? lidL;
+    const eyeL = lidL && this._model?.getParameterValueById ? this._model.getParameterValueById(lidL) : 1;
+    const eyeR = lidR && this._model?.getParameterValueById ? this._model.getParameterValueById(lidR) : eyeL;
+    const transitionActive = this._eyeTransition?.active ?? false;
+    const eyesClosed = (eyeL <= 0.05 && eyeR <= 0.05) || transitionActive;
+    this._holdClosedRemaining = name === 'kiss' && transitionActive ? 0.58 : 0;
     const spans = this._faceCues?.get(name);
-    if (spans) this._faceTrack.start(spans);
+    if (spans) this._faceTrack?.start(spans, { eyesClosed });
     else this._faceTrack?.stop();
-    this._chFx?.startAction(this._fxCues.get(name));
+    this._chFx?.startAction(this._fxCues?.get(name));
   }
 
   /** 当前动作脸部提示（调试/测试用）。 */
@@ -618,6 +640,7 @@ export class PetModel
     const index = Math.floor(Math.random() * count);
     const motion = this._motions.get(`${name}_${index}`);
     if (!motion) return false;
+    this._prepareMotionFadeIn(motion);
     // SDK 在淡出完成后回收旧动作；保留短暂重叠以连续交接。
     const handle = this._motionManager.startMotionPriority(
       motion,
@@ -783,7 +806,10 @@ export class PetModel
   /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
   public setCatEarsVisible(visible: boolean, immediate = false): void {
     this._earsVisible = visible;
-    if (immediate) this._earOpacity = visible ? 1 : 0;
+    if (immediate) {
+      this._earBlend = visible ? 1 : 0;
+      this._earOpacity = this._earBlend;
+    }
   }
 
   /**
@@ -842,7 +868,15 @@ export class PetModel
       model.getParameterValueById(this._eyeBlinkIds[0]),
       model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
     );
-    const eyeTransition = this._eyeTransition.advance(targetEye, deltaTimeSeconds, lidNow);
+    if (this._holdClosedRemaining > 0) {
+      this._holdClosedRemaining = Math.max(0, this._holdClosedRemaining - Math.max(0, deltaTimeSeconds));
+    }
+    const eyeTransition = this._eyeTransition.advance(
+      targetEye,
+      deltaTimeSeconds,
+      lidNow,
+      this._holdClosedRemaining > 0
+    );
     const eye = eyeTransition.eye;
     applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
     // 过渡眼睑在物理前也写一次，眼珠/高光物理跟着一起闭合。
@@ -850,13 +884,17 @@ export class PetModel
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
+    // 取两眼最大开合，保证得意单眼 wink / 单眼眨时睁开的那只眼仍正常注视。
+    const eyeL = model.getParameterValueById(this._eyeBlinkIds[0]);
+    const eyeR = model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0]);
+    const blinkState = (this._eyeBlink as { _blinkingState?: number } | null)?._blinkingState ?? EyeState.EyeState_Interval;
+    const blinking = !this._motionUpdated && !this._chEye.enabled && eyeTransition.lid === null
+      && blinkState >= EyeState.EyeState_Closing;
     this._gaze.update(model, deltaTimeSeconds, {
       motionActive: this._motionUpdated,
       reduction: this._lookAtReduction ? PetModel._lookReductionScale : 1,
-      eyeOpenness: Math.min(
-        model.getParameterValueById(this._eyeBlinkIds[0]),
-        model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
-      ),
+      eyeOpenness: Math.max(eyeL, eyeR),
+      blinking,
     });
     if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
@@ -874,10 +912,11 @@ export class PetModel
 
     if (this._earPartIndex >= 0) {
       const target = this._earsVisible ? 1 : 0;
-      if (this._earOpacity !== target) {
+      if (this._earBlend !== target) {
         const step = Math.max(0, deltaTimeSeconds) / PetModel._earFadeSeconds;
-        this._earOpacity = target > this._earOpacity
-          ? Math.min(target, this._earOpacity + step) : Math.max(target, this._earOpacity - step);
+        this._earBlend = target > this._earBlend
+          ? Math.min(target, this._earBlend + step) : Math.max(target, this._earBlend - step);
+        this._earOpacity = this._earBlend * this._earBlend * (3 - 2 * this._earBlend);
       }
       model.setPartOpacityByIndex(this._earPartIndex, this._earOpacity);
     }

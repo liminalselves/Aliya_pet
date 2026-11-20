@@ -17,6 +17,10 @@ internal object OverlayGesturePolicy {
         else if (canArm) Phase.ARMED
         else Phase.VOID
 
+    /** 触摸起点落在可抚摸头部区时，明显纵向拉动仍允许壳接管拖动，横向/斜向保留给前端抚摸。 */
+    fun canArmFromZone(dx: Float, dy: Float, jsInteracting: Boolean): Boolean =
+        !jsInteracting || kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.35f
+
     /** 抬手时是否算一次轻点（可参与双击）：未移出 slop、未按满长按时长。 */
     fun isTap(phase: Phase, elapsedMs: Long, dist2: Float, slop: Int, longPressMs: Long): Boolean =
         phase == Phase.PENDING && elapsedMs < longPressMs && dist2 <= slop.toFloat() * slop

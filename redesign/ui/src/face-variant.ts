@@ -102,15 +102,22 @@ export class EyeVariantTransition {
   /** 睁眼段。 */
   static readonly OPEN_SECONDS = 0.18;
 
+  /** 当前是否有特殊眼型显示或正在闭眼过渡中。 */
+  get active(): boolean {
+    return this._eye !== null || this._close > 0;
+  }
+
   /**
    * @param target 本帧目标眼型（face cue 或表情推导）
    * @param dt 帧间隔秒
    * @param lid 未被本类覆盖的真实眼睑值（眨眼/动作/互动合成后）
+   * @param holdClosed 退出特殊眼型后若新动作即将闭眼，暂缓睁眼避免多余眨眼
    */
   advance(
     target: FaceEye | null,
     dt: number,
-    lid: number
+    lid: number,
+    holdClosed = false
   ): { eye: FaceEye | null; weight: number; mute: number; lid: number | null } {
     const step = Math.max(0, Number.isFinite(dt) ? dt : 0);
     const C = EyeVariantTransition;
@@ -118,6 +125,8 @@ export class EyeVariantTransition {
     const openBy = (seconds: number) => { this._close = Math.max(0, this._close - step / seconds); };
 
     if (target !== this._eye) {
+      // 外部眼睑本就已全闭时无需再等 CLOSE_SECONDS，直接进入选择器淡变。
+      if (this._eye === null && lid <= 0.02) this._close = 1;
       // 先（可见或隐藏地）闭上普通眼睑，闭到底才动选择器。
       if (this._close < 1) closeBy(C.CLOSE_SECONDS);
       else if (fadeable(this._eye) && this._weight > 0) {
@@ -129,7 +138,7 @@ export class EyeVariantTransition {
     } else if (fadeable(this._eye) && this._weight < 1) {
       this._weight = Math.min(1, this._weight + step / C.FADE_SECONDS);
     } else if (this._eye === null) {
-      openBy(C.OPEN_SECONDS);
+      if (!holdClosed) openBy(C.OPEN_SECONDS);
     } else {
       // 特殊眼期间眼睑一直闭着：不做隐藏的睁开/再闭合，猫耳物理输入保持不变。
       this._close = 1;

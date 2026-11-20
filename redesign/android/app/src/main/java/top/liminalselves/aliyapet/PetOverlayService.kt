@@ -82,6 +82,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragPointerId = -1
     private var dragStartRawX = 0f
     private var dragStartRawY = 0f
+    private var dragDownLocalX = 0f
+    private var dragDownLocalY = 0f
     private var dragStartParamX = 0
     private var dragStartParamY = 0
     private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
@@ -93,6 +95,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var dragLastAt = 0L
     private var dragLastRawX = 0f
     private var dragLastRawY = 0f
+    private var dragEmaVx = 0f
+    private var dragEmaVy = 0f
+    private var dragLastVelocityEmitMs = 0L
     private var dragMaxSpeed = 0f
     private var gesturePhase = OverlayGesturePolicy.Phase.VOID
     private var gestureDownTime = 0L
@@ -358,12 +363,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     dragPointerId = ev.getPointerId(0)
                     dragStartRawX = ev.rawX
                     dragStartRawY = ev.rawY
+                    dragDownLocalX = ev.x
+                    dragDownLocalY = ev.y
                     dragStartParamX = params.x
                     dragStartParamY = params.y
                     nativeDragging = false
                     dragLastAt = ev.eventTime
                     dragLastRawX = ev.rawX
                     dragLastRawY = ev.rawY
+                    dragEmaVx = 0f
+                    dragEmaVy = 0f
+                    dragLastVelocityEmitMs = 0L
                     dragMaxSpeed = 0f
                     false
                 }
@@ -374,17 +384,33 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         val dx = ev.rawX - dragStartRawX
                         val dy = ev.rawY - dragStartRawY
                         val wasPending = gesturePhase == OverlayGesturePolicy.Phase.PENDING
-                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, dx * dx + dy * dy, touchSlop, !jsInteracting)
+                        val canArm = OverlayGesturePolicy.canArmFromZone(dx, dy, jsInteracting)
+                        gesturePhase = OverlayGesturePolicy.advance(gesturePhase, dx * dx + dy * dy, touchSlop, canArm)
                         if (gesturePhase != OverlayGesturePolicy.Phase.PENDING) {
                             // 移出 slop：不再是轻点（不参与双击）；拖动或交给前端互动。
                             tapCandidate = false
                             lastTapAt = 0L
                         }
                         // 移出 slop 即接管：从上一采样点起算，不把 slop 那段位移一次性跳过去。
+                        val wasDragging = nativeDragging
                         if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) beginNativeDrag(ev.eventTime)
-                        val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
-                        if (nativeDragging) dragMaxSpeed = maxOf(dragMaxSpeed,
-                            kotlin.math.hypot(ev.rawX - dragLastRawX, ev.rawY - dragLastRawY) * 1000f / elapsed)
+                        if (wasDragging) {
+                            val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
+                            val dtSec = elapsed / 1000f
+                            val d = density.coerceAtLeast(1f)
+                            val vxCss = (ev.rawX - dragLastRawX) / d / dtSec
+                            val vyCss = (ev.rawY - dragLastRawY) / d / dtSec
+                            val alpha = 1f - kotlin.math.exp(-dtSec / 0.035f)
+                            dragEmaVx += (vxCss - dragEmaVx) * alpha
+                            dragEmaVy += (vyCss - dragEmaVy) * alpha
+                            dragMaxSpeed = maxOf(dragMaxSpeed, kotlin.math.hypot(dragEmaVx, dragEmaVy))
+                            val emitDtMs = ev.eventTime - dragLastVelocityEmitMs
+                            if (emitDtMs >= 32L) {
+                                val emitDtSec = (emitDtMs / 1000f).coerceAtMost(0.1f)
+                                dragLastVelocityEmitMs = ev.eventTime
+                                evalJs("window.__pet?.onNativeDragMove?.($dragEmaVx, $dragEmaVy, $emitDtSec);")
+                            }
+                        }
                         dragLastAt = ev.eventTime
                         dragLastRawX = ev.rawX
                         dragLastRawY = ev.rawY
@@ -432,10 +458,13 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     } else lastTapAt = 0L
                     if (nativeDragging) {
                         nativeDragging = false
-                        val dxCss = (params.x - dragStartParamX) / density
-                        val dyCss = (params.y - dragStartParamY) / density
+                        val d = density.coerceAtLeast(1f)
+                        val dxCss = (params.x - dragStartParamX) / d
+                        val dyCss = (params.y - dragStartParamY) / d
+                        val upXCss = ev.x / d
+                        val upYCss = ev.y / d
                         val cancelled = ev.actionMasked == MotionEvent.ACTION_CANCEL
-                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled);")
+                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled, $upXCss, $upYCss);")
                         true
                     } else {
                         false
@@ -473,8 +502,11 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         dragStartRawX = dragLastRawX
         dragStartRawY = dragLastRawY
         dragLastAt = eventTime
+        dragLastVelocityEmitMs = eventTime
         nativeDragging = true
-        evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart();")
+        val downXCss = dragDownLocalX / density.coerceAtLeast(1f)
+        val downYCss = dragDownLocalY / density.coerceAtLeast(1f)
+        evalJs("window.__pet && window.__pet.onNativeDragStart && window.__pet.onNativeDragStart($downXCss, $downYCss);")
     }
 
     /** 事件坐标（窗口内物理 px）是否落在角色透明像素上。无掩码时保守视为不透明。 */
@@ -671,6 +703,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     override fun openUrl(url: String) = ShellBridgeHostDefaults.openUrl(this, url)
+    override fun vibrate(durationMs: Int, amplitude: Int) {
+        if (windowAttached && !screenOff) ShellBridgeHostDefaults.vibrate(this, durationMs, amplitude)
+    }
     override fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(this)
     override fun setAutoStart(on: Boolean) = ShellPrefs.setAutoStart(this, on)
     override fun isAutoStart(): Boolean = ShellPrefs.getAutoStart(this)

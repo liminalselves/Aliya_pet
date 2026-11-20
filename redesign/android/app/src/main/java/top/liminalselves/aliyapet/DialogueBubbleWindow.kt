@@ -30,6 +30,7 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
     private var petY = 0
     private var measured = false
     private var bubbleBottom = 0
+    private var lastTailCss = Double.NaN
     private val params = WindowManager.LayoutParams(
         1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -124,15 +125,23 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
             bubbleBottom = (size.getDouble("bottom") * density).roundToInt()
             measured = true
             position()
-            if (attached) wm.updateViewLayout(view, params) else {
+            if (attached) {
+                wm.updateViewLayout(view, params)
+                syncTail()
+            } else {
                 try {
+                    view.visibility = android.view.View.INVISIBLE
                     wm.addView(view, params)
                     attached = true
-                    // 入场动画在附着前已播完，附着后重播一次，弹入才看得见。
-                    view.evaluateJavascript("window.__replayDialogueBubble && window.__replayDialogueBubble()", null)
+                    syncTail()
+                    // 附着前动画可能已提前走过，首帧隐藏期间重置到 0 帧再显形，消除闪烁。
+                    view.evaluateJavascript("window.__replayDialogueBubble && window.__replayDialogueBubble()") {
+                        if (!destroyed && attached) view.visibility = android.view.View.VISIBLE
+                    }
                 } catch (error: RuntimeException) {
                     // 不伪装为已显示，留下可诊断的权限/显示器错误。
                     Log.e("DialogueBubbleWindow", "Cannot add dialogue overlay", error)
+                    view.visibility = android.view.View.VISIBLE
                     if (view.parent != null) wm.removeViewImmediate(view)
                 }
             }
@@ -142,7 +151,20 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
     fun move(petX: Int, petY: Int) {
         this.petX = petX
         this.petY = petY
-        if (!destroyed && attached && position()) wm.updateViewLayout(web, params)
+        if (!destroyed && attached && position()) {
+            wm.updateViewLayout(web, params)
+            syncTail()
+        }
+    }
+
+    private fun syncTail() {
+        val current = page ?: return
+        val view = web ?: return
+        if (!attached) return
+        val tailCss = ((petX + current.optDouble("centerX") * density) - params.x) / density
+        if (!lastTailCss.isNaN() && kotlin.math.abs(tailCss - lastTailCss) < 0.5) return
+        lastTailCss = tailCss
+        view.evaluateJavascript("window.__setDialogueTail && window.__setDialogueTail($tailCss)", null)
     }
 
     private fun position(): Boolean {
@@ -181,11 +203,13 @@ internal class DialogueBubbleWindow(private val context: Context, private val wm
         revision++
         page = null
         contentKey = ""
+        lastTailCss = Double.NaN
         web?.evaluateJavascript("window.__renderDialogueBubble && window.__renderDialogueBubble({text:''})", null)
         if (attached) {
             wm.removeViewImmediate(web)
             attached = false
         }
+        web?.visibility = android.view.View.VISIBLE
         web?.onPause()
     }
 

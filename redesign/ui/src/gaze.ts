@@ -49,6 +49,8 @@ export interface GazeUpdateOptions {
   reduction: number;
   /** 最终眼睑开合：半闭眼时收小瞳孔行程，闭眼时回到中心。 */
   eyeOpenness?: number;
+  /** 当前处于短暂自然眨眼周期：保持眨眼前的眼开度上限，避免瞳孔闪回中心。 */
+  blinking?: boolean;
 }
 
 export class GazeController {
@@ -61,11 +63,15 @@ export class GazeController {
   private _targetY = 0;
   private _active = false;
 
-  // 平滑后的跟随输出与交挖权重
+  // 平滑后的跟随输出（眼球先行、头部略滞后）与交挖权重
   private _x = 0;
   private _y = 0;
+  private _headX = 0;
+  private _headY = 0;
   private _weight = 1;
   private _eyeWeight = 1;
+  private _stableOpenness = 1;
+  private _blinkHoldSeconds = 0;
 
   // 表情注视偏移（独立平滑，切表情时交叉淡化）
   private _exprX = 0;
@@ -76,9 +82,11 @@ export class GazeController {
   /** 眼球安全行程（±30 量程的 2/3，超出后瞳孔滑出眼白「变白」）。 */
   public static readonly EYE_LIMIT = 20;
 
-  private static readonly TAU_SECONDS = 0.12; // 指针目标平滑
+  private static readonly TAU_SECONDS = 0.12; // 眼球指针平滑（眼先动）
+  private static readonly HEAD_TAU_SECONDS = 0.20; // 头部/身体跟随平滑（头随后）
   private static readonly WEIGHT_TAU_SECONDS = 0.22; // 动作交挖淡化
   private static readonly EXPRESSION_TAU_SECONDS = 0.45; // 表情偏移淡化
+  private static readonly BLINK_HOLD_MAX_SECONDS = 0.45; // 眨眼开度保持上限
 
   constructor(
     look: CubismLook,
@@ -133,12 +141,15 @@ export class GazeController {
       ((opts.motionActive ? 0 : 1) - this._eyeWeight) *
       (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
 
-    // 2) 指针目标平滑（无目标时回中）
+    // 2) 指针目标平滑（无目标时回中；眼球先行、头部略滞后）
     const tx = this._active ? this._targetX : 0;
     const ty = this._active ? this._targetY : 0;
     const k = 1 - Math.exp(-dt / GazeController.TAU_SECONDS);
     this._x += (tx - this._x) * k;
     this._y += (ty - this._y) * k;
+    const kh = 1 - Math.exp(-dt / GazeController.HEAD_TAU_SECONDS);
+    this._headX += (tx - this._headX) * kh;
+    this._headY += (ty - this._headY) * kh;
 
     // 3) 表情偏移平滑
     const ke = 1 - Math.exp(-dt / GazeController.EXPRESSION_TAU_SECONDS);
@@ -147,11 +158,11 @@ export class GazeController {
 
     // 4) 写入：头部跟随（CubismLook 增益：AngleX 12 / AngleY 10 /
     //    AngleZ 角落 -8 / BodyAngleX 4 / 眼球 18）——输入已含权重
-    const followX = this._x * this._weight * opts.reduction;
-    const followY = this._y * this._weight * opts.reduction;
+    const followHeadX = this._headX * this._weight * opts.reduction;
+    const followHeadY = this._headY * this._weight * opts.reduction;
     const motionX = model.getParameterValueById(this._idEyeBallX);
     const motionY = model.getParameterValueById(this._idEyeBallY);
-    this._look.updateParameters(model, followX, followY);
+    this._look.updateParameters(model, followHeadX, followHeadY);
     // 用权重混合取代动作眼球与跟随的加性叠加，避免交接时突然撞限位。
     model.setParameterValueById(
       this._idEyeBallX,
@@ -171,8 +182,17 @@ export class GazeController {
       model.addParameterValueById(this._idEyeBallX, exprX);
       model.addParameterValueById(this._idEyeBallY, exprY);
     }
-    const openness = opts.eyeOpenness ?? 1;
-    const limit = GazeController.EYE_LIMIT * Math.min(1, Math.max(0, openness));
+    const rawOpenness = Math.min(1, Math.max(0, opts.eyeOpenness ?? 1));
+    let effectiveOpenness = rawOpenness;
+    if (opts.blinking && this._blinkHoldSeconds < GazeController.BLINK_HOLD_MAX_SECONDS) {
+      this._blinkHoldSeconds += dt;
+      this._stableOpenness = Math.max(this._stableOpenness, rawOpenness);
+      effectiveOpenness = this._stableOpenness;
+    } else {
+      this._blinkHoldSeconds = 0;
+      this._stableOpenness = rawOpenness;
+    }
+    const limit = GazeController.EYE_LIMIT * effectiveOpenness;
     const bx = model.getParameterValueById(this._idEyeBallX);
     const by = model.getParameterValueById(this._idEyeBallY);
     const radius = Math.hypot(bx, by);

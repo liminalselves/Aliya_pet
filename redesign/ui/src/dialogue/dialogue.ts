@@ -178,6 +178,16 @@ function rebalance(text: string, target: number, maxPages: number): string[] {
   return pages;
 }
 
+function joinExplicitPages(pages: string[]): string {
+  let out = '';
+  for (const part of pages) {
+    if (!part) continue;
+    if (out && /[a-zA-Z0-9]$/.test(out) && /^[a-zA-Z0-9]/.test(part)) out += ' ';
+    out += part;
+  }
+  return out;
+}
+
 export function paginate(
   text: string,
   singlePageMaxChars?: number,
@@ -197,7 +207,7 @@ export function paginate(
     const texts =
       explicit.length <= maxP
         ? explicit
-        : rebalance(explicit.join(''), target, maxP);
+        : rebalance(joinExplicitPages(explicit), target, maxP);
     return texts.map((t, i) => ({ index: i, text: t }));
   }
 

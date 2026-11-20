@@ -34,12 +34,17 @@ export class InteractionOffsetChannel implements OverlayChannel {
   ) {}
   private readonly _values = [0, 0, 0, 0];
   apply(model: CubismModel, dt = 1 / 60): void {
-    const k = 1 - Math.exp(-Math.max(0, Number.isFinite(dt) ? dt : 0) / 0.06);
+    const step = Math.max(0, Number.isFinite(dt) ? dt : 0);
+    const k = step > 0 ? 1 - Math.exp(-step / 0.06) : 1;
     // 从点击交给抚摸、失焦回中时也从当前偏移继续，不清零跳帧。
-    this._values[0] += (this.angleX - this._values[0]) * k;
-    this._values[1] += (this.angleY - this._values[1]) * k;
-    this._values[2] += (this.angleZ - this._values[2]) * k;
-    this._values[3] += (this.bodyX - this._values[3]) * k;
+    const ax = Number.isFinite(this.angleX) ? this.angleX : 0;
+    const ay = Number.isFinite(this.angleY) ? this.angleY : 0;
+    const az = Number.isFinite(this.angleZ) ? this.angleZ : 0;
+    const bx = Number.isFinite(this.bodyX) ? this.bodyX : 0;
+    this._values[0] += (ax - this._values[0]) * k;
+    this._values[1] += (ay - this._values[1]) * k;
+    this._values[2] += (az - this._values[2]) * k;
+    this._values[3] += (bx - this._values[3]) * k;
     for (let i = 0; i < 4; i++) if (Math.abs(this._values[i]) < 0.0001) this._values[i] = 0;
     if (this._values[0] !== 0) model.addParameterValueById(this.ids.angleX, this._values[0]);
     if (this._values[1] !== 0) model.addParameterValueById(this.ids.angleY, this._values[1]);

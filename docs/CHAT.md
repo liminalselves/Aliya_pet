@@ -236,6 +236,7 @@ Aliya_web 相同。
   翻页播到该页才经 `controller.onCue` 派发——原生窗口走 `send_chat_cue` 跨窗口
   转给 pet，内嵌直调。表情持久到下一个指令、动作只播一次（`ChatPerformance`）。
   记录屏与行内残留一律剥离指令，不回放表演。
+- 聊天背景（`chat-background.ts` + `chat-scenes.ts`）：设置页「聊天 → 聊天背景」全端可用，支持无背景、随时间流转（按本地时间自动匹配 5 个时段场景）、5 款内置自适应动态场景、4 款《彼方的她》主题插画（`assets/backgrounds/*.webp`）与自定义图。Android 主界面与 Web 舞台铺在角色画布之下，记录页（`records.html`）铺在对话记录之下；Windows 端透明桌宠窗口不铺背景，独立 `chat` 窗口将背景内嵌在 `.gal-panel` 卡片中（保持外窗透明与点击穿透不受影响，并带最小暗化保底保证台词可读）。
 - 历史 = 服务器时间线（`messages/timeline`，拉 100 条，过滤 system，
   按时间正序），MSK 模式不写 localStorage。Windows 工具栏「记录」打开
   预创建的可移动、可缩放 `records` 原生窗口：消息按内容自适应气泡

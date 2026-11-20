@@ -300,10 +300,12 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 /// 成功页文案：仅说明「已收到授权回应」，不声称 token 已验证（token 校验由前端完成）。
 pub fn success_page() -> &'static str {
     "<!doctype html><meta charset=\"utf-8\"><title>Aliya Pet</title>\
-<body style=\"font-family:sans-serif;display:flex;min-height:90vh;align-items:center;\
-justify-content:center;margin:0;background:#faf7f1;color:#4a4238\">\
-<div style=\"text-align:center\"><p style=\"font-size:20px;margin:0 0 8px\">已收到授权回应</p>\
-<p style=\"margin:0;color:#8b7f6f\">回到 Aliya 查看连接结果。</p></div></body>"
+<body style=\"font-family:'Segoe UI Variable Text','Segoe UI','Microsoft YaHei UI',sans-serif;display:flex;min-height:92vh;align-items:center;\
+justify-content:center;margin:0;background:#141312;color:#f2eeea\">\
+<div style=\"text-align:center;padding:24px 30px;border-radius:14px;background:#211f1e;border:1px solid rgba(255,246,236,0.13);box-shadow:0 8px 24px rgba(0,0,0,0.42)\">\
+<div style=\"width:8px;height:8px;border-radius:50%;background:#e29ba3;margin:0 auto 14px\"></div>\
+<p style=\"font-size:18px;font-weight:600;margin:0 0 8px\">已收到授权回应</p>\
+<p style=\"margin:0;font-size:13px;color:#bab3ac\">回到 Aliya 查看连接结果。</p></div></body>"
 }
 
 fn success_response() -> String {

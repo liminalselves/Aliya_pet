@@ -1,3 +1,56 @@
+export interface DailyInteractionStats {
+  day: string;
+  headPettingCountToday: number;
+  headPettingDurationTodayMs: number;
+  longestPettingDurationMs: number;
+}
+
+const DAILY_INTERACTION_KEY = 'aliya_daily_interaction_v1';
+
+export function interactionDayKey(now = new Date()): string {
+  return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+}
+
+export function loadDailyInteractionStats(
+  storage: Pick<Storage, 'getItem'> | null | undefined = typeof localStorage !== 'undefined' ? localStorage : null,
+  now = new Date(),
+): DailyInteractionStats {
+  const day = interactionDayKey(now);
+  const empty: DailyInteractionStats = {
+    day,
+    headPettingCountToday: 0,
+    headPettingDurationTodayMs: 0,
+    longestPettingDurationMs: 0,
+  };
+  if (!storage) return empty;
+  try {
+    const raw = storage.getItem(DAILY_INTERACTION_KEY);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw) as Partial<DailyInteractionStats>;
+    if (parsed?.day !== day) return empty;
+    return {
+      day,
+      headPettingCountToday: Math.max(0, Math.floor(Number(parsed.headPettingCountToday) || 0)),
+      headPettingDurationTodayMs: Math.max(0, Number(parsed.headPettingDurationTodayMs) || 0),
+      longestPettingDurationMs: Math.max(0, Number(parsed.longestPettingDurationMs) || 0),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export function saveDailyInteractionStats(
+  stats: DailyInteractionStats,
+  storage: Pick<Storage, 'setItem'> | null | undefined = typeof localStorage !== 'undefined' ? localStorage : null,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(DAILY_INTERACTION_KEY, JSON.stringify(stats));
+  } catch {
+    // 存储不可用时仅保留当前会话统计
+  }
+}
+
 /**
  * 状态引擎：桌宠稳定保持的「默认表情 + 待机动作池」（定义见 catalog.ts STATES）。
  * 手动选择优先并一直保持，选回「自动」后为平静（按时段自动困倦已暂停，见 autoStateAt）。

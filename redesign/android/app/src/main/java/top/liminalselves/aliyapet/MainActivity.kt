@@ -455,6 +455,9 @@ class MainActivity : AppCompatActivity(), ShellBridge.Host {
     }
 
     override fun openUrl(url: String) = ShellBridgeHostDefaults.openUrl(this, url)
+    override fun vibrate(durationMs: Int, amplitude: Int) {
+        if (isForeground) ShellBridgeHostDefaults.vibrate(this, durationMs, amplitude)
+    }
     override fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(this)
     override fun setAutoStart(on: Boolean) = ShellPrefs.setAutoStart(this, on)
     override fun isAutoStart(): Boolean = ShellPrefs.getAutoStart(this)
@@ -535,6 +538,40 @@ object ShellBridgeHostDefaults {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (_: android.content.ActivityNotFoundException) {
             Toast.makeText(ctx, R.string.toast_need_overlay_permission, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun vibrate(ctx: android.content.Context, durationMs: Int, amplitude: Int) {
+        val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+            ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.getSystemService(android.os.Vibrator::class.java)
+        } ?: return
+        if (!vibrator.hasVibrator()) return
+        val hasAmp = vibrator.hasAmplitudeControl()
+        val ms = durationMs.coerceIn(1, 200).toLong().let { if (hasAmp) it else it.coerceAtLeast(12L) }
+        val amp = if (amplitude > 0 && hasAmp) {
+            amplitude.coerceIn(1, 255)
+        } else {
+            android.os.VibrationEffect.DEFAULT_AMPLITUDE
+        }
+        val effect = android.os.VibrationEffect.createOneShot(ms, amp)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33) {
+                val attrs = android.os.VibrationAttributes.Builder()
+                    .setUsage(android.os.VibrationAttributes.USAGE_TOUCH)
+                    .build()
+                vibrator.vibrate(effect, attrs)
+            } else {
+                @Suppress("DEPRECATION")
+                val audioAttrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(effect, audioAttrs)
+            }
         }
     }
 }

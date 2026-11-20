@@ -28,6 +28,15 @@ export function showStartupNotice(
     }
   };
   notice.append(text, button);
+  if (id !== 'pet-startup-error') {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'pet-startup-notice-close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', '关闭提示');
+    close.onclick = () => notice.remove();
+    notice.append(close);
+  }
   document.body.append(notice);
   return notice;
 }
