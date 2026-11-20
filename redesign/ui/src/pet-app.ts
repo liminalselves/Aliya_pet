@@ -6,6 +6,7 @@ import { ChatPerformance } from './chat/performance';
 import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
+import { LiftPose, liftMatrix } from './lift-pose';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { timeScene, type ResolvedDialogue } from './dialogue/dialogue';
 import { ReactionLibrary } from './interaction/reactions';
@@ -14,10 +15,10 @@ import { bubbleFontFor, fitBubble } from './dialogue/bubble-fit';
 import { AndroidDialogueBubble } from './dialogue/android-bubble';
 import { HitAreas } from './interaction/hit-areas';
 import { showStartupNotice } from './startup-notice';
-import { InteractionService } from './interaction/interaction';
+import { InteractionService, type PetInteractionEvent } from './interaction/interaction';
 import { PointerContext } from './interaction/petting-recognizer';
 import { BehaviorService } from './behavior';
-import { StateEngine } from './state';
+import { StateEngine, loadDailyInteractionStats, saveDailyInteractionStats } from './state';
 import { PetAI } from './pet-ai';
 import { ACTIONS, isMotion } from './catalog';
 import { isProceduralReactionType, proceduralReaction } from './interaction/procedural';
@@ -191,6 +192,11 @@ export class PetApp {
   private _nativeSnapping = false;
   /** 悬浮窗壳正在原生拖动（窗口由壳独占，暂停矩形下发）。 */
   private _nativeDragging = false;
+  /** 拖动「被拎起」的整体悬挂姿态（渲染矩阵层）。 */
+  private readonly _lift: LiftPose | undefined = new LiftPose();
+  /** 悬挂支点（模型单位）：抓取点；原生拖动没有坐标时取上半身。 */
+  private _liftPivot: { x: number; y: number } | null = null;
+  private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
   private _glContextLost = false;
 
@@ -229,10 +235,17 @@ export class PetApp {
   private _touchClickCandidateActive = false;
   private _touchClickCandidate = false;
   private _downScreenX = 0;
+  /** 按下点（视口坐标），拖动开始时换算成拎起支点。 */
+  private _downClientX = 0;
+  private _downClientY = 0;
   private _downScreenY = 0;
   private _lastScreenX = 0;
   private _lastScreenY = 0;
   private _lastMoveEventMs = 0;
+  private _dragVelX = 0;
+  private _dragVelY = 0;
+  private _dragLastMoveMs = 0;
+  private _hoverCursor = '';
 
   /** 渲染暂停（屏幕熄灭/后台，由壳或 visibilitychange 触发）。 */
   private _paused = false;
@@ -241,17 +254,19 @@ export class PetApp {
   private static readonly _dragThresholdPx = 5;
   /** 触屏轻点容差（CSS px）：快速点按时手指滚动/抬手偏移常超过 5px，仍应算点击。 */
   private static readonly _touchTapTolerancePx = 16;
+  private static readonly _interactiveCursorAreas = new Set([
+    'ear_left', 'ear_right', 'hand', 'tablet', 'tie', 'cheek_left', 'cheek_right', 'mouth', 'face',
+  ]);
 
   /** 松手贴边感应带（CSS px）。 */
   private static readonly _snapZonePx = 48;
 
   /**
-   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.33，不改变用户窗口缩放设置。
-   * 正式 Core 的全部 13 动作×表情×极端注视/切换矩阵：需求 1.236901，
-   * 乘 1.05 安全系数后需 1.298746；最小窗口的投影安全带在 1.30 时贴边失败，
-   * 取 1.33 留出余量（重做前的旧动作在同一矩阵需 1.323，测量方法见 docs/ACTIONS.md）。
+   * 渲染动作余量：模型渲染尺寸 = 视口 / 1.39，不改变用户窗口缩放设置。
+   * 正式 Core 的全部 17 动作×14 表情×极端注视/切换矩阵（含情绪符号及其动效）：需求 1.3152，
+   * 乘 1.05 安全系数后需 1.3809，取 1.39（测量方法与演变见 docs/ACTIONS.md）。
    */
-  private static readonly _renderMarginRatio = 1.33;
+  private static readonly _renderMarginRatio = 1.39;
   /** 聊天入口与脚底的固定间隙（CSS px）。 */
   private static readonly _launcherGapCss = 6;
 
@@ -437,12 +452,26 @@ export class PetApp {
       getTarget: () => (this._model?.isReady() ? this._model : null),
       reactions: this._reactions,
       host: {
-        canSpeak: () => !this._chatHoldsSpeech() && this._coordination.canSpeak('interaction'),
-        speak: (line) => this._speak(line, 'interaction'),
+        canSpeak: (urgent) => urgent ? this._canForceReactionSpeech()
+          : (!this._chatHoldsSpeech() && this._coordination.canSpeak('interaction')),
+        speak: (line, opts) => this._speak(line, 'interaction', opts?.urgent),
         express: (name, line) => this._expressForReaction(name, line),
         playMotion: (name) => this._playMotion(name),
       },
       pettingHost: { isDialogueActive: () => this._bubble?.isActive ?? false },
+      persistence: {
+        load: () => loadDailyInteractionStats(),
+        save: (stats) => saveDailyInteractionStats(stats),
+      },
+      onInteraction: (ev: PetInteractionEvent) => this._ai?.emitInteraction(ev),
+      onHaptic: (pulse) => {
+        if (platform !== 'android') return;
+        try {
+          androidShell()?.vibrate?.(Math.round(pulse.durationMs), Math.round(pulse.amplitude));
+        } catch {
+          // 旧版壳桥未注入 vibrate 时静默跳过
+        }
+      },
     });
 
     this._behavior = new BehaviorService(() =>
@@ -459,11 +488,14 @@ export class PetApp {
     this._ai = new PetAI({
       model: () => (this._model?.isReady() ? this._model : null),
       stateEngine: () => this._stateEngine,
-      playAction: (name) => this._playAction(name),
+      playAction: (name, opts) => this._playAction(name, opts),
       actionNames: () => {
         const motions = new Set(this._model?.getMotionNames() ?? []);
         return ACTIONS.filter(a => a.kind === 'procedural' || motions.has(a.name)).map(a => a.name);
       },
+      coordinationState: () => this._coordinationState(),
+      gazeReleased: () => this._behavior?.gazeReleased ?? false,
+      headPettingCountToday: () => this._interaction?.petting.dailyState.headPettingCountToday ?? 0,
     });
     this._behavior.setState(this._stateEngine.current.name);
     this._stateEngine.onChanged((state, previous) => {
@@ -602,6 +634,12 @@ export class PetApp {
           if (!this._paused) this._chatPerformance?.cue(e.payload);
         });
         await events.listen('chat-cancel', () => this._chatPerformance?.cancel());
+        await events.listen<{ enabled?: boolean }>('game-mode-changed', e => {
+          if (e.payload?.enabled) {
+            this._cancelInteraction();
+            this._resetDragState();
+          }
+        });
       });
       // 上次退出时聊天窗开着则直接恢复；定位在 pet Moved 事件中自校正。
       try {
@@ -745,17 +783,26 @@ export class PetApp {
     this._syncChatLauncherVisible();
     this._chatView?.setLauncherEnabled(s.showChatButton);
 
+    // 舞台背景（Android 主界面与 Web 预览舞台；悬浮窗、桌面透明桌宠与官网嵌入页不加载背景）
+    if ((platform === 'android' && !this._wrapWindow) || (platform === 'web' && !isEmbed)) {
+      if (!this._chatBackground && typeof ChatBackgroundLayer === 'function') {
+        this._chatBackground = new ChatBackgroundLayer({
+          surface: 'stage',
+          onActiveChange: (active) => {
+            document.body?.classList?.toggle?.('with-chat-bg', active);
+          },
+        });
+      }
+      const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
+      if (this._chatBackground && key !== this._chatBackgroundKey) {
+        this._chatBackgroundKey = key;
+        void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
+      }
+      this._syncBackgroundMotion();
+    }
+
     // 窗口层
     if (platform === 'android') {
-      if (!this._wrapWindow) {
-        this._chatBackground ??= new ChatBackgroundLayer();
-        const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
-        if (key !== this._chatBackgroundKey) {
-          this._chatBackgroundKey = key;
-          void this._chatBackground.apply(s.chatBackground, s.chatBackgroundDim);
-        }
-        this._syncBackgroundMotion();
-      }
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
     }
@@ -766,6 +813,10 @@ export class PetApp {
       void import('@tauri-apps/api/core')
         .then(m => m.invoke('sync_top_menu', { checked: s.alwaysOnTop }))
         .catch(() => {});
+      // 游戏模式快捷键随设置注册；壳侧值未变不重复注册，失败时保留原快捷键。
+      void import('@tauri-apps/api/core')
+        .then(m => m.invoke('set_game_mode_hotkey', { hotkey: s.gameModeHotkey }))
+        .catch(e => console.warn('Failed to register game mode hotkey', e));
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -1169,6 +1220,12 @@ export class PetApp {
 
   /** 设置窗口/托盘事件接线；模型重载时复用注册任务，避免重复监听。 */
   private _wireSettingsSync(): Promise<void> {
+    if (platform === 'web' && !isEmbed && typeof window !== 'undefined' && !this._settingsSyncTask) {
+      window.addEventListener?.('storage', (e) => {
+        if (e.key === 'aliya_pet_settings_v1') this.applySettings(loadSettings(), false);
+      });
+      return this._settingsSyncTask = Promise.resolve();
+    }
     if (platform !== 'tauri') return Promise.resolve();
     return this._settingsSyncTask ??= import('@tauri-apps/api/event').then(async (ev) => {
       const installed = this._settingsSyncListeners ??= new Set<string>();
@@ -1352,10 +1409,10 @@ export class PetApp {
   }
 
   /** 统一动作入口：程序微动走互动覆盖通道，Live2D 动作走模型。 */
-  private _playAction(name: string): boolean {
+  private _playAction(name: string, opts?: { areaId?: string; side?: number }): boolean {
     if (isProceduralReactionType(name)) {
-      if (!this._interaction || !this._model?.isReady()) return false;
-      this._interaction.procedural.apply(proceduralReaction(name));
+      if (!this._interaction || !this._model?.isReady() || this._interaction.petting.isPettingSessionActive) return false;
+      this._interaction.procedural.apply(proceduralReaction(name, opts));
       return true;
     }
     return this._playMotion(name);
@@ -1370,20 +1427,38 @@ export class PetApp {
 
   /**
    * 互动反应的临时表情：随台词持续（台词时长按气泡节奏估算），没有台词时保持 3 秒，
-   * 之后回到当前状态默认表情。聊天表演正在保持表情时不覆盖它。
+   * 之后回到当前状态默认表情。只有聊天表演实际套用（applied）时才不覆盖它；
+   * busy 让位期间允许展示互动表情。
    */
   private _expressForReaction(name: string, line: ResolvedDialogue | null): void {
-    if (this._chatPerformance?.active) return;
+    if (this._chatPerformance?.applied) return;
     if (!this._model?.startExpression(name)) return;
+    this._ai?.cancelExpressionTimer?.();
+    this._ai?.emitExpression?.(name);
     if (this._reactionExpressionTimer) clearTimeout(this._reactionExpressionTimer);
-    const ms = line ? line.pages.reduce((sum, p) => sum + 600 + p.text.length * 90, 900) : 3000;
+    const ms = line ? line.pages.reduce((sum, p) => sum + 600 + p.text.length * 90, line.pages.length > 0 ? 1200 : 900) : 3000;
     this._reactionExpressionTimer = setTimeout(() => {
       this._reactionExpressionTimer = null;
-      if (this._chatPerformance?.active) return;
+      // 只有聊天表演已接管脸部时才让位；表演待命（busy 未套用）时不复位，
+      // 表演取消也不会清理，互动表情会一直卡住。
+      if (this._chatPerformance?.applied) return;
       if (this._model?.getCurrentExpression() === name) {
-        this._model.startExpression(this._stateEngine?.definition.expression ?? null);
+        const back = this._stateEngine?.definition.expression ?? null;
+        this._model.startExpression(back);
+        this._ai?.emitExpression?.(back);
       }
     }, ms);
+  }
+
+  private _clearReactionExpression(): void {
+    if (!this._reactionExpressionTimer) return;
+    clearTimeout(this._reactionExpressionTimer);
+    this._reactionExpressionTimer = null;
+    if (!this._chatPerformance?.applied && this._model?.isReady?.()) {
+      const back = this._stateEngine?.definition.expression ?? null;
+      this._model.startExpression(back);
+      this._ai?.emitExpression?.(back);
+    }
   }
 
   /** 位置重置：移回主屏幕中央。 */
@@ -1702,9 +1777,17 @@ export class PetApp {
     return this._remoteChat.open || (this._chatView?.panelVisible ?? false);
   }
 
-  private _speak(resolved: ResolvedDialogue, source: SpeechSource): void {
+  private _canForceReactionSpeech(): boolean {
+    return this._paused !== true && this._running !== false && !this._chatHoldsSpeech() &&
+      !this._chat?.busy && !this._chatView?.typing && !this._chatView?.replying &&
+      !this._remoteChat?.busy && !this._remoteChat?.typing && !this._remoteChat?.replying;
+  }
+
+  private _speak(resolved: ResolvedDialogue, source: SpeechSource, urgent = false): void {
     if (this._chatHoldsSpeech() && source !== 'conversation') return;
-    if (this._coordination.canSpeak(source)) void this._bubble?.play(resolved);
+    if (urgent ? this._canForceReactionSpeech() : this._coordination.canSpeak(source)) {
+      void this._bubble?.play(resolved);
+    }
   }
 
   /**
@@ -1791,10 +1874,9 @@ export class PetApp {
     this._behavior?.updateLookTarget(n.nx, n.ny, e.type === 'pointerdown' && e.pointerType === 'touch');
   }
 
-  /** 构造互动上下文（模型参考坐标 + 物理像素 + 真实事件间隔）。 */
+  /** 构造互动上下文（模型参考坐标 + CSS 像素 + 真实事件间隔）。 */
   private _ctx(e: PointerEvent, isSecondary: boolean): PointerContext {
     const rect = this._canvas.getBoundingClientRect();
-    const scale = rect.width > 0 ? this._canvas.width / rect.width : 1;
     const now = performance.now();
     const dt =
       this._lastMoveEventMs > 0
@@ -1805,11 +1887,12 @@ export class PetApp {
     return {
       normX: n.nx,
       normY: n.ny,
-      pxX: (e.clientX - rect.left) * scale,
-      pxY: (e.clientY - rect.top) * scale,
+      pxX: e.clientX - rect.left,
+      pxY: e.clientY - rect.top,
       dtSeconds: dt,
       leftPressed: this._leftDown,
       isSecondary,
+      pointerType: e.pointerType,
     };
   }
 
@@ -1864,6 +1947,8 @@ export class PetApp {
       this._touchPetting = (e.pointerType === 'touch' || isEmbed) && isSecondary && e.button === 0;
       this._touchTapCandidate = this._touchPetting;
       this._downScreenX = e.screenX;
+      this._downClientX = e.clientX;
+      this._downClientY = e.clientY;
       this._downScreenY = e.screenY;
       if (isSecondary) {
         // 右键/触摸头部：只走抚摸，永不触发拖动/点击
@@ -1901,14 +1986,32 @@ export class PetApp {
       const ctx = this._ctx(e, (e.buttons & 2) !== 0);
       const handled = this._interaction?.onPointerMove(ctx) ?? false;
       this._updatePointerLook(e);
+      if (!this._dragging && !this._leftDown && e.pointerType === 'mouse' && this._model?.isReady?.()) {
+        const opaque = this._hitMaskData?.length ? this._maskOpaqueAt(e) : this._hitAreas.hitAreaAt(ctx.normX, ctx.normY) !== null;
+        let nextCursor = '';
+        if (opaque) {
+          const area = this._hitAreas.hitAreaAt(ctx.normX, ctx.normY);
+          nextCursor = area && PetApp._interactiveCursorAreas.has(area) ? 'pointer' : 'grab';
+        }
+        if (nextCursor !== this._hoverCursor) {
+          this._hoverCursor = nextCursor;
+          if (this._canvas?.style) this._canvas.style.cursor = nextCursor;
+        }
+      }
 
       // Android 的触摸拖动只由原生壳接管（主界面不可拖）；前端不把短促位移当拖动。
       if (this._dragCandidate && this._leftDown && !handled && !isEmbed && !this._touchClickCandidateActive) {
+        const wasDragging = this._dragging;
         if (!this._dragging) {
           const dx = e.screenX - this._downScreenX;
           const dy = e.screenY - this._downScreenY;
           if (Math.sqrt(dx * dx + dy * dy) >= PetApp._dragThresholdPx) {
             this._dragging = true;
+            this._dragVelX = 0;
+            this._dragVelY = 0;
+            this._dragLastMoveMs = performance.now();
+            this._liftPivot = this._modelPointAt(this._downClientX, this._downClientY);
+            this._hoverCursor = 'grabbing';
             this._canvas.style.cursor = 'grabbing';
             this._interaction?.dragReaction.beginDrag();
             this._interaction?.beginHold();
@@ -1918,8 +2021,18 @@ export class PetApp {
         if (this._dragging) {
           const dx = e.screenX - this._lastScreenX;
           const dy = e.screenY - this._lastScreenY;
-          this._interaction?.dragReaction.onDragMove(Math.hypot(dx, dy) * this._scaleFactor / ctx.dtSeconds);
-          this._interaction?.updateHoldVelocity(dx / ctx.dtSeconds);
+          if (wasDragging) {
+            const nowMove = performance.now();
+            const moveDt = Math.max(0.001, Math.min(0.1, (nowMove - this._dragLastMoveMs) / 1000));
+            this._dragLastMoveMs = nowMove;
+            const alpha = 1 - Math.exp(-moveDt / 0.035);
+            this._dragVelX += (dx / moveDt - this._dragVelX) * alpha;
+            this._dragVelY += (dy / moveDt - this._dragVelY) * alpha;
+            const shake = this._interaction?.dragReaction.onDragMotion?.(this._dragVelX, this._dragVelY, moveDt);
+            if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
+            this._interaction?.updateHoldVelocity(this._dragVelX);
+            this._lift?.setVelocity(this._dragVelX);
+          }
           if (!this._wrapWindow) {
             // 贴合模式：拖动由壳侧原生接管（OnTouchListener 直移窗口）
             this._moveWindowBy(dx, dy);
@@ -1984,7 +2097,11 @@ export class PetApp {
     });
     canvas.addEventListener('pointerleave', (e) => {
       // 触摸抬起也会产生 leave，并非鼠标移出；最后触点交给行为层定时平滑释放。
-      if (e.pointerType === 'mouse' && platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
+      if (e.pointerType === 'mouse') {
+        this._hoverCursor = '';
+        if (!this._dragging && this._canvas?.style) this._canvas.style.cursor = '';
+        if (platform !== 'tauri' && !this._leftDown) this._behavior?.clearLookTarget();
+      }
     });
     window.addEventListener('blur', () => {
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2009,9 +2126,13 @@ export class PetApp {
     this._dragCandidate = false;
     this._touchClickCandidateActive = false;
     this._touchClickCandidate = false;
+    this._dragVelX = 0;
+    this._dragVelY = 0;
+    this._dragLastMoveMs = 0;
+    this._hoverCursor = '';
     this._interaction?.dragReaction.cancel();
     if (this._dragging && this._behavior) this._behavior.isDragging = false;
-    if (this._dragging) this._canvas.style.cursor = '';
+    if (this._dragging && this._canvas?.style) this._canvas.style.cursor = '';
     this._dragging = false;
   }
 
@@ -2027,7 +2148,10 @@ export class PetApp {
     }
     this._touchPetting = false;
     this._touchTapCandidate = false;
+    this._hoverCursor = '';
+    if (!this._dragging && this._canvas?.style) this._canvas.style.cursor = '';
     this._interaction?.cancel();
+    this._clearReactionExpression?.();
     this._coordination.activity();
     this._publishHitMask();
   }
@@ -2212,6 +2336,7 @@ export class PetApp {
       this._chatPerformance?.cancel();
     }
     if (!paused && this._running) {
+      this._chatBackground?.refreshAuto?.();
       this._lastFrameTime = performance.now();
       this._scheduleFrame();
     }
@@ -2226,7 +2351,10 @@ export class PetApp {
       this._covered = covered;
       this._syncBackgroundMotion();
       // 设置页（另一 WebView）可能已退出登录：回到主界面时对齐聊天的连接状态。
-      if (!covered) this._chatView?.syncAuth();
+      if (!covered) {
+        this._chatView?.syncAuth();
+        this._chatBackground?.refreshAuto?.();
+      }
       if (!covered && this._running && !this._paused) {
         this._lastFrameTime = performance.now();
         this._scheduleFrame();
@@ -2262,8 +2390,12 @@ export class PetApp {
    * 悬浮窗原生拖动开始（壳 OnTouchListener 接管窗口搬运）。
    * JS 侧的拖动候选作废：窗口位置由壳独占，本对象只同步状态。
    */
-  public onNativeDragStart(): void {
+  public onNativeDragStart(downCssX?: number, downCssY?: number): void {
     this._nativeDragging = true;
+    const rect = this._canvas?.getBoundingClientRect?.();
+    this._liftPivot = rect && Number.isFinite(downCssX) && Number.isFinite(downCssY)
+      ? this._modelPointAt(rect.left + downCssX!, rect.top + downCssY!)
+      : null;
     this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
@@ -2277,6 +2409,16 @@ export class PetApp {
     this._interaction?.dragReaction.beginDrag();
     this._interaction?.beginHold();
     if (this._behavior) this._behavior.isDragging = true;
+  }
+
+  /** 悬浮窗原生拖动期间的节流速度同步（CSS px/s）：驱动 LiftPose 钟摆与晃头。 */
+  public onNativeDragMove(vxCss: number, vyCss: number, dtSec = 0.033): void {
+    if (!this._nativeDragging || !Number.isFinite(vxCss)) return;
+    this._coordination.activity();
+    const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, Number.isFinite(vyCss) ? vyCss : 0, dtSec);
+    if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
+    this._interaction?.updateHoldVelocity(vxCss);
+    this._lift?.setVelocity(vxCss);
   }
 
   /**
@@ -2302,7 +2444,14 @@ export class PetApp {
     this._persistWrapOrigin();
   }
 
-  public onNativeDragEnd(dxCss: number, dyCss: number, maxSpeedPxPerSec: number, cancelled: boolean): void {
+  public onNativeDragEnd(
+    dxCss: number,
+    dyCss: number,
+    maxSpeedPxPerSec: number,
+    cancelled: boolean,
+    upCssX?: number,
+    upCssY?: number,
+  ): void {
     this._coordination.activity();
     this._nativeDragging = false;
     this._cancelSnapAnimation();
@@ -2315,9 +2464,11 @@ export class PetApp {
       this._interaction?.dragReaction.cancel();
       this._interaction?.procedural.cancelAll();
     } else {
+      const hasUp = Number.isFinite(upCssX) && Number.isFinite(upCssY) && this._model?.isReady?.();
+      const norm = hasUp ? this._wrapToRefNorm(upCssX!, upCssY!) : { nx: 0.5, ny: 0.5 };
       this._interaction?.dragReaction.onDragMove(maxSpeedPxPerSec);
-      this._interaction?.onClick({ normX: 0.5, normY: 0.5, pxX: 0, pxY: 0,
-        dtSeconds: 0.016, leftPressed: false, isSecondary: false }, true);
+      this._interaction?.onClick({ normX: norm.nx, normY: norm.ny, pxX: upCssX ?? 0, pxY: upCssY ?? 0,
+        dtSeconds: 0.016, leftPressed: false, isSecondary: false, pointerType: 'touch' }, true);
     }
     this._onDragFinished();
   }
@@ -2426,11 +2577,11 @@ export class PetApp {
     this._scheduleFrame();
   }
 
-  /** 互动升帧：互动进行中或刚结束 400ms 内（让收尾补间同样顺滑）。 */
+  /** 互动升帧：互动进行中、拎起摆动回正期间或刚结束 400ms 内（让收尾补间同样顺滑）。 */
   private _interactionBoost(now: number): boolean {
     if (this._settings?.batterySaver || this._fpsCap >= 60) return false;
     const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
-      (this._interaction?.isBusy ?? false);
+      (this._lift?.active ?? false) || (this._interaction?.isBusy ?? false);
     if (active) this._boostUntil = now + 400;
     return now < this._boostUntil;
   }
@@ -2557,6 +2708,9 @@ export class PetApp {
     // 互动层先算平滑值并写入模型通道，模型 update 时统一应用
     this._chatPerformance?.tick();
     this._interaction?.tick(dt * 1000);
+    this._lift?.setHolding(this._dragging || this._nativeDragging);
+    this._reduceMotionQuery ??= window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
+    this._lift?.update(dt, this._reduceMotionQuery?.matches ?? false);
     this._model?.update(dt);
   }
 
@@ -2608,6 +2762,40 @@ export class PetApp {
     return tween.from + (tween.to - tween.from) * eased;
   }
 
+  /**
+   * 拎起姿态的模型矩阵：在基础变换外套上「绕抓取点拉长 + 摆动」。
+   * 缓冲坐标未镜像（镜像是画布 CSS 翻转），所以镜像时画面摆角取反。
+   */
+  private _liftModelMatrix(scale: number, originX: number, originY: number): Float32Array {
+    const b = this._model.getStaticBounds();
+    const pivot = this._liftPivot ?? {
+      x: (b.minX + b.maxX) / 2,
+      y: b.maxY - (b.maxY - b.minY) * 0.3,
+    };
+    return liftMatrix({
+      scale, originX, originY,
+      pivotX: originX + pivot.x * scale,
+      pivotY: originY - pivot.y * scale,
+      angleDeg: this._settings.mirror ? -this._lift.angle : this._lift.angle,
+      lift: this._lift.lift,
+      bounds: b,
+      width: this._canvas.width,
+      height: this._canvas.height,
+    });
+  }
+
+  /** 视口坐标 → 模型单位（未叠加拎起姿态；镜像已还原）。 */
+  private _modelPointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    if (!this._model?.isReady()) return null;
+    const rect = this._canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const { scale, originX, originY } = this._modelViewportTransform();
+    let px = (clientX - rect.left) * this._canvas.width / rect.width;
+    const py = (clientY - rect.top) * this._canvas.height / rect.height;
+    if (this._settings.mirror) px = this._canvas.width - px;
+    return { x: (px - originX) / scale, y: (originY - py) / scale };
+  }
+
   /** 给定画布 CSS 尺寸下的自然适配比例（CSS px / 模型单位），与 _modelViewportTransform 同式。 */
   private _naturalScaleCss(width: number, height: number, chatOpen: boolean): number {
     if (!this._model?.isReady()) return 0;
@@ -2635,6 +2823,7 @@ export class PetApp {
     const { scale, originX, originY } = this._modelViewportTransform();
     modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
     modelMatrix.translate(originX, originY);
+    if (this._lift?.active) modelMatrix.setMatrix(this._liftModelMatrix(scale, originX, originY));
 
     // 视口像素 -> NDC（y 翻转）
     const projection = new CubismMatrix44();

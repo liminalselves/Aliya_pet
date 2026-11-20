@@ -68,7 +68,7 @@ test('真实纹理上传与渲染器预乘模式一致，图层透明度同时�
   const pet = Object.create(PetModel.prototype);
   Object.assign(pet, { _fetchArrayBuffer: async () => new ArrayBuffer(0), loadModel() {},
     _model: { saveParameters() {}, update() {}, getDrawableCount: () => 1,
-      getDrawableVertices: () => [-0.4, -0.6, 0.4, 0.5] },
+      getDrawableOpacity: () => 1, getDrawableVertices: () => [-0.4, -0.6, 0.4, 0.5] },
     createRenderer() {}, getRenderer: () => renderer,
   });
   await assert.rejects(pet.loadFromSetting(new ArrayBuffer(0), 0, '/', { gl }), error => error === stopAfterBinding);

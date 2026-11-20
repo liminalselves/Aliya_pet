@@ -26,9 +26,14 @@ object OverlayGesturePolicyTest {
         // Holding still never arms a drag by itself.
         check(replay(0f, 3f, 4f) == Phase.PENDING)
 
-        // Front-end interaction (petting) owns the gesture: moving does not drag.
+        // Front-end interaction (petting) owns the gesture: horizontal/diagonal does not drag,
+        // while clear vertical pull from crown still lets the user lift/drag the overlay.
         check(replay(3f, 60f, canArm = false) == Phase.VOID)
         check(OverlayGesturePolicy.advance(Phase.VOID, 1e6f, SLOP, true) == Phase.VOID)
+        check(!OverlayGesturePolicy.canArmFromZone(40f, 10f, jsInteracting = true))
+        check(!OverlayGesturePolicy.canArmFromZone(30f, 30f, jsInteracting = true))
+        check(OverlayGesturePolicy.canArmFromZone(10f, 40f, jsInteracting = true))
+        check(OverlayGesturePolicy.canArmFromZone(40f, 10f, jsInteracting = false))
 
         // A held press, a drag or a slide is not a tap (and not a double-tap half).
         check(!OverlayGesturePolicy.isTap(Phase.PENDING, LONG, 0f, SLOP, LONG))

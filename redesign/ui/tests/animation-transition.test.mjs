@@ -495,3 +495,67 @@ for (const fps of [15, 30, 60]) {
     }
   });
 }
+
+test('entering a motion mid-blink smoothly opens eyelids instead of snapping in 1 frame', () => {
+  let active = false;
+  const running = blink(0.01);
+  const target = model({ [eyeIds[0]]: 1, [eyeIds[1]]: 1 });
+  const updater = new ContinuousEyeBlinkUpdater(() => active, running);
+  for (let i = 0; i < 30; i++) {
+    updater.onLateUpdate(target, 1 / 60);
+    if (target.getParameterValueById(eyeIds[0]) < 0.25) break;
+  }
+  const midBlink = target.getParameterValueById(eyeIds[0]);
+  assert.ok(midBlink < 0.25, `expected blink to close before motion entry, got ${midBlink}`);
+  active = true;
+  let prev = midBlink;
+  for (let frame = 0; frame < 14; frame++) {
+    target.setParameterValueById(eyeIds[0], 1);
+    target.setParameterValueById(eyeIds[1], 1);
+    updater.onLateUpdate(target, 1 / 60);
+    const cur = target.getParameterValueById(eyeIds[0]);
+    assert.ok(cur >= prev - 1e-12 && cur <= 1, 'eyelids must open monotonically on mid-blink entry');
+    assert.ok(cur - prev < 0.2, `eyelids snapped on motion start: ${prev} -> ${cur}`);
+    if (frame === 0) assert.ok(cur < 0.35, `first frame should not jump to 1.0 (got ${cur})`);
+    prev = cur;
+  }
+  assert.equal(prev, 1);
+});
+
+test('AttenuatedBreathUpdater scales down head sway during active motions while keeping ParamBreath full', () => {
+  const { CubismBreath, BreathParameterData } = sdk('effect/cubismbreath');
+  const { AttenuatedBreathUpdater } = load(resolve(uiRoot, 'src/animation-updaters.ts'));
+  const breath = CubismBreath.create();
+  const idHead = 'ParamAngleZ';
+  const idBreath = 'ParamBreath';
+  breath.setParameters([
+    new BreathParameterData(idHead, 0, 10, 4, 0.5),
+    new BreathParameterData(idBreath, 0.5, 0.5, 3, 1.0),
+  ]);
+  let motion = false;
+  const updater = new AttenuatedBreathUpdater(() => motion, breath, idBreath, 0.35);
+  const values = new Map();
+  const target = {
+    getParameterValueById: id => values.get(id) ?? 0,
+    setParameterValueById: (id, value, weight = 1) => values.set(id, (values.get(id) ?? 0) * (1 - weight) + value * weight),
+    addParameterValueById: (id, value, weight = 1) => values.set(id, (values.get(id) ?? 0) + value * weight),
+  };
+  const measurePeak = (activeFlag) => {
+    motion = activeFlag;
+    for (let i = 0; i < 60; i++) { target.setParameterValueById(idHead, 0); target.setParameterValueById(idBreath, 0); updater.onLateUpdate(target, 1 / 30); }
+    let maxHead = 0, minB = Infinity, maxB = -Infinity;
+    for (let i = 0; i < 150; i++) {
+      target.setParameterValueById(idHead, 0); target.setParameterValueById(idBreath, 0);
+      updater.onLateUpdate(target, 1 / 30);
+      maxHead = Math.max(maxHead, Math.abs(target.getParameterValueById(idHead)));
+      minB = Math.min(minB, target.getParameterValueById(idBreath));
+      maxB = Math.max(maxB, target.getParameterValueById(idBreath));
+    }
+    return { maxHead, spanB: maxB - minB };
+  };
+  const idleStats = measurePeak(false);
+  const motionStats = measurePeak(true);
+  assert.ok(idleStats.maxHead > 4.5, `idle head sway should reach ~5, got ${idleStats.maxHead}`);
+  assert.ok(motionStats.maxHead < idleStats.maxHead * 0.42, `active motion head sway must attenuate to ~0.35x (${motionStats.maxHead} vs ${idleStats.maxHead})`);
+  assert.ok(motionStats.spanB > 0.95, `ParamBreath must keep full 0..1 span during motions (got ${motionStats.spanB})`);
+});

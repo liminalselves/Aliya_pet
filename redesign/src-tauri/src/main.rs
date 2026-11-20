@@ -73,6 +73,210 @@ struct TopMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
 
 type HitMaskState = Arc<Mutex<std::collections::HashMap<String, HitMask>>>;
 
+/// 游戏模式：pet 与 chat 整窗穿透、chat 收起，桌宠不再接收任何鼠标点击，
+/// 也就不会被激活抢走游戏的键盘焦点。由托盘勾选项或全局快捷键切换。
+static GAME_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 托盘「游戏模式」勾选项。
+struct GameModeMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
+fn game_mode() -> bool {
+    GAME_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 切换游戏模式并同步托盘勾选；开启时收起 chat，释放其持有的键盘焦点。
+fn set_game_mode(app: &tauri::AppHandle, on: bool) {
+    GAME_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+    if let Some(item) = app.try_state::<GameModeMenuItem>() {
+        let _ = item.0.set_checked(on);
+    }
+    if on {
+        let _ = chat_window::hide_chat(app.clone(), app.state());
+    }
+    let _ = app.emit("game-mode-changed", json!({ "enabled": on }));
+    #[cfg(debug_assertions)]
+    println!("[game-mode] {on}");
+}
+
+#[tauri::command]
+fn get_game_mode() -> bool {
+    game_mode()
+}
+
+#[tauri::command]
+fn set_game_mode_enabled(app: tauri::AppHandle, enabled: bool) {
+    set_game_mode(&app, enabled);
+}
+
+/// 默认游戏模式快捷键；设置页可改（前端 `gameModeHotkey` 与此同值）。
+const DEFAULT_GAME_MODE_HOTKEY: &str = "Ctrl+Alt+G";
+
+/// 解析快捷键文本（如 "Ctrl+Shift+F9"）为 RegisterHotKey 的 (修饰键, 虚拟键码)。
+/// 主键支持 A–Z、0–9、F1–F24；字母和数字必须带修饰键，避免吞掉游戏里的普通按键。
+/// 返回规范化文本供菜单显示和前端回写。
+fn parse_hotkey(text: &str) -> Result<(u32, u32, String), String> {
+    const MOD_ALT: u32 = 0x1;
+    const MOD_CONTROL: u32 = 0x2;
+    const MOD_SHIFT: u32 = 0x4;
+    const MOD_WIN: u32 = 0x8;
+    let parts: Vec<&str> = text.split('+').map(str::trim).collect();
+    let (key, mods) = parts.split_last().filter(|(k, _)| !k.is_empty()).ok_or("快捷键为空")?;
+    let mut flags = 0;
+    for m in mods {
+        flags |= match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => MOD_CONTROL,
+            "alt" => MOD_ALT,
+            "shift" => MOD_SHIFT,
+            "win" | "super" | "meta" => MOD_WIN,
+            _ => return Err(format!("不支持的修饰键：{m}")),
+        };
+    }
+    let upper = key.to_ascii_uppercase();
+    let (vk, function_key) = match upper.as_bytes() {
+        [c @ (b'A'..=b'Z' | b'0'..=b'9')] => (*c as u32, false),
+        [b'F', digits @ ..] => match std::str::from_utf8(digits).ok().and_then(|d| d.parse::<u32>().ok()) {
+            Some(n @ 1..=24) if !digits.starts_with(b"0") => (0x70 + n - 1, true), // VK_F1 = 0x70
+            _ => return Err(format!("不支持的按键：{key}")),
+        },
+        _ => return Err(format!("不支持的按键：{key}")),
+    };
+    if flags == 0 && !function_key {
+        return Err("字母和数字键需要搭配 Ctrl / Alt / Shift / Win".into());
+    }
+    let mut label = String::new();
+    for (bit, name) in [(MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift"), (MOD_WIN, "Win")] {
+        if flags & bit != 0 { label.push_str(name); label.push('+'); }
+    }
+    label.push_str(&upper);
+    Ok((flags, vk, label))
+}
+
+/// 快捷键注册线程的句柄：RegisterHotKey 与线程绑定，改键请求经通道交给该线程执行。
+#[cfg(windows)]
+struct HotkeyThread {
+    thread_id: u32,
+    requests: std::sync::mpsc::Sender<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>,
+}
+
+#[cfg(windows)]
+const WM_HOTKEY_REQUEST: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
+
+/// 全局快捷键线程：持有唯一的热键注册，收到 WM_HOTKEY 在主线程切换游戏模式；
+/// 收到 WM_HOTKEY_REQUEST 时先注销旧键再注册新键，结果经回执通道返回。
+#[cfg(windows)]
+fn spawn_game_mode_hotkey(app: tauri::AppHandle) -> Result<HotkeyThread, String> {
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetMessageW, PeekMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_USER};
+    const HOTKEY_ID: i32 = 1;
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>();
+    let (id_tx, id_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        // 先建消息队列，PostThreadMessageW 才不会因队列不存在而失败。
+        unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), WM_USER, WM_USER, PM_NOREMOVE) };
+        let _ = id_tx.send(unsafe { GetCurrentThreadId() });
+        let mut registered = false;
+        while unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) } > 0 {
+            if msg.message == WM_HOTKEY && msg.wParam == HOTKEY_ID as usize {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || set_game_mode(&handle, !game_mode()));
+            } else if msg.message == WM_HOTKEY_REQUEST {
+                while let Ok((key, reply)) = req_rx.try_recv() {
+                    if registered {
+                        unsafe { UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID) };
+                        registered = false;
+                    }
+                    let result = match key {
+                        None => Ok(()),
+                        Some((mods, vk)) => {
+                            if unsafe { RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, mods | MOD_NOREPEAT, vk) } != 0 {
+                                registered = true;
+                                Ok(())
+                            } else {
+                                Err(format!("快捷键已被其他程序占用（{}）", std::io::Error::last_os_error()))
+                            }
+                        }
+                    };
+                    let _ = reply.send(result);
+                }
+            }
+        }
+    });
+    let thread_id = id_rx.recv_timeout(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
+    Ok(HotkeyThread { thread_id, requests: req_tx })
+}
+
+/// 在热键线程上替换注册；None 表示只注销。
+#[cfg(windows)]
+fn register_game_mode_hotkey(thread: &HotkeyThread, key: Option<(u32, u32)>) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread.requests.send((key, tx)).map_err(|_| "快捷键线程已退出".to_string())?;
+    if unsafe { PostThreadMessageW(thread.thread_id, WM_HOTKEY_REQUEST, 0, 0) } == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(2)).map_err(|_| "快捷键线程无响应".to_string())?
+}
+
+/// 当前生效的快捷键文本（规范化）；空串 = 未设置。
+#[derive(Default)]
+struct GameModeHotkey(Mutex<String>);
+
+/// 设置游戏模式快捷键（空串 = 不使用快捷键）。注册失败时保留原快捷键并返回错误；
+/// 成功返回规范化文本，同步托盘菜单文字。值未变时不重复注册。
+#[tauri::command]
+fn set_game_mode_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<String, String> {
+    let parsed = if hotkey.trim().is_empty() { None } else { Some(parse_hotkey(&hotkey)?) };
+    let label = parsed.as_ref().map(|p| p.2.clone()).unwrap_or_default();
+    let current = app.state::<GameModeHotkey>();
+    let mut current = current.0.lock().map_err(|e| e.to_string())?;
+    if *current == label { return Ok(label); }
+    #[cfg(windows)]
+    {
+        let thread = app.try_state::<HotkeyThread>().ok_or("快捷键线程未启动")?;
+        if let Err(error) = register_game_mode_hotkey(&thread, parsed.as_ref().map(|p| (p.0, p.1))) {
+            // 恢复原快捷键，失败的改动不让旧键也失效。
+            let old = (!current.is_empty()).then(|| parse_hotkey(&current).ok()).flatten();
+            let _ = register_game_mode_hotkey(&thread, old.map(|p| (p.0, p.1)));
+            return Err(error);
+        }
+    }
+    *current = label.clone();
+    if let Some(item) = app.try_state::<GameModeMenuItem>() {
+        let _ = item.0.set_text(game_mode_menu_text(&label));
+    }
+    Ok(label)
+}
+
+fn game_mode_menu_text(hotkey: &str) -> String {
+    if hotkey.is_empty() { "游戏模式".into() } else { format!("游戏模式（{hotkey}）") }
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::parse_hotkey;
+
+    #[test]
+    fn parses_and_normalizes_modifiers_and_keys() {
+        assert_eq!(parse_hotkey("ctrl+alt+g"), Ok((0x3, b'G' as u32, "Ctrl+Alt+G".into())));
+        assert_eq!(parse_hotkey("Shift + Win + 5"), Ok((0xC, b'5' as u32, "Shift+Win+5".into())));
+        assert_eq!(parse_hotkey("Alt+Ctrl+F12"), Ok((0x3, 0x7B, "Ctrl+Alt+F12".into())));
+        assert_eq!(parse_hotkey("F9"), Ok((0, 0x78, "F9".into())));
+        assert_eq!(parse_hotkey("f24").map(|p| p.1), Ok(0x87));
+    }
+
+    #[test]
+    fn rejects_bare_letters_and_unknown_keys() {
+        assert!(parse_hotkey("G").is_err());
+        assert!(parse_hotkey("Ctrl+").is_err());
+        assert!(parse_hotkey("Ctrl+F25").is_err());
+        assert!(parse_hotkey("Ctrl+F0").is_err());
+        assert!(parse_hotkey("Ctrl+F01").is_err());
+        assert!(parse_hotkey("Hyper+G").is_err());
+        assert!(parse_hotkey("Ctrl+Space").is_err());
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn update_hit_mask(
@@ -315,12 +519,15 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
         // tauri 的 is_visible()/hwnd() 每次都要投递到主线程事件循环再等结果，
         // 60Hz × 2 个窗口的跨线程往返是空闲时主进程 CPU 的主要来源。
         let mut handles: std::collections::HashMap<&str, isize> = Default::default();
+        let mut pendant_last: Option<(i32, i32)> = None;
+        let mut cursor_tails: std::collections::HashMap<isize, (i32, i32)> = Default::default();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(16));
             let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
             if unsafe { GetCursorPos(&mut pt) } == 0 {
                 continue;
             }
+            follow_pendant(&app, &mut handles, &mut pendant_last, &mut cursor_tails, pt);
             for label in ["pet", "chat"] {
                 let Some(win) = app.get_webview_window(label) else {
                     continue;
@@ -354,7 +561,7 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                     (unsafe { GetWindowRect(hwnd as _, &mut r) } != 0)
                         .then_some((r.left, r.top, r.right - r.left, r.bottom - r.top))
                 };
-                let want = {
+                let want = if game_mode() { true } else {
                     let Ok(map) = state.lock() else { continue };
                     match want_ignore_at(map.get(label), (pt.x, pt.y), rect) {
                         Some(w) => w,
@@ -371,6 +578,142 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
             }
         }
     });
+}
+
+/// 当前光标「尾部」相对热点的偏移（物理 px）：光标位图里最下面一行可见像素的中点。
+/// 箭头是箭杆末端，I 形是底端；随光标形状、系统光标大小和 DPI 自动适配。
+/// 结果按光标句柄缓存；读取失败返回 (0, 0)，即挂在热点上。
+#[cfg(windows)]
+fn cursor_tail_offset(cache: &mut std::collections::HashMap<isize, (i32, i32)>) -> (i32, i32) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, ICONINFO};
+    let mut ci: CURSORINFO = unsafe { std::mem::zeroed() };
+    ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
+    if unsafe { GetCursorInfo(&mut ci) } == 0 || ci.flags & CURSOR_SHOWING == 0 || ci.hCursor.is_null() {
+        return (0, 0);
+    }
+    let key = ci.hCursor as isize;
+    if let Some(&v) = cache.get(&key) { return v; }
+    let mut info: ICONINFO = unsafe { std::mem::zeroed() };
+    if unsafe { GetIconInfo(ci.hCursor, &mut info) } == 0 { return (0, 0); }
+    let read = |bmp: HBITMAP| -> Option<(i32, i32, Vec<u8>)> {
+        if bmp.is_null() { return None; }
+        let mut b: BITMAP = unsafe { std::mem::zeroed() };
+        if unsafe { GetObjectW(bmp as _, std::mem::size_of::<BITMAP>() as i32, (&mut b as *mut BITMAP).cast()) } == 0 {
+            return None;
+        }
+        let (w, h) = (b.bmWidth, b.bmHeight);
+        if w <= 0 || h <= 0 || w > 1024 || h > 2048 { return None; }
+        let mut bmi: BITMAPINFO = unsafe { std::mem::zeroed() };
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB,
+            ..unsafe { std::mem::zeroed() }
+        };
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        let dc = unsafe { GetDC(std::ptr::null_mut()) };
+        let lines = unsafe { GetDIBits(dc, bmp, 0, h as u32, buf.as_mut_ptr().cast(), &mut bmi, DIB_RGB_COLORS) };
+        unsafe { ReleaseDC(std::ptr::null_mut(), dc) };
+        (lines == h).then_some((w, h, buf))
+    };
+    let mask = read(info.hbmMask);
+    let color = read(info.hbmColor);
+    unsafe {
+        if !info.hbmMask.is_null() { DeleteObject(info.hbmMask as _); }
+        if !info.hbmColor.is_null() { DeleteObject(info.hbmColor as _); }
+    }
+    let Some((mw, mh, mbuf)) = mask else { return (0, 0) };
+    // 彩色光标：有 alpha 用 alpha，否则看 AND 掩码；单色光标：掩码上半 AND、下半 XOR。
+    let (w, h, visible): (i32, i32, Box<dyn Fn(i32, i32) -> bool>) = match &color {
+        Some((cw, ch, cbuf)) => {
+            let has_alpha = cbuf.chunks_exact(4).any(|p| p[3] != 0);
+            let (cw, ch) = (*cw, *ch);
+            let cbuf = cbuf.clone();
+            let mbuf = mbuf.clone();
+            (cw, ch, Box::new(move |x, y| {
+                let i = ((y * cw + x) * 4) as usize;
+                if has_alpha { cbuf[i + 3] > 16 } else { y < mh && x < mw && mbuf[((y * mw + x) * 4) as usize] == 0 }
+            }))
+        }
+        None => {
+            let h = mh / 2;
+            let mbuf = mbuf.clone();
+            (mw, h, Box::new(move |x, y| {
+                let and = mbuf[((y * mw + x) * 4) as usize];
+                let xor = mbuf[(((y + h) * mw + x) * 4) as usize];
+                and == 0 || xor != 0
+            }))
+        }
+    };
+    let mut result = (0, 0);
+    'rows: for y in (0..h).rev() {
+        let xs: Vec<i32> = (0..w).filter(|&x| visible(x, y)).collect();
+        if !xs.is_empty() {
+            let cx = (xs[0] + xs[xs.len() - 1]) / 2;
+            result = (cx - info.xHotspot as i32, y - info.yHotspot as i32);
+            break 'rows;
+        }
+    }
+    // 动画光标会不断换句柄：缓存只留最近用到的一批，超限直接清空重建。
+    if cache.len() >= 64 { cache.clear(); }
+    cache.insert(key, result);
+    result
+}
+
+/// 鼠标吊坠：窗口铺满光标所在的显示器，只在换屏时移动；页面按光标屏幕坐标自行绘制。
+/// （跟着光标逐帧移窗会因移窗与重绘不同步而抖动。）
+/// 吊坠窗口在 setup 里设为永久鼠标穿透，不参与像素命中判定。
+/// 隐藏时清空记录，重新显示后第一帧立即就位。
+#[cfg(windows)]
+fn follow_pendant(
+    app: &tauri::AppHandle,
+    handles: &mut std::collections::HashMap<&'static str, isize>,
+    last: &mut Option<(i32, i32)>,
+    tails: &mut std::collections::HashMap<isize, (i32, i32)>,
+    pt: windows_sys::Win32::Foundation::POINT,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, IsWindowVisible, SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+    };
+    let hwnd = match handles.get("pendant") {
+        Some(&h) => h,
+        None => {
+            let Some(win) = app.get_webview_window("pendant") else { return };
+            let Ok(h) = win.hwnd() else { return };
+            handles.insert("pendant", h.0 as isize);
+            h.0 as isize
+        }
+    };
+    if unsafe { IsWindowVisible(hwnd as _) } == 0 {
+        *last = None;
+        return;
+    }
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let monitor = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 { return; }
+    let m = info.rcMonitor;
+    let (x, y, w, h) = (m.left, m.top, m.right - m.left, m.bottom - m.top);
+    let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(hwnd as _, &mut r) } == 0 { return; }
+    if (r.left, r.top, r.right - r.left, r.bottom - r.top) != (x, y, w, h) {
+        unsafe {
+            SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+        *last = None; // 换屏后必须重发，页面据新原点复位
+    }
+    // 绳子挂在光标尾部；与窗口原点一起发出（物理 px），页面据此把人物画回屏幕坐标。
+    let (ox, oy) = cursor_tail_offset(tails);
+    let anchor = (pt.x + ox, pt.y + oy);
+    if *last != Some(anchor) {
+        *last = Some(anchor);
+        let _ = app.emit_to("pendant", "pendant-cursor", json!({ "x": anchor.0, "y": anchor.1, "wx": x, "wy": y }));
+    }
 }
 
 /// 开机自启注册表键（与 Flutter 版一致：reg.exe 实现，零新依赖）。
@@ -685,6 +1028,9 @@ fn main() {
             show_settings,
             sync_click_through_menu,
             sync_top_menu,
+            set_game_mode_hotkey,
+            get_game_mode,
+            set_game_mode_enabled,
             show_records,
             show_update,
             current_update_payload,
@@ -729,6 +1075,10 @@ fn main() {
         })
         .setup(move |app| {
             chat_window::setup(app.handle())?;
+            // 吊坠跟着光标走，任何时候都不能挡住点击。
+            if let Some(pendant) = app.get_webview_window("pendant") {
+                let _ = pendant.set_ignore_cursor_events(true);
+            }
             #[cfg(windows)]
             spawn_click_through(app.handle().clone(), hit_mask_for_setup);
             #[cfg(windows)]
@@ -749,6 +1099,9 @@ fn main() {
             // 托盘不依赖人物命中，可切换穿透、恢复可见度或打开设置。
             let click_through =
                 CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
+            let game = CheckMenuItem::with_id(
+                app, "game_mode", game_mode_menu_text(""), true, false, None::<&str>,
+            )?;
             let reset_opacity =
                 MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
@@ -758,11 +1111,25 @@ fn main() {
                 app,
                 &[
                     &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
-                    &reset_opacity, &sep2, &about, &quit,
+                    &game, &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
             app.manage(click_through.clone());
             app.manage(TopMenuItem(top.clone()));
+            app.manage(GameModeMenuItem(game.clone()));
+            app.manage(GameModeHotkey::default());
+            // 先注册默认键；pet 前端加载设置后按用户保存的快捷键替换。
+            #[cfg(windows)]
+            match spawn_game_mode_hotkey(app.handle().clone()) {
+                Ok(thread) => {
+                    app.manage(thread);
+                    if let Err(error) = set_game_mode_hotkey(app.handle().clone(), DEFAULT_GAME_MODE_HOTKEY.into()) {
+                        eprintln!("[game-mode] register default hotkey failed: {error}");
+                        let _ = game.set_text(game_mode_menu_text(""));
+                    }
+                }
+                Err(error) => eprintln!("[game-mode] hotkey thread failed: {error}"),
+            }
 
             let icon = app
                 .default_window_icon()
@@ -821,6 +1188,11 @@ fn main() {
                             "tray-action",
                             json!({ "action": "full-click-through", "value": new_val }),
                         );
+                    }
+                    "game_mode" => {
+                        // muda 已先切换勾选；按勾选值设置，不能再次反转。
+                        let on = app.state::<GameModeMenuItem>().0.is_checked().unwrap_or(false);
+                        set_game_mode(app, on);
                     }
                     "reset_opacity" => {
                         let _ = app.emit_to(

@@ -48,6 +48,7 @@ if (typeof document !== 'undefined') {
   const host = window as unknown as {
     __renderDialogueBubble: typeof render;
     __replayDialogueBubble: () => void;
+    __setDialogueTail: (inWindowCss: number) => void;
     BubbleHost?: { ready(): void };
   };
   host.__renderDialogueBubble = render;
@@ -55,9 +56,21 @@ if (typeof document !== 'undefined') {
   host.__replayDialogueBubble = () => {
     const el = document.getElementById('dialogue-bubble');
     if (!el || el.style.display === 'none') return;
-    el.style.display = 'none';
+    el.style.animation = 'none';
     void el.offsetWidth;
-    el.style.display = 'block';
+    el.style.animation = '';
+  };
+  host.__setDialogueTail = (inWindowCss: number) => {
+    const el = document.getElementById('dialogue-bubble');
+    if (!el || !Number.isFinite(inWindowCss)) return;
+    const left = Number.parseFloat(el.style.left || '0') || 0;
+    const font = Number.parseFloat(el.style.fontSize || '20') || 20;
+    const margin = Math.ceil(font * 0.8);
+    const width = el.offsetWidth || 0;
+    const tailX = width > margin * 2
+      ? Math.min(Math.max(inWindowCss - left, margin), width - margin)
+      : width / 2;
+    el.style.setProperty('--tail-x', `${Math.round(tailX)}px`);
   };
   // 先加载原字体，再测量文字，避免首次显示发生字体替换与气泡尺寸跳动。
   void document.fonts.load('400 14px "Aliya Serif"').then(() => host.BubbleHost?.ready());

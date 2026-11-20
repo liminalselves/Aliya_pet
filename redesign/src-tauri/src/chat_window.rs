@@ -274,6 +274,8 @@ pub fn show_chat(
     let win = app
         .get_webview_window("chat")
         .ok_or("chat 窗口未预创建")?;
+    // 游戏模式下 chat 整窗穿透无法输入：主动打开聊天即退出游戏模式。
+    if crate::game_mode() { crate::set_game_mode(&app, false); }
     let _ = win.unminimize();
     position_chat(&app, &anchor);
     let _ = win.show();

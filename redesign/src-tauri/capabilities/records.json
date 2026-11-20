@@ -5,6 +5,7 @@
   "windows": ["records"],
   "permissions": [
     "core:default",
-    "core:event:allow-listen"
+    "core:event:allow-listen",
+    "core:window:allow-hide"
   ]
 }

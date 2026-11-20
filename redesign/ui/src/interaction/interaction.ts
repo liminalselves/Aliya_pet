@@ -7,7 +7,12 @@
 
 import type { ResolvedDialogue } from '../dialogue/dialogue';
 import { HitAreas } from './hit-areas';
-import { PettingController, PettingDialogueHost } from './petting-controller';
+import {
+  PettingController,
+  PettingDialogueHost,
+  type PettingHapticPulse,
+  type DailyInteractionPersistence,
+} from './petting-controller';
 import { PointerContext } from './petting-recognizer';
 import {
   ClickResult,
@@ -22,11 +27,16 @@ import {
 import type { ReactionLibrary } from './reactions';
 import { InteractionTarget } from './target';
 
+export type PetInteractionEvent =
+  | { kind: 'click'; trigger: string; areaId?: string; side: number; tier?: 'repeat' | 'annoyed' | 'cooldown' }
+  | { kind: 'petting'; stage: 'start' | 'soft' | 'active' | 'fast' | 'long' | 'repeat' | 'end' }
+  | { kind: 'drag'; trigger: 'drag.fast' | 'drag.slow' | 'drag.shake' };
+
 /** 上层实现的呈现能力。 */
 export interface ReactionHost {
-  /** 台词位是否可用（聊天占位、协调器、气泡播放中都会拒绝）。 */
-  canSpeak(): boolean;
-  speak(line: ResolvedDialogue): void;
+  /** 台词位是否可用（聊天占位、协调器、气泡播放中都会拒绝；urgent 允许替换现有非聊天反应气泡）。 */
+  canSpeak(urgent?: boolean): boolean;
+  speak(line: ResolvedDialogue, opts?: { urgent?: boolean }): void;
   /** 临时表情；有台词时持续到台词播完，之后回到当前状态的默认表情。 */
   express(name: string, line: ResolvedDialogue | null): void;
   /** 播放 Live2D 动作。 */
@@ -45,6 +55,8 @@ export interface ReactOptions {
   side?: number;
   /** false = 只表演不说话。 */
   speak?: boolean;
+  /** true = 紧急升级反应（如连点生气），可覆盖正在播放的普通反应气泡。 */
+  urgent?: boolean;
   /** 尽量避开的台词 id。 */
   exclude?: Set<string>;
 }
@@ -59,6 +71,7 @@ export class InteractionService {
   private readonly _reactions: ReactionLibrary;
   private readonly _host: ReactionHost;
   private readonly _random: () => number;
+  private readonly _onInteraction?: (event: PetInteractionEvent) => void;
   private _earClickUntilMs = 0;
   private _basicClickUntilMs = 0;
   private _motionUntilMs = 0;
@@ -82,18 +95,25 @@ export class InteractionService {
     reactions: ReactionLibrary;
     host: ReactionHost;
     pettingHost: PettingDialogueHost;
+    persistence?: DailyInteractionPersistence;
+    onInteraction?: (event: PetInteractionEvent) => void;
+    onHaptic?: (pulse: PettingHapticPulse) => void;
     random?: () => number;
   }) {
     this.hitAreas = deps.hitAreas;
     this._reactions = deps.reactions;
     this._host = deps.host;
+    this._onInteraction = deps.onInteraction;
     this._random = deps.random ?? Math.random;
     this.petting = new PettingController({
       hitAreas: deps.hitAreas,
       getTarget: deps.getTarget,
       host: deps.pettingHost,
+      persistence: deps.persistence,
+      onHaptic: deps.onHaptic,
       react: (trigger, exclude) => this.react(trigger, { exclude }),
     });
+    this.petting.onStageEvent = (stage) => this._onInteraction?.({ kind: 'petting', stage });
     this.procedural = new ProceduralReactionService({
       getTarget: deps.getTarget,
       isPettingActive: () => this.petting.isPettingSessionActive,
@@ -115,7 +135,7 @@ export class InteractionService {
    * @returns 说出的台词 id；没说话返回 null
    */
   react(trigger: string, opts: ReactOptions = {}): string | null {
-    const withLine = opts.speak !== false && this._host.canSpeak();
+    const withLine = opts.speak !== false && this._host.canSpeak(opts.urgent);
     const pick = this._reactions.pick(trigger, { withLine, excludeIds: opts.exclude });
     const group = pick?.group;
     let moved = false;
@@ -132,7 +152,7 @@ export class InteractionService {
     }
     if (group?.expression) this._host.express(group.expression, pick?.line ?? null);
     if (!pick?.line) return null;
-    this._host.speak(pick.line);
+    this._host.speak(pick.line, opts.urgent ? { urgent: true } : undefined);
     return pick.line.entryId;
   }
 
@@ -172,9 +192,11 @@ export class InteractionService {
       const wasDragging = this.dragReaction.isDragging;
       if (this.dragReaction.endDrag()) {
         this.react('drag.fast', { fallback: 'eyes_widen' });
+        this._onInteraction?.({ kind: 'drag', trigger: 'drag.fast' });
       } else if (wasDragging && this.procedural.isHolding) {
         // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
         this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
+        this._onInteraction?.({ kind: 'drag', trigger: 'drag.slow' });
       }
       return false;
     }
@@ -190,29 +212,45 @@ export class InteractionService {
       const now = performance.now();
       if (this.clickSequence.isInCooldown) {
         this._acknowledgeCooldownClick();
+        this._onInteraction?.({ kind: 'click', trigger: 'click.cooldown', areaId, side, tier: 'cooldown' });
         return true;
       }
       if (now < this._earClickUntilMs) return true;
       // 左右耳共用一次反馈时窗，避免连点反复启动单眼眨。
       this._earClickUntilMs = now + 420;
-      this.react(`click.${area}`, { fallback: 'ear_blink', areaId, side });
+      const trigger = `click.${area}`;
+      this.react(trigger, { fallback: 'ear_blink', areaId, side });
+      this._onInteraction?.({ kind: 'click', trigger, areaId, side });
       return true;
     }
 
-    const result = this.clickSequence.registerClick();
+    const streakKey = area === 'head_pet_zone' ? 'head' : (area ?? 'body');
+    const result = this.clickSequence.registerClick(streakKey);
     if (result === ClickResult.cooldown) {
       this._acknowledgeCooldownClick();
+      this._onInteraction?.({ kind: 'click', trigger: 'click.cooldown', areaId, side, tier: 'cooldown' });
       return true; // 冷却只抑制台词与动作，不吞掉基础视觉反馈。
     }
 
-    const key = `click.${area === 'head_pet_zone' ? 'head' : area ?? 'body'}`;
+    const key = `click.${streakKey}`;
     const base = this._reactions.has(key) ? key : 'click.body';
-    // 连点递进：3 秒 3 次 → repeat，4 秒 5 次 → annoyed；区域没有专属组时用通用组。
+    // 连点递进：同部位 3 秒 3 次 → repeat，4 秒 5 次 → annoyed；区域没有专属组时用通用组。
     const tier = result === ClickResult.doubt ? 'repeat' : result === ClickResult.comment ? 'annoyed' : null;
     const trigger = !tier ? base
       : this._reactions.has(`${key}.${tier}`) ? `${key}.${tier}` : `click.${tier}`;
-    this.react(trigger, { fallback: 'acknowledge', areaId, side });
+    this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed' });
+    this._onInteraction?.({ kind: 'click', trigger, areaId, side, tier: tier ?? undefined });
     return true;
+  }
+
+  /** 拖动中快速往返摇晃：保持拎起姿态，补充晕眩表情与台词。 */
+  onDragShake(): void {
+    if (!this.dragReaction.isDragging || !this.procedural.isHolding) return;
+    const withLine = this._host.canSpeak(true);
+    const pick = this._reactions.pick('drag.fast', { withLine });
+    if (pick?.group.expression) this._host.express(pick.group.expression, pick.line ?? null);
+    if (pick?.line) this._host.speak(pick.line, { urgent: true });
+    this._onInteraction?.({ kind: 'drag', trigger: 'drag.shake' });
   }
 
   /** 拖动开始：进入「被拎起」姿态。 */

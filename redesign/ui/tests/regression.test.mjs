@@ -227,7 +227,8 @@ test('受击和无语恢复专用眼型，切换与清除始终互斥且无中�
   applyFaceVariant(model,FACE_VARIANT_PARAMETERS,expressionEye(expression));
   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(0,3).map(id=>values.get(id)),want);
   if(['hit','speechless','sad'].includes(expression)) {
-   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(3,7).map(id=>values.get(id)),[1,1,0,0]);
+   // 眼睑由 EyeVariantTransition 写（特殊眼期间保持闭合），这里只归零笑眼。
+   assert.deepEqual([...FACE_VARIANT_PARAMETERS].slice(5,7).map(id=>values.get(id)),[0,0]);
    for(const name of FACE_VARIANT_PARAMETERS.slice(7)) assert.equal(values.get(name),0,`${expression}: ${name} 仍残留普通眼部物理`);
   } else {
    for(const name of FACE_VARIANT_PARAMETERS.slice(3)) assert.equal(values.get(name),.6,'普通表情仍保留眨眼、视线与眼部物理');
@@ -532,7 +533,8 @@ test('左右耳高频点击不重复台词或动作启动，节流结束仍保�
  for(let i=1;i<=25;i++){
   h.advance(16);s.hitAreas.hitAreaAt=()=>i%2?'ear_right':'ear_left';
   assert.equal(s.onClick(h.ctx(400,false),false),true);
-  assert.equal(h.writes.eyes[3],'right','被节流的另一侧不能切换眼睛');
+  if(h.writes.eyes[0])assert.equal(h.writes.eyes[3],'right','被节流的另一侧不能切换眼睛');
+  assert.deepEqual(h.writes.ears,[false,0,0],'高频点击耳朵不触发额外耳动');
  }
  assert.deepEqual(h.lines,['click.ear_left']);
  assert.deepEqual(h.reactions,[{type:'ear_blink',strength:.8,areaId:'ear_left',side:1}]);
@@ -620,7 +622,7 @@ test('抚摸接管已有点击反应；失焦取消不会产生结束台词或�
  s.onPointerDown(h.ctx());assert.equal(s.procedural.isPlaying,false);h.stroke();
  s.dragReaction.beginDrag();const n=h.lines.length;s.cancel();
  assert.equal(s.petting.state,'finishing');assert.equal(s.isBusy,true);assert.equal(h.lines.length,n);
- h.advance(1000/60);assert.equal(h.writes.eyes[0],true);assert.ok(h.writes.eyes[1]<.2,'取消后不瞬间睁眼');
+ h.advance(1000/60);assert.equal(h.writes.eyes[0],false,'取消抚摸释放眼覆盖由通道按表情平滑恢复');
  for(let i=0;i<180;i++)h.advance(1000/60);
  assert.equal(s.petting.state,'inactive');assert.equal(s.isBusy,false);
  assert.equal(h.writes.eyes[0],false);assert.equal(h.writes.cheek[0],false);
@@ -704,6 +706,26 @@ function randomSpeechHarness() {
   _bubble:{play(resolved){played.push(resolved);state.speaking=true}}});
  return {app,state,played,get draws(){return draws},setNow(value){now=value}};
 }
+
+test('互动表情到期复位：聊天表演只待命未套用时不能卡住表情',()=>{
+ const {PetApp}=load('pet-app');
+ const timers=[];const {ChatPerformance}=load('chat/performance');
+ let current=null,busy=true;
+ const model={startExpression:name=>{current=name;return true},getCurrentExpression:()=>current};
+ const perf=new ChatPerformance({expressions:()=>['happy'],actions:()=>[],express:name=>{current=name},clearExpression:()=>{current=null},play(){},busy:()=>busy},()=>0);
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{_model:model,_chatPerformance:perf,_stateEngine:{definition:{expression:null}},_reactionExpressionTimer:null});
+ // 受击反应先套上表情；互动进行中聊天提示到达，表演只待命；随后回复收起取消表演。
+ app._expressForReaction('hit',{pages:[]});assert.equal(current,'hit');
+ perf.cue({expression:'happy'});assert.equal(perf.active,true);assert.equal(perf.applied,false,'互动中表演只待命');
+ perf.cancel();assert.equal(current,'hit','未套用的表演取消时不清表情');
+ perf.cue({expression:'happy'});
+ return new Promise(resolve=>setTimeout(()=>{
+  assert.equal(current,null,'到期必须回到状态默认表情，不能被待命的表演挡住');
+  busy=false;perf.tick();assert.equal(current,'happy','互动结束后表演接管');
+  perf.cancel();assert.equal(current,null);resolve();
+ },1000));
+});
 
 test('设置窗口手动随机台词绕过失焦静默期，自动闲聊仍等待',()=>{
  const h=randomSpeechHarness();
@@ -915,10 +937,12 @@ function pointerHarness(touch=false) {
  return {...h,app,canvasEvents,windowEvents,event};
 }
 
-test('真实事件接线：右键失焦可恢复，普通pointerup后的lostcapture不抹掉反馈',()=>{
+test('真实事件接线：未识别pressed失焦直接复位，已识别抚摸失焦走finishing；普通pointerup后lostcapture不抹掉反馈',()=>{
  const h=pointerHarness();const e=h.canvasEvents;
  e.pointerdown(h.event());assert.equal(h.service.petting.state,'pressed');h.advance(1000/60);h.windowEvents.blur();
- assert.equal(h.service.petting.state,'finishing');
+ assert.equal(h.service.petting.state,'inactive','未识别抚摸的按压失焦直接清理不进入finishing');
+ e.pointerdown(h.event());h.stroke();assert.equal(h.service.petting.state,'petting');h.windowEvents.blur();
+ assert.equal(h.service.petting.state,'finishing','已识别抚摸失焦平滑收尾');
  for(let i=0;i<180;i++)h.advance(1000/60);
  assert.equal(h.service.petting.state,'inactive');
  e.pointerdown(h.event({button:0,buttons:1}));e.pointerup(h.event({button:0,buttons:0}));
@@ -1299,3 +1323,107 @@ test('拖动拎起：保持姿态并随速度摆头，慢放落地回中，快�
  }
 });
 
+test('拖动拎起姿态：绕抓取点悬挂，向拖动反方向滞后摆动，停手回正，松手复原',()=>{
+ const {LiftPose,liftMatrix,LIFT_MAX_DEG}=load('lift-pose');
+ const ap=(m,x,y)=>[m[0]*x+m[4]*y+m[12],m[1]*x+m[5]*y+m[13]];
+ const frame={scale:400,originX:500,originY:600,pivotX:500,pivotY:300,angleDeg:0,lift:0,bounds:{minX:-.5,maxX:.5,minY:-.9,maxY:.9},width:1000,height:1300};
+ // 无姿态时与基础变换完全一致
+ let m=liftMatrix(frame);assert.deepEqual(ap(m,.5,.9).map(v=>+v.toFixed(3)),[700,240]);
+ // 抓取点（支点）始终在原位，脚被拉长并向拖动反方向甩
+ m=liftMatrix({...frame,lift:1,angleDeg:8});
+ assert.deepEqual(ap(m,0,.75).map(v=>+v.toFixed(3)),[500,300],'抓取点必须留在指针下');
+ const [footX,footY]=ap(m,0,-.9);assert.ok(footX<480,'向右拖时脚滞后到左边');assert.ok(footY>960,'悬挂拉长');
+ // 摆角大到出画时自动收小，四角都在画布内
+ m=liftMatrix({...frame,lift:1,angleDeg:40,width:760});
+ for(const [x,y] of [[-.5,-.9],[.5,-.9],[-.5,.9],[.5,.9]]){const [px,py]=ap(m,x,y);assert.ok(px>=2&&px<=758&&py>=2&&py<=1298,`出画 ${px},${py}`)}
+ const p=new LiftPose();p.setHolding(true);let max=0;
+ for(let i=0;i<60;i++){p.setVelocity(3000);p.update(1/60);max=Math.max(max,p.angle)}
+ assert.ok(max>5&&max<=LIFT_MAX_DEG+1e-9,`快速拖动摆角 ${max}`);
+ let flips=0,prev=Math.sign(p.angle);for(let i=0;i<180;i++){p.update(1/60);const s=Math.sign(Math.round(p.angle*100));if(s&&s!==prev){flips++;prev=s}}
+ assert.ok(flips>=1,'停手后应来回荡');assert.ok(Math.abs(p.angle)<1,'停手 3 秒内基本回正');
+ p.setHolding(false);for(let i=0;i<120;i++)p.update(1/60);
+ assert.equal(p.active,false,'松手后完全复原，渲染回到原矩阵');
+ const r=new LiftPose();r.setHolding(true);for(let i=0;i<30;i++){r.setVelocity(3000);r.update(1/60,true)}
+ assert.equal(r.active,false,'少动态效果：不摆不拉长');
+});
+
+test('BehaviorService: 窗外鼠标滑行不误触发久静回神，自动待机减少连续重复',()=>{
+ let now=0,played=[];
+ const timers=new Map();let next=0;
+ const {BehaviorService,NOTICE_AFTER_SECONDS}=load('behavior',{}, {performance:{now:()=>now},setTimeout:fn=>{timers.set(++next,fn);return next},clearTimeout:id=>timers.delete(id)});
+ const b=new BehaviorService(()=>({playAction:n=>{played.push(n);return true},isActionPlaying:false,setLookTarget(){},clearLookTarget(){}}),()=>now);
+ b.autoActions=true;
+ // 窗外左侧移动（x=-2.0），y 从 -0.5 移到 -1.5：此前 clamp01 会当成静止 (0,0)，12s 后移动触发 notice
+ b.updateLookTarget(-2.0,-0.5);
+ now=4000;b.updateLookTarget(-2.0,-0.8);
+ now=8000;b.updateLookTarget(-2.0,-1.2);
+ now=NOTICE_AFTER_SECONDS*1000+500;b.updateLookTarget(-2.0,-1.5);
+ assert.equal(b.gazeReleased,false,'窗外持续移动不应被 clamp01 误判静止');
+ b.updateLookTarget(0.5,0.5);
+ assert.equal(played.includes('notice'),false,'窗外一直移动时回到窗内不应误播 notice');
+ b.stop();
+});
+
+test('DailyInteractionStats 跨刷新持久化并在跨天后自动清零',()=>{
+ const store=new Map();
+ const storage={getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v)};
+ const {loadDailyInteractionStats,saveDailyInteractionStats}=load('state');
+ const today=new Date(2026,10,10,12,0);
+ const s1=loadDailyInteractionStats(storage,today);
+ assert.equal(s1.headPettingCountToday,0);
+ saveDailyInteractionStats({...s1,headPettingCountToday:3,headPettingDurationTodayMs:9000,longestPettingDurationMs:4500},storage);
+ const s2=loadDailyInteractionStats(storage,new Date(2026,10,10,22,0));
+ assert.equal(s2.headPettingCountToday,3);assert.equal(s2.longestPettingDurationMs,4500);
+ const nextDay=loadDailyInteractionStats(storage,new Date(2026,10,11,8,0));
+ assert.equal(nextDay.headPettingCountToday,0,'跨天后清零');
+});
+
+test('PetAI 事件总线暴露互动上下文，支持方向参数并拦截抚摸冲突',()=>{
+ const events=[];let pettingActive=false;
+ const {PetAI}=load('pet-ai',{},{window:{dispatchEvent:e=>events.push(e)},CustomEvent:class{constructor(type,init){this.type=type;this.detail=init.detail}}});
+ const ai=new PetAI({
+  model:()=>({getExpressionNames:()=>['happy'],getCurrentExpression:()=>null}),
+  stateEngine:()=>null,
+  actionNames:()=>['nod','nuzzle'],
+  playAction:(name,opts)=>{
+   if(name==='nuzzle'&&pettingActive)return false;
+   events.push({type:'play',name,opts});return true;
+  },
+  coordinationState:()=>({interacting:pettingActive,speaking:false,paused:false}),
+  gazeReleased:()=>true,
+  headPettingCountToday:()=>4,
+ });
+ assert.equal(ai.play('nuzzle',{side:-1}),true);
+ assert.deepEqual(events.at(-2),{type:'play',name:'nuzzle',opts:{side:-1}});
+ assert.equal(events.at(-1).type,'pet:action');
+ pettingActive=true;
+ assert.equal(ai.play('nuzzle',{side:1}),false,'抚摸进行中不允许启动程序微动并返回 false');
+ const snap=ai.state();
+ assert.equal(snap.interacting,true);assert.equal(snap.gazeReleased,true);assert.equal(snap.headPettingCountToday,4);
+ ai.emitInteraction({kind:'click',trigger:'click.head',areaId:'head',side:1});
+ assert.equal(events.at(-1).type,'pet:interaction');
+ assert.equal(events.at(-1).detail.trigger,'click.head');
+});
+
+test('PetApp 互动表情在聊天表演让位期间可应用，取消互动时清理计时与表情',()=>{
+ const {PetApp}=load('pet-app');
+ const {ChatPerformance}=load('chat/performance');
+ let current=null,busy=true;
+ const model={isReady:()=>true,startExpression:name=>{current=name;return true},getCurrentExpression:()=>current};
+ const perf=new ChatPerformance({expressions:()=>['happy'],actions:()=>[],express:name=>{current=name},clearExpression:()=>{current=null},play(){},busy:()=>busy},()=>0);
+ const emitted=[];
+ const app=Object.create(PetApp.prototype);
+ Object.assign(app,{
+  _model:model,_chatPerformance:perf,_stateEngine:{definition:{expression:null}},_reactionExpressionTimer:null,
+  _ai:{cancelExpressionTimer(){},emitExpression:n=>emitted.push(n)},
+  _interaction:{cancel(){}},_coordination:{activity(){}},_publishHitMask(){},
+ });
+ perf.cue({expression:'happy'});
+ assert.equal(perf.active,true);assert.equal(perf.applied,false);
+ app._expressForReaction('shy',null);
+ assert.equal(current,'shy','聊天表演让位期间应允许显示互动表情');
+ assert.equal(emitted.at(-1),'shy');
+ app._cancelInteraction();
+ assert.equal(current,null,'取消互动时必须同步恢复默认表情');
+ assert.equal(app._reactionExpressionTimer,null);
+});

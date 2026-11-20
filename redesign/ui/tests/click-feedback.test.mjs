@@ -39,8 +39,8 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
   let app = null;
   const service = new InteractionService({ hitAreas, getTarget: () => target, reactions: reactionStub(),
     host: reactionHost({ actions,
-      canSpeak: () => !app._chatHoldsSpeech() && app._coordination.canSpeak('interaction'),
-      speak: line => app._speak(line, 'interaction') }),
+      canSpeak: urgent => urgent ? app._canForceReactionSpeech() : (!app._chatHoldsSpeech() && app._coordination.canSpeak('interaction')),
+      speak: (line, opts) => app._speak(line, 'interaction', opts?.urgent) }),
     pettingHost: { isDialogueActive: () => speaking } });
   const canvasEvents = {}, windowEvents = {};
   const window = { innerWidth: 800, innerHeight: 800, addEventListener: (name, fn) => { windowEvents[name] = fn; } };
@@ -139,12 +139,12 @@ test('气泡播放或协调器拒绝台词时，普通点击仍响应且不重�
   }
 });
 
-test('finishing立即接受新点击：无清零帧、单写入者、连续恢复闭眼与头部', () => {
+test('finishing立即接受新点击：无清零帧、单写入者、连续恢复头部并按表情释放眼覆盖', () => {
   for (const area of ['head', 'face', 'body', 'ear_left', 'ear_right']) {
     const h = harness(); h.area('head'); h.service.onPointerDown(h.ctx()); h.stroke();
     assert.equal(h.service.petting.state, 'petting');
     h.service.onPointerUp(h.ctx()); assert.equal(h.service.petting.state, 'finishing');
-    const offsets = [...h.writes.offsets], eyes = [...h.writes.eyes];
+    const offsets = [...h.writes.offsets];
     h.area(area); h.trace.length = 0;
     h.service.onPointerDown(h.ctx(400, false)); h.service.onPointerUp(h.ctx(400, false));
     h.service.onClick(h.ctx(400, false), false);
@@ -153,20 +153,17 @@ test('finishing立即接受新点击：无清零帧、单写入者、连续恢�
     assert.equal(h.trace.length, 0, '交接时不能重置覆盖参数');
     h.service.tick(0);
     assert.deepEqual(h.writes.offsets, offsets);
-    assert.deepEqual(h.writes.eyes.slice(0, 3), eyes.slice(0, 3));
-    const effectiveEyes = ([enabled, left, right, side = 'both']) => !enabled ? [1, 1]
-      : [side === 'right' ? 1 : left, side === 'left' ? 1 : right];
-    let previous = [...h.writes.offsets], previousEyes = effectiveEyes(h.writes.eyes);
+    assert.equal(h.writes.eyes[0], ['ear_left', 'ear_right'].includes(area));
+    let previous = [...h.writes.offsets];
     for (let i = 0; i < 190; i++) {
       h.trace.length = 0; h.advance(16);
       assert.ok(h.trace.filter(w => w[0] === 'offsets').length <= 1, '一帧仅一个通道所有者');
       h.writes.offsets.forEach((v, j) => assert.ok(Math.abs(v - previous[j]) < 1.5, `${area}头部不能跳变`));
-      const eyesNow = effectiveEyes(h.writes.eyes);
-      eyesNow.forEach((v, j) => assert.ok(Math.abs(v - previousEyes[j]) < .22, `${area}眼睛不能跳变`));
-      previous = [...h.writes.offsets]; previousEyes = eyesNow;
+      previous = [...h.writes.offsets];
     }
     assert.equal(h.service.isBusy, false); assert.deepEqual(h.writes.offsets, [0, 0, 0, 0]);
     assert.equal(h.writes.eyes[0], false); assert.equal(h.writes.reduced, false);
+    assert.deepEqual(h.writes.ears, [false, 0, 0]); assert.deepEqual(h.writes.cheek, [false, 0]);
   }
 });
 
@@ -447,4 +444,302 @@ test('Android身体触摸：手指轻微滚动仍算点击且不触发前端拖�
     assert.equal(h.lines.length, lines);
     assert.equal(h.app._dragCandidate, false); assert.equal(h.app._touchClickCandidateActive, false);
   }
+});
+
+test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时，渐进红晕激活且不额外拨耳', () => {
+  const h = harness();
+  h.service.hitAreas.mirrored = true;
+  h.area('head');
+  h.service.onPointerDown(h.ctx(400, true));
+  h.stroke();
+  assert.equal(h.service.petting.state, 'petting');
+  // 向右滑动（vel > 0）在镜像下应给出负 AngleX，使角色面向画面右侧
+  for (let i = 1; i <= 15; i++) {
+    h.advance(1000 / 60);
+    h.service.onPointerMove(h.ctx(400 + i * 3, true));
+  }
+  assert.ok(h.writes.offsets[0] < -1, `镜像右滑应转负角: ${h.writes.offsets[0]}`);
+  assert.ok(Math.abs(h.writes.offsets[3]) > 0.2, '抚摸期间应带动轻微身体偏转');
+  assert.deepEqual(h.writes.ears, [false, 0, 0], '抚摸应还原原版不额外写入耳动');
+  assert.equal(h.writes.cheek[0], true, '持续抚摸应产生渐进红晕');
+  // 静止微抖（<1.5px）不应刷新 _lastInputMs：0.5s 后回到放松/中性，且不计入活跃耗时
+  const elapsedBefore = h.service.petting._sessionElapsedMs;
+  for (let i = 0; i < 35; i++) {
+    h.advance(16);
+    h.service.onPointerMove(h.ctx(445 + (i % 2) * 0.4, true));
+  }
+  assert.ok(h.service.petting._sessionElapsedMs - elapsedBefore < 160, '静止抖动不应继续累计有效抚摸时长');
+});
+
+test('DPR归一化CSS像素、高频鼠标防尖峰、快速摇晃触发晕眩且保持拎起、抬升期间保持60fps', () => {
+  const h = harness({ platform: 'tauri' });
+  const { LiftPose } = load('lift-pose');
+  Object.assign(h.app, {
+    _dpr: 2, _scaleFactor: 2, _model: { isReady: () => true, isActionPlaying: false, boundsW: 1, boundsH: 1, boundsAspect: 0.6 },
+    _lift: new LiftPose(), _liftPivot: null, _settings: { mirror: false, batterySaver: false },
+    _modelViewportTransform: () => ({ scale: 400, originX: 400, originY: 400 }),
+    _modelPointAt: () => ({ x: 0, y: 0.3 }), _hitEventNorm: e => ({ nx: e.clientX / 400, ny: e.clientY / 400 }),
+  });
+  h.app._canvas.width = 800;
+  h.app._canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 400 });
+  const ctx = h.app._ctx(h.event({ clientX: 200, clientY: 100 }), false);
+  assert.equal(ctx.pxX, 200, 'pxX 应为 CSS 像素而非乘 DPR 的物理像素');
+
+  // 模拟 1000Hz 高回报率慢速拖动（~83 CSS px/s，每 12ms 步进 1px）：单步 1ms 整数步长不应误触发 drag.fast
+  h.area('body');
+  h.canvasEvents.pointerdown(h.event({ clientX: 100, screenX: 100 }));
+  h.canvasEvents.pointermove(h.event({ clientX: 110, screenX: 110 }));
+  assert.equal(h.app._dragging, true);
+  let slowX = 110;
+  for (let i = 1; i <= 120; i++) {
+    h.setTime(i);
+    if (i % 12 === 0) slowX += 1;
+    h.canvasEvents.pointermove(h.event({ clientX: slowX, screenX: slowX }));
+  }
+  h.canvasEvents.pointerup(h.event({ buttons: 0, clientX: slowX, screenX: slowX }));
+  assert.equal(h.lines.at(-1) === 'drag.fast', false, '1000Hz 慢速拖动不应误触 drag.fast');
+
+  // 模拟高 DPI 下轻快拖动（~200 CSS px/s）：应稳定触发 drag.fast
+  h.lines.length = 0;
+  h.setTime(300);
+  h.canvasEvents.pointerdown(h.event({ clientX: 100, screenX: 100 }));
+  h.canvasEvents.pointermove(h.event({ clientX: 108, screenX: 108 }));
+  for (let i = 1; i <= 10; i++) {
+    h.setTime(300 + i * 16);
+    h.canvasEvents.pointermove(h.event({ clientX: 108 + i * 3.2, screenX: 108 + i * 3.2 }));
+  }
+  h.canvasEvents.pointerup(h.event({ buttons: 0, clientX: 140, screenX: 140 }));
+  assert.equal(h.lines.at(-1), 'drag.fast', '高 DPI 下的轻快拖动（200 CSS px/s）应触发 drag.fast');
+
+  // 模拟高 DPI 下轻快往返摇晃（~15px 幅度）：拖动中触发晕眩提示且保持 holding 姿态
+  h.lines.length = 0;
+  h.setTime(3500);
+  h.canvasEvents.pointerdown(h.event({ clientX: 200, screenX: 200 }));
+  h.canvasEvents.pointermove(h.event({ clientX: 210, screenX: 210 }));
+  const xs = [226, 210, 226, 210, 226, 210];
+  let now = 3540;
+  for (const x of xs) {
+    now += 80;
+    h.setTime(now);
+    h.canvasEvents.pointermove(h.event({ clientX: x, screenX: x }));
+  }
+  assert.ok(h.lines.includes('drag.fast'), '高 DPI 下小幅度快速往返摇晃应在拖动中触发晕眩台词');
+  assert.equal(h.service.procedural.isHolding, true, '触发摇晃反应时必须保持被拎起姿态');
+  h.canvasEvents.pointerup(h.event({ buttons: 0, clientX: 210, screenX: 210 }));
+  h.app._lift.setHolding(true);
+  h.app._lift.setVelocity(1000);
+  h.app._lift.update(1 / 60);
+  h.app._lift.setHolding(false);
+  assert.equal(h.app._interactionBoost(now + 1000), true, 'LiftPose 回荡收尾期间仍保持 60fps 升帧');
+});
+
+test('同部位独立连点升级、生气抢占旧气泡、桌面悬停光标与轻抖不占用忙碌态', () => {
+  const h = harness({ platform: 'tauri' });
+  Object.assign(h.app, {
+    _model: { isReady: () => true, isActionPlaying: false },
+    _hitEventNorm: () => ({ nx: 0.5, ny: 0.2 }),
+  });
+  // 混合点击不同部位，第 5 次点击 head 不应直接触发 click.head.annoyed
+  for (const area of ['hand', 'tablet', 'shoulder_left', 'hem', 'head']) {
+    h.area(area);
+    h.advance(100);
+    h.click();
+  }
+  assert.equal(h.lines.at(-1), 'click.head');
+
+  // 对同一部位连续点击 5 次：即使前一条气泡仍在播放，第 5 次 annoyed 也应抢占更新台词
+  h.service.clickSequence.reset();
+  h.lines.length = 0;
+  h.area('face');
+  h.click();
+  assert.equal(h.lines.length, 1);
+  h.speaking(true);
+  h.advance(100); h.click(); // 2 -> normal (blocked by speaking)
+  h.advance(100); h.click(); // 3 -> repeat (blocked by speaking)
+  assert.equal(h.lines.length, 1);
+  h.advance(100); h.click(); // 4
+  h.advance(100); h.click(); // 5 -> annoyed (urgent: true, preempts stale reaction bubble)
+  assert.equal(h.lines.at(-1), 'click.face.annoyed');
+
+  // 桌面鼠标悬停提示对应光标且不触发额外耳动，也不占用忙碌态
+  h.speaking(false);
+  for (let i = 0; i < 60; i++) h.advance(16);
+  h.area('ear_left');
+  h.advance(5000);
+  h.canvasEvents.pointermove(h.event({ buttons: 0, pointerType: 'mouse' }));
+  assert.equal(h.app._canvas.style.cursor, 'pointer');
+  h.advance(16);
+  assert.deepEqual(h.writes.ears, [false, 0, 0], '桌面悬停耳朵不应触发额外耳动');
+  h.area('hand');
+  h.canvasEvents.pointermove(h.event({ buttons: 0, pointerType: 'mouse', clientX: 250, screenX: 250 }));
+  h.advance(16);
+  assert.deepEqual(h.writes.ears, [false, 0, 0], '桌面悬停手部不应触发额外耳动');
+  assert.equal(h.service.isBusy, false);
+  h.area('body');
+  h.canvasEvents.pointermove(h.event({ buttons: 0, pointerType: 'mouse' }));
+  assert.equal(h.app._canvas.style.cursor, 'grab');
+});
+
+test('表情感知眼覆盖释放：happy/sleepy 表情下抚摸结束与程序微动收尾不强行睁眼到 1.0', () => {
+  const { EyeOverrideChannel } = load('overlay');
+  for (const baseOpen of [0, 0.2]) {
+    let now = 0;
+    const globals = { performance: { now: () => now } };
+    const recognizer = load('interaction/petting-recognizer', {}, globals);
+    const petting = load('interaction/petting-controller', { './petting-recognizer': recognizer }, globals);
+    const procedural = load('interaction/procedural', {}, globals);
+    const { InteractionService } = load('interaction/interaction', {
+      './petting-controller': petting, './procedural': procedural,
+    }, globals);
+    const chEye = new EyeOverrideChannel({ left: 'L', right: 'R' });
+    const params = new Map([['L', baseOpen], ['R', baseOpen]]);
+    const model = {
+      getParameterValueById: id => params.get(id) ?? baseOpen,
+      setParameterValueById: (id, v) => params.set(id, v),
+    };
+    const target = {
+      getInteractionParamInfo: () => ({
+        angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
+        angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
+        eyeLMin: 0, eyeLMax: 1, eyeRMin: 0, eyeRMax: 1, hasEyes: true,
+      }),
+      setInteractionOffsets() {},
+      setEarInteraction() {},
+      setFaceCheek() {},
+      setPettingLookAtReduction() {},
+      setEyeOverride(enabled, left, right, side = 'both') {
+        chEye.enabled = enabled; chEye.left = left; chEye.right = right; chEye.side = side;
+      },
+    };
+    let area = 'head';
+    const s = new InteractionService({
+      hitAreas: { hitAreaAt: () => area, isInHeadPetZone: () => area === 'head', isInPettableHead: () => area === 'head', mirrored: false },
+      getTarget: () => target,
+      reactions: reactionStub({ actionFor: () => 'nuzzle' }),
+      host: reactionHost(),
+      pettingHost: { isDialogueActive: () => false },
+    });
+    const step = (dtMs = 16, checkRelease = true) => {
+      now += dtMs;
+      s.tick(dtMs);
+      params.set('L', baseOpen);
+      params.set('R', baseOpen);
+      chEye.apply(model, dtMs / 1000);
+      if (checkRelease) {
+        assert.ok(params.get('L') <= baseOpen + 0.02 && params.get('R') <= baseOpen + 0.02,
+          `base=${baseOpen} 时不应误弹开到 1.0: L=${params.get('L')}, R=${params.get('R')}`);
+      }
+    };
+    const ctx = (x, sec = true) => ({ normX: 0.5, normY: 0.2, pxX: x, pxY: 200, dtSeconds: 1 / 60, leftPressed: !sec, isSecondary: sec });
+    s.onPointerDown(ctx(400, true));
+    for (let i = 1; i <= 60; i++) {
+      s.onPointerMove(ctx(400 + 35 * Math.sin((i / 60) * Math.PI * 2), true));
+      step();
+    }
+    s.onPointerUp(ctx(400, true));
+    for (let i = 0; i < 45; i++) step();
+    area = 'face';
+    s.onClick(ctx(400, false), false);
+    for (let i = 0; i < 90; i++) step(16, i >= 15);
+  }
+});
+
+test('还原原版耳朵判定：触控抚摸起手仅认 head_pet_zone、悬停头顶不触发耳动、ear_blink 保持原版单眼睁开曲线', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { resolve, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const areasDoc = JSON.parse(readFileSync(resolve(root, 'assets/interaction/aliya_hit_areas.json'), 'utf8'));
+  const { HitAreas } = load('interaction/hit-areas', {
+    '../embed': { assetUrl: p => p },
+  }, { fetch: async () => ({ ok: true, json: async () => areasDoc }) });
+  const ha = new HitAreas();
+  await ha.load();
+  // 原版耳区外侧不在 head_pet_zone 内，头顶中心在 head_pet_zone 内
+  assert.equal(ha.isInHeadPetZone(0.26, 0.19), false, '左耳中心不进入 head_pet_zone');
+  assert.equal(ha.isInHeadPetZone(0.70, 0.19), false, '右耳中心不进入 head_pet_zone');
+  assert.equal(ha.isInHeadPetZone(0.50, 0.19), true, '头顶中心进入 head_pet_zone');
+
+  const h = harness({ platform: 'tauri' });
+  h.area('crown');
+  h.advance(5000);
+  h.canvasEvents.pointermove(h.event({ buttons: 0, pointerType: 'mouse' }));
+  h.advance(16);
+  assert.notEqual(h.writes.ears?.[0], true, '头顶悬停不应触发额外耳动');
+
+  h.area('ear_left');
+  h.click();
+  for (let i = 0; i < 12; i++) h.advance(16); // ~192ms，已进入第 3 相位（240ms 单眼恢复）
+  assert.equal(h.writes.eyes[0], true, '192ms 处仍处于单眼恢复相位');
+  assert.equal(h.writes.eyes[3], 'right');
+  for (let i = 0; i < 8; i++) h.advance(16); // ~320ms
+  assert.equal(h.writes.eyes[0], true, '320ms 处单眼平滑睁开未提前中断');
+  assert.ok(h.writes.eyes[1] > 0 && h.writes.eyes[1] < 1);
+  for (let i = 0; i < 12; i++) h.advance(16); // ~512ms > 420ms
+  assert.equal(h.writes.eyes[0], false, '完整 420ms 播完后才释放眼覆盖');
+});
+
+test('抚摸触觉震动：轻点不震，识别后按往返与滑动节律震动，静止不持续嗡鸣', () => {
+  let now = 1000;
+  const globals = { performance: { now: () => now } };
+  const recognizer = load('interaction/petting-recognizer', {}, globals);
+  const procedural = load('interaction/procedural', {}, globals);
+  const petting = load('interaction/petting-controller', { './petting-recognizer': recognizer }, globals);
+  const { InteractionService } = load('interaction/interaction', {
+    './petting-controller': petting, './procedural': procedural,
+  }, globals);
+  const target = {
+    getInteractionParamInfo: () => ({
+      angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
+      angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
+      eyeLMin: 0, eyeLMax: 1, eyeRMin: 0, eyeRMax: 1, hasEyes: true,
+    }),
+    setInteractionOffsets() {}, setEyeOverride() {},
+    setPettingLookAtReduction() {}, setEarInteraction() {}, setFaceCheek() {},
+  };
+  const haptics = [];
+  const s = new InteractionService({
+    hitAreas: { hitAreaAt: () => 'head', isInHeadPetZone: () => true, mirrored: false },
+    getTarget: () => target,
+    reactions: reactionStub(),
+    host: reactionHost(),
+    pettingHost: { isDialogueActive: () => false },
+    onHaptic: pulse => haptics.push(pulse),
+  });
+  const ctx = (x, y = 200) => ({
+    normX: 0.5, normY: 0.2, pxX: x, pxY: y, dtSeconds: 1 / 60, leftPressed: false, isSecondary: true, pointerType: 'touch',
+  });
+
+  // 1) 轻点头部（仅 pressed + tiny move + up）：不触发抚摸震动
+  s.onPointerDown(ctx(400));
+  now += 16;
+  s.onPointerMove(ctx(403));
+  s.onPointerUp(ctx(403));
+  assert.equal(haptics.length, 0, '轻点未进入抚摸不应触发震动');
+
+  // 2) 进入抚摸：先发 start，之后往返划动触发 stroke / reverse
+  s.onPointerDown(ctx(400));
+  for (let i = 1; i <= 75; i++) {
+    now += 1000 / 60;
+    const x = 400 + 36 * Math.sin((i / 60) * Math.PI * 2);
+    s.onPointerMove(ctx(x));
+    s.tick(1000 / 60);
+  }
+  assert.equal(s.petting.state, 'petting');
+  assert.equal(haptics[0]?.kind, 'start', '识别成抚摸时触发 start 脉冲');
+  const strokeOrRev = haptics.slice(1).filter(p => p.kind === 'stroke' || p.kind === 'reverse');
+  assert.ok(strokeOrRev.length >= 6, `连续往返应触发密集且节律性的滑动/换向震动，实际=${haptics.length}`);
+  assert.ok(haptics.every(p => p.durationMs >= 10 && p.durationMs <= 20 && p.amplitude > 0 && p.amplitude <= 120),
+    '震动强度与时长保持短促有质感');
+
+  // 3) 手指停在最后位置（静止或亚像素抖动 <1px）：不应继续累加触发震动
+  const idleX = 400 + 36 * Math.sin((75 / 60) * Math.PI * 2);
+  const countBeforeIdle = haptics.length;
+  for (let i = 0; i < 60; i++) {
+    now += 20;
+    s.onPointerMove(ctx(idleX + (i % 2) * 0.4, 200));
+  }
+  assert.equal(haptics.length, countBeforeIdle, '手指静止或亚像素抖动不应继续震动');
+
+  s.onPointerUp(ctx(idleX));
 });

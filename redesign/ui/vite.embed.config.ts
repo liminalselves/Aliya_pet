@@ -18,7 +18,7 @@ function pruneUnused(): Plugin {
     apply: 'build',
     configResolved(c) { outDir = c.build.outDir; },
     closeBundle() {
-      for (const rel of UNUSED) fs.rmSync(path.resolve(__dirname, outDir, rel), { recursive: true, force: true });
+      for (const rel of UNUSED) fs.rmSync(path.resolve(import.meta.dirname, outDir, rel), { recursive: true, force: true });
     },
   };
 }
@@ -29,6 +29,6 @@ const config = mergeConfig(base, defineConfig({
   build: { outDir: 'dist-embed' },
 }), false);
 // mergeConfig 会合并 input 对象，这里整体替换，只构建嵌入入口。
-config.build.rollupOptions = { input: { embed: path.resolve(__dirname, 'embed.html') } };
+config.build.rollupOptions = { input: { embed: path.resolve(import.meta.dirname, 'embed.html') } };
 
 export default config;

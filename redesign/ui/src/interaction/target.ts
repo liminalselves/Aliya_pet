@@ -28,6 +28,9 @@ export interface InteractionPose {
   eyeEnabled: boolean;
   eyeLeft: number;
   eyeRight: number;
+  earL?: number;
+  earR?: number;
+  cheek?: number;
 }
 
 export interface InteractionTarget {

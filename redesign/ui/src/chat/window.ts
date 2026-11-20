@@ -2,6 +2,8 @@ import { ChatController } from './controller';
 import { ChatView } from './view';
 import { MskAuth } from './msk/auth';
 import { platform } from '../platform';
+import { ChatBackgroundLayer } from '../chat-background';
+import { loadSettings, type PetSettings } from '../settings';
 
 const disconnected = { label: '未连接', async *reply(): AsyncGenerator<never> { throw new Error('请先连接 Misskey。'); } };
 // 独立原生窗口由 pet 按钮控制显隐，不显示 ChatView 内嵌模式自带的备用入口。
@@ -10,6 +12,39 @@ const controller = new ChatController(disconnected);
 let storage: Storage | undefined;
 try { storage = localStorage; } catch { /* In-memory login remains available. */ }
 const view = new ChatView(controller, new MskAuth(storage), () => {}, storage);
+
+// 独立聊天窗：背景作为对话卡内层铺在 .gal-panel 之下，外窗透明区域及点击穿透不受影响。
+const panel = view.root.querySelector<HTMLElement>('.gal-panel');
+const cardBg = panel
+  ? new ChatBackgroundLayer({
+    container: panel,
+    pinViewport: false,
+    surface: 'card',
+    onActiveChange: (active) => panel.classList.toggle('has-chat-bg', active),
+  })
+  : null;
+let bgKey = '';
+const syncBackground = (s: PetSettings = loadSettings()) => {
+  if (!cardBg) return;
+  const key = `${s.chatBackground}:${s.chatBackgroundRev ?? 0}:${s.chatBackgroundDim}`;
+  if (key !== bgKey) {
+    bgKey = key;
+    void cardBg.apply(s.chatBackground, s.chatBackgroundDim);
+  }
+  cardBg.setStill(document.hidden || !!s.batterySaver || (platform === 'tauri' && !windowOpenState));
+};
+let windowOpenState = false;
+syncBackground();
+window.addEventListener('storage', () => syncBackground());
+window.addEventListener('focus', () => {
+  syncBackground();
+  cardBg?.refreshAuto();
+});
+document.addEventListener('visibilitychange', () => {
+  syncBackground();
+  if (!document.hidden) cardBg?.refreshAuto();
+});
+
 view.setOpen(true);
 view.start();
 if (platform === 'tauri') {
@@ -21,11 +56,17 @@ if (platform === 'tauri') {
   // 窗口重现时视图本就在打开态（boot 已 setOpen(true)），走 playEnter 补入场动画。
   let windowOpen = false;
   const relayHitMask = startHitMaskRelay(() => windowOpen);
+  await listen<PetSettings>('settings-changed', e => {
+    if (e.payload && typeof e.payload === 'object') syncBackground(e.payload);
+  });
   await listen<{ open: boolean }>('chat-state', e => {
     if (e.payload.open === windowOpen) return;
     windowOpen = e.payload.open;
+    windowOpenState = windowOpen;
+    syncBackground();
+    if (windowOpen) cardBg?.refreshAuto();
     if (view.isOpen !== e.payload.open) view.setOpen(e.payload.open);
-    else if (e.payload.open) view.playEnter();
+    else if (e.payload.open) { view.playEnter(); view.focusInput(); }
     // 隐藏期间轮询暂停，重新出现时立即补报一次掩码（窗口可能已随桌宠移动）。
     if (e.payload.open) relayHitMask();
   });

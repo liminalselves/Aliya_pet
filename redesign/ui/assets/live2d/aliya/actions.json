@@ -1,9 +1,16 @@
 {
-  "_comment": "动作资源附加数据：只放动作播放期间的整套眼型/替换嘴型时间轴（face，见 src/face-cue.ts）。动作名、分类、待机权重在 src/catalog.ts。",
+  "_comment": "动作资源附加数据：face = 动作期间的整套眼型/替换嘴型时间轴（src/face-cue.ts）；fx = 情绪符号图层时间轴（src/fx-cue.ts，heart/question/surprise/gloom/sleep/sparkle/music）。动作名、分类、待机权重在 src/catalog.ts。",
   "actions": [
+    { "name": "doubt", "fx": [{ "from": 0.1, "to": 2.5, "fx": "question" }] },
+    { "name": "notice", "fx": [{ "from": 0.05, "to": 1.1, "fx": "surprise" }] },
+    { "name": "yawn", "fx": [{ "from": 1.2, "to": 3.6, "fx": "sleep" }] },
+    { "name": "daydream", "fx": [{ "from": 1.0, "to": 4.3, "fx": "sleep" }] },
+    { "name": "cheerful_bounce", "fx": [{ "from": 0.5, "to": 2.3, "fx": "music" }] },
+    { "name": "wave", "fx": [{ "from": 0.4, "to": 2.4, "fx": "sparkle" }] },
+    { "name": "shy_sway", "fx": [{ "from": 0.6, "to": 3.5, "fx": "heart" }] },
+    { "name": "kiss", "face": [{ "from": 0.42, "to": 1.45, "mouth": "pucker" }], "fx": [{ "from": 1.4, "to": 2.5, "fx": "heart" }] },
     { "name": "puff", "face": [{ "from": 0.32, "to": 2.55, "mouth": "puff" }] },
-    { "name": "kiss", "face": [{ "from": 0.42, "to": 1.45, "mouth": "pucker" }] },
-    { "name": "sob", "face": [{ "from": 0.62, "to": 2.75, "eye": "sad" }] },
+    { "name": "sob", "face": [{ "from": 0.62, "to": 2.75, "eye": "sad" }], "fx": [{ "from": 0.8, "to": 2.7, "fx": "gloom" }] },
     { "name": "deadpan", "face": [{ "from": 0.38, "to": 2.6, "eye": "speechless" }] }
   ]
 }

@@ -23,13 +23,14 @@ export enum ClickResult {
 
 export class ClickSequenceService {
   private _clicks: number[] = [];
+  private _areaClicks = new Map<string, number[]>();
   private _cooldownUntilMs = 0;
 
   get isInCooldown(): boolean {
     return performance.now() < this._cooldownUntilMs;
   }
 
-  registerClick(): ClickResult {
+  registerClick(area?: string): ClickResult {
     const now = performance.now();
     if (this.isInCooldown) return ClickResult.cooldown;
     if (this._cooldownUntilMs > 0) this.reset();
@@ -40,50 +41,94 @@ export class ClickSequenceService {
 
     if (this.isInCooldown) return ClickResult.cooldown;
 
-    if (this._countWithin(now, 6) >= 8) {
+    if (this._countWithin(this._clicks, now, 6) >= 8) {
       this._cooldownUntilMs = now + 3000;
       return ClickResult.cooldown;
     }
-    if (this._countWithin(now, 4) >= 5) return ClickResult.comment;
-    if (this._countWithin(now, 3) >= 3) return ClickResult.doubt;
+
+    if (area) {
+      let list = this._areaClicks.get(area);
+      if (!list) {
+        list = [];
+        this._areaClicks.set(area, list);
+      }
+      list.push(now);
+      for (const [k, times] of this._areaClicks) {
+        while (times.length > 0 && now - times[0] > 6000) times.shift();
+        if (times.length === 0) this._areaClicks.delete(k);
+      }
+      if (this._countWithin(list, now, 4) >= 5 || this._countWithin(this._clicks, now, 4) >= 6) {
+        return ClickResult.comment;
+      }
+      if (this._countWithin(list, now, 3) >= 3) return ClickResult.doubt;
+      return ClickResult.none;
+    }
+
+    if (this._countWithin(this._clicks, now, 4) >= 5) return ClickResult.comment;
+    if (this._countWithin(this._clicks, now, 3) >= 3) return ClickResult.doubt;
     return ClickResult.none;
   }
 
   reset(): void {
     this._clicks.length = 0;
+    this._areaClicks.clear();
     this._cooldownUntilMs = 0;
   }
 
-  private _countWithin(now: number, seconds: number): number {
+  private _countWithin(list: number[], now: number, seconds: number): number {
     let count = 0;
-    for (let i = this._clicks.length - 1; i >= 0; i--) {
-      if (now - this._clicks[i] <= seconds * 1000) count++;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (now - list[i] <= seconds * 1000) count++;
       else break;
     }
     return count;
   }
 }
 
-// ---------- 快速拖动检测 ----------
+// ---------- 快速拖动与摇晃检测 ----------
 
 export class DragReactionService {
-  private static readonly _fastDragSpeedThreshold = 250; // 物理像素/秒
+  private static readonly _fastDragSpeedThreshold = 160; // CSS px/秒（兼容高 DPI 下实际鼠标/触控位移尺度）
+  private static readonly _shakeMinSpeed = 100;
+  private static readonly _shakeMinTravelPx = 12;
+  private static readonly _shakeWindowMs = 900;
+  private static readonly _shakeCooldownMs = 2500;
 
   private _dragging = false;
   private _maxSpeedPxPerSec = 0;
+  private _shakeDir = 0;
+  private _shakeTravel = 0;
+  private _shakeOppositeTravel = 0;
+  private _shakeReversals: number[] = [];
+  private _lastShakeAtMs = -Infinity;
+  private _shakeDetected = false;
 
   get isDragging(): boolean {
     return this._dragging;
   }
 
+  get hadShake(): boolean {
+    return this._shakeDetected;
+  }
+
   beginDrag(): void {
     this._dragging = true;
     this._maxSpeedPxPerSec = 0;
+    this._shakeDir = 0;
+    this._shakeTravel = 0;
+    this._shakeOppositeTravel = 0;
+    this._shakeReversals.length = 0;
+    this._shakeDetected = false;
   }
 
   cancel(): void {
     this._dragging = false;
     this._maxSpeedPxPerSec = 0;
+    this._shakeDir = 0;
+    this._shakeTravel = 0;
+    this._shakeOppositeTravel = 0;
+    this._shakeReversals.length = 0;
+    this._shakeDetected = false;
   }
 
   onDragMove(speedPxPerSec: number): void {
@@ -94,6 +139,64 @@ export class DragReactionService {
         Math.abs(speedPxPerSec)
       );
     }
+  }
+
+  /** 带方向信息的拖动步进（CSS px/s），检测高速与连续快速摇晃。 */
+  onDragMotion(vxCssPerSec: number, vyCssPerSec: number, dtSeconds: number): { shakeTriggered: boolean } {
+    if (!this._dragging) return { shakeTriggered: false };
+    if (Number.isFinite(vxCssPerSec) && Number.isFinite(vyCssPerSec)) {
+      this.onDragMove(Math.hypot(vxCssPerSec, vyCssPerSec));
+    }
+    if (!Number.isFinite(vxCssPerSec) || !Number.isFinite(dtSeconds) || dtSeconds <= 0) {
+      return { shakeTriggered: false };
+    }
+    const speed = Math.abs(vxCssPerSec);
+    if (speed < DragReactionService._shakeMinSpeed) return { shakeTriggered: false };
+    const dir = Math.sign(vxCssPerSec);
+    const step = Math.abs(vxCssPerSec * Math.min(dtSeconds, 0.1));
+    if (this._shakeDir === 0) {
+      this._shakeDir = dir;
+      this._shakeTravel = step;
+      this._shakeOppositeTravel = 0;
+      return { shakeTriggered: false };
+    }
+    if (dir === this._shakeDir) {
+      this._shakeTravel += step;
+      this._shakeOppositeTravel = 0;
+      return { shakeTriggered: false };
+    }
+    // 反向累积位移达到阈值才计入一次有效摇晃反转，过滤微小抖动
+    this._shakeOppositeTravel += step;
+    if (this._shakeTravel < DragReactionService._shakeMinTravelPx) {
+      this._shakeDir = dir;
+      this._shakeTravel = this._shakeOppositeTravel;
+      this._shakeOppositeTravel = 0;
+      return { shakeTriggered: false };
+    }
+    if (this._shakeOppositeTravel < DragReactionService._shakeMinTravelPx) {
+      return { shakeTriggered: false };
+    }
+    this._shakeDir = dir;
+    this._shakeTravel = this._shakeOppositeTravel;
+    this._shakeOppositeTravel = 0;
+    const now = performance.now();
+    this._shakeReversals.push(now);
+    while (
+      this._shakeReversals.length > 0 &&
+      now - this._shakeReversals[0] > DragReactionService._shakeWindowMs
+    ) {
+      this._shakeReversals.shift();
+    }
+    if (
+      this._shakeReversals.length >= 3 &&
+      now - this._lastShakeAtMs >= DragReactionService._shakeCooldownMs
+    ) {
+      this._lastShakeAtMs = now;
+      this._shakeReversals.length = 0;
+      this._shakeDetected = true;
+      return { shakeTriggered: true };
+    }
+    return { shakeTriggered: false };
   }
 
   /** 结束拖动。返回本轮是否达到快速拖动阈值。 */
@@ -207,6 +310,8 @@ interface Phase {
   earL: number;
   earR: number;
   cheek: number;
+  bodyX: number;
+  releaseEye?: boolean;
 }
 
 const NEUTRAL: Phase = {
@@ -218,6 +323,7 @@ const NEUTRAL: Phase = {
   earL: 0,
   earR: 0,
   cheek: 0,
+  bodyX: 0,
 };
 
 function phase(
@@ -228,9 +334,11 @@ function phase(
   headZ: number,
   earL: number,
   earR: number,
-  cheek = 0
+  cheek = 0,
+  bodyX = 0,
+  releaseEye = false
 ): Phase {
-  return { durationMs, eyeOpen, headX, headY, headZ, earL, earR, cheek };
+  return { durationMs, eyeOpen, headX, headY, headZ, earL, earR, cheek, bodyX, releaseEye };
 }
 
 /**
@@ -252,6 +360,7 @@ export class ProceduralReactionService {
   private _headX = 0;
   private _headY = 0;
   private _headZ = 0;
+  private _bodyX = 0;
   private _earL = 0;
   private _earR = 0;
   private _cheek = 0;
@@ -298,17 +407,17 @@ export class ProceduralReactionService {
       case 'acknowledge': {
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0),
-          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0),
-          phase(280, 1, 0, 0, 0, 0, 0),
+          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0, 0, 0.8 * s),
+          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0, 0, 0.8 * s),
+          phase(280, 1, 0, 0, 0, 0, 0, 0, 0),
         ]);
         break;
       }
       case 'tilt':
         this._start([
-          phase(180, 0.85, 2.5, 0, -3, 0, 0),
-          phase(320, 0.85, 2.5, 0, -3, 0, 0),
-          phase(320, 1.0, 0, 0, 0, 0, 0),
+          phase(180, 0.85, 2.5, 0, -3, 0, 0, 0, -1.0),
+          phase(320, 0.85, 2.5, 0, -3, 0, 0, 0, -1.0),
+          phase(320, 1.0, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       case 'ear_blink': {
@@ -324,7 +433,7 @@ export class ProceduralReactionService {
         this._start([
           phase(180, 1.3, 0, 0, 0, 0, 0),
           phase(260, 1.3, 0, 0, 0, 0, 0),
-          phase(300, 1.0, 0, 0, 0, 0, 0),
+          phase(300, 1.0, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       case 'blush':
@@ -337,21 +446,22 @@ export class ProceduralReactionService {
       case 'nuzzle': {
         // 闭眼把头蹭向触点一侧，带一点红晕。
         const s = Math.min(1, Math.max(0, reaction.strength));
-        const z = (reaction.side ?? 1) >= 0 ? 5 * s : -5 * s;
+        const side = (reaction.side ?? 1) >= 0 ? 1 : -1;
+        const z = side * 5 * s;
         this._start([
-          phase(240, 0, z * 0.3, -1.5 * s, z, 0, 0, 0.4 * s),
-          phase(520, 0, z * 0.3, -1.5 * s, z * 1.15, 0, 0, 0.45 * s),
-          phase(380, 1, 0, 0, 0, 0, 0, 0),
+          phase(240, 0, z * 0.3, -1.5 * s, z, 0, 0, 0.4 * s, 1.5 * s * side),
+          phase(520, 0, z * 0.3, -1.5 * s, z * 1.15, 0, 0, 0.45 * s, 1.5 * s * side),
+          phase(380, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
       case 'flinch': {
-        // 被戳脸：缩一下、眯眼，再红着脸回来。
+        // 被戳脸：缩一下眯眼，再红着脸回来。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(90, 0.35, 0, 3 * s, -1.5 * s, 0, 0, 0.5 * s),
-          phase(220, 0.4, 0, 2.5 * s, -1.5 * s, 0, 0, 0.6 * s),
-          phase(450, 1, 0, 0, 0, 0, 0, 0),
+          phase(90, 0.35, 0, 3 * s, -1.5 * s, 0, 0, 0.5 * s, -1.4 * s),
+          phase(220, 0.4, 0, 2.5 * s, -1.5 * s, 0, 0, 0.6 * s, -1.2 * s),
+          phase(450, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
@@ -359,8 +469,8 @@ export class ProceduralReactionService {
         // 领带被拽：头被带着往下点，再抬回来。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(150, 1, 0, -5 * s, 2 * s, 0, 0),
-          phase(260, 1, 0, -5 * s, 2 * s, 0, 0),
+          phase(150, 1, 0, -5 * s, 2 * s, 0, 0, 0, 0.8 * s),
+          phase(260, 1, 0, -5 * s, 2 * s, 0, 0, 0, 0.8 * s),
           phase(200, 1, 0, -1 * s, 0.5 * s, 0, 0),
           phase(300, 1, 0, 0, 0, 0, 0),
         ]);
@@ -370,9 +480,9 @@ export class ProceduralReactionService {
         // 碰到腿：扭头半眯眼，脸微红。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(200, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s),
-          phase(600, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s),
-          phase(400, 1, 0, 0, 0, 0, 0, 0),
+          phase(200, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s, -1.5 * s),
+          phase(600, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s, -1.5 * s),
+          phase(400, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
@@ -381,11 +491,11 @@ export class ProceduralReactionService {
         const s = Math.min(1, Math.max(0, reaction.strength));
         const d = (reaction.side ?? -1) >= 0 ? -1 : 1;
         this._start([
-          phase(260, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0),
-          phase(420, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0),
-          phase(90, 0, -7 * s * d, 1 * s, 2 * s * d, 0, 0),
-          phase(110, 1, -6 * s * d, 1 * s, 2 * s * d, 0, 0),
-          phase(380, 1, 0, 0, 0, 0, 0),
+          phase(260, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0, 0, -2.2 * s * d),
+          phase(420, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0, 0, -2.2 * s * d),
+          phase(90, 0, -7 * s * d, 1 * s, 2 * s * d, 0, 0, 0, -1.8 * s * d),
+          phase(110, 1, -6 * s * d, 1 * s, 2 * s * d, 0, 0, 0, -1.4 * s * d, true),
+          phase(380, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
@@ -394,7 +504,7 @@ export class ProceduralReactionService {
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
           phase(120, 0.75, 0, -3 * s, 0, 0, 0),
-          phase(280, 1, 0, 0, 0, 0, 0),
+          phase(280, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
@@ -422,10 +532,9 @@ export class ProceduralReactionService {
 
   cancelAll(immediate = false): void {
     if (!immediate && this.isPlaying) {
-      const eyes = this._eyeOverrideActive;
-      this._start([phase(180, 1, 0, 0, 0, 0, 0)]);
+      this._start([phase(180, 1, 0, 0, 0, 0, 0, 0, 0, true)]);
       this._holding = false;
-      this._eyeOverrideActive = eyes;
+      this._eyeOverrideActive = false;
       return;
     }
     this._holding = false;
@@ -435,7 +544,7 @@ export class ProceduralReactionService {
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
     this._eyeOpen = 1;
-    this._headX = this._headY = this._headZ = this._earL = this._earR = 0;
+    this._headX = this._headY = this._headZ = this._bodyX = this._earL = this._earR = 0;
     this._cheek = 0;
     const target = this._getTarget();
     if (target) {
@@ -463,7 +572,8 @@ export class ProceduralReactionService {
     this._phaseIndex = 0;
     this._phaseStartMs = performance.now();
     this._prev = { durationMs: 0, eyeOpen: this._eyeOpen, headX: this._headX,
-      headY: this._headY, headZ: this._headZ, earL: this._earL, earR: this._earR, cheek: this._cheek };
+      headY: this._headY, headZ: this._headZ, earL: this._earL, earR: this._earR,
+      cheek: this._cheek, bodyX: this._bodyX };
     this._eyeOverrideActive = true;
   }
 
@@ -487,12 +597,13 @@ export class ProceduralReactionService {
     } else if (this._phaseIndex >= this._phases.length) {
       // 已结束：回到中性
       this._eyeOpen = 1;
-      this._headX = this._headY = this._headZ = this._earL = this._earR = 0;
+      this._headX = this._headY = this._headZ = this._bodyX = this._earL = this._earR = 0;
       this._cheek = 0;
       this._eyeOverrideActive = false;
       this._phases.length = 0;
     } else {
       const p = this._phases[this._phaseIndex];
+      if (p.releaseEye) this._eyeOverrideActive = false;
       const progress = Math.min(
         Math.max(t / Math.max(p.durationMs / 1000, 0.001), 0),
         1
@@ -502,6 +613,7 @@ export class ProceduralReactionService {
       this._headX = this._prev.headX + (p.headX - this._prev.headX) * k;
       this._headY = this._prev.headY + (p.headY - this._prev.headY) * k;
       this._headZ = this._prev.headZ + (p.headZ - this._prev.headZ) * k;
+      this._bodyX = this._prev.bodyX + (p.bodyX - this._prev.bodyX) * k;
       this._earL = this._prev.earL + (p.earL - this._prev.earL) * k;
       this._earR = this._prev.earR + (p.earR - this._prev.earR) * k;
       this._cheek = this._prev.cheek + (p.cheek - this._prev.cheek) * k;
@@ -515,29 +627,33 @@ export class ProceduralReactionService {
 
     // 只由本服务写通道：从抚摸的最后一帧平滑混入新反应，而非先清零。
     let output: InteractionPose = {
-      headX: this._headX, headY: this._headY, headZ: this._headZ + this._holdSway, bodyX: 0,
+      headX: this._headX, headY: this._headY, headZ: this._headZ + this._holdSway, bodyX: this._bodyX,
       eyeEnabled: this._eyeOverrideActive,
       eyeLeft: this._eyeOpen, eyeRight: this._eyeOpen,
+      earL: this._earL, earR: this._earR, cheek: this._cheek,
     };
     let side = this._eyeSide;
     if (this._recovery) {
       const { from, startMs } = this._recovery;
-      const t = Math.min(Math.max((now - startMs) / 240, 0), 1);
-      const k = t * t * (3 - 2 * t);
-      const blend = (a: number, b: number) => a + (b - a) * k;
+      const rt = Math.min(Math.max((now - startMs) / 240, 0), 1);
+      const rk = rt * rt * (3 - 2 * rt);
+      const blend = (a: number, b: number) => a + (b - a) * rk;
       output = {
         headX: blend(from.headX, output.headX), headY: blend(from.headY, output.headY),
-        headZ: blend(from.headZ, output.headZ), bodyX: blend(from.bodyX, 0),
-        eyeEnabled: output.eyeEnabled || (from.eyeEnabled && t < 1),
+        headZ: blend(from.headZ, output.headZ), bodyX: blend(from.bodyX, output.bodyX),
+        eyeEnabled: output.eyeEnabled || (from.eyeEnabled && rt < 1),
         eyeLeft: blend(from.eyeEnabled ? from.eyeLeft : 1,
           output.eyeEnabled && side !== 'right' ? this._eyeOpen : 1),
         eyeRight: blend(from.eyeEnabled ? from.eyeRight : 1,
           output.eyeEnabled && side !== 'left' ? this._eyeOpen : 1),
+        earL: blend(from.earL ?? 0, output.earL ?? 0),
+        earR: blend(from.earR ?? 0, output.earR ?? 0),
+        cheek: blend(from.cheek ?? 0, output.cheek ?? 0),
       };
       // 另一只眼只平滑睁开，不跟随耳朵点击再次闭眼。
-      if (from.eyeEnabled && t < 1) side = 'both';
+      if (from.eyeEnabled && rt < 1) side = 'both';
       this._recovery.current = output;
-      if (t >= 1) this._recovery = null;
+      if (rt >= 1) this._recovery = null;
     }
     try {
       target.setInteractionOffsets(output.headX, output.headY, output.headZ, output.bodyX);
@@ -551,7 +667,8 @@ export class ProceduralReactionService {
         this._earL,
         this._earR
       );
-      target.setFaceCheek(this._cheek !== 0, this._cheek);
+      const cheek = output.cheek ?? this._cheek;
+      target.setFaceCheek(cheek !== 0, cheek);
     } catch {
       // 写入失败忽略
     }

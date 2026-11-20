@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import path from 'path';
 import fs from 'fs';
 
-const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'));
+const pkg = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8'));
 
 export default defineConfig({
   root: '.',
@@ -22,12 +22,13 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        settings: path.resolve(__dirname, 'settings.html'),
-        chat: path.resolve(__dirname, 'chat.html'),
-        records: path.resolve(__dirname, 'records.html'),
-        bubble: path.resolve(__dirname, 'bubble.html'),
-        update: path.resolve(__dirname, 'update.html'),
+        main: path.resolve(import.meta.dirname, 'index.html'),
+        settings: path.resolve(import.meta.dirname, 'settings.html'),
+        chat: path.resolve(import.meta.dirname, 'chat.html'),
+        records: path.resolve(import.meta.dirname, 'records.html'),
+        bubble: path.resolve(import.meta.dirname, 'bubble.html'),
+        update: path.resolve(import.meta.dirname, 'update.html'),
+        pendant: path.resolve(import.meta.dirname, 'pendant.html'),
       },
     },
   },
@@ -35,7 +36,7 @@ export default defineConfig({
     extensions: ['.ts', '.js'],
     alias: {
       '@framework': path.resolve(
-        __dirname,
+        import.meta.dirname,
         '../../third_party/cubism-web-sdk/Framework/src'
       ),
     },

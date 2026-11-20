@@ -36,7 +36,9 @@ export class AgentControlFrame {
     if (message.type === 'misskey:agent-control:ready') {
       const token = this.token();
       if (!token) { this.onEvent({ type: 'misskey:agent-control:error', code: 'AUTHENTICATION_FAILED' }); return; }
-      this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:configure', token, appearance: CONTROL_APPEARANCE }, MSK_BASE);
+      const isAndroid = typeof document !== 'undefined' && document.body?.classList?.contains?.('platform-android');
+      const appearance = isAndroid ? { ...CONTROL_APPEARANCE, fontSize: '15px' } : CONTROL_APPEARANCE;
+      this.iframe.contentWindow?.postMessage({ type: 'misskey:agent-control:configure', token, appearance }, MSK_BASE);
     }
     if (message.type === 'misskey:agent-control:authenticated') { this.authenticated = true; clearTimeout(this.timer); this.iframe.classList.add('ready'); }
     if (message.type === 'misskey:agent-control:error') { this.authenticated = false; clearTimeout(this.timer); }

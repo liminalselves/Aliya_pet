@@ -47,6 +47,7 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 
 /* ---- 回复/连接面板 ---- */
 .gal-panel { position:relative; width:100%; min-height:0; height:auto; max-height:calc(100% - var(--chat-composer-height,52px) - 8px); border:1px solid var(--al-line-strong); border-radius:var(--al-r-l); background:var(--al-surface-card); pointer-events:auto; display:flex; flex-direction:column; box-shadow:var(--al-shadow-2); overflow:hidden; transform-origin:50% 100%; }
+.gal-panel.has-chat-bg { background:var(--al-bg-2); }
 .chat-shell.with-panel .gal-panel { min-height:min(88px,calc(100% - var(--chat-composer-height,52px) - 8px)); }
 /* 关闭钮自带底色圆片浮在内容上（同生图重生成按钮的处理），内容区不再为它预留右侧全高 padding。 */
 .close-panel { position:absolute; top:8px; right:8px; z-index:2; display:grid!important; place-items:center; width:22px; height:22px; padding:0!important; border-radius:50%!important; background:transparent!important; color:var(--al-text-3); opacity:.8; transition:background var(--al-t-fast) var(--al-ease),color var(--al-t-fast) var(--al-ease),opacity var(--al-t-fast) var(--al-ease),transform var(--al-t-fast) var(--al-ease)!important; }
@@ -54,13 +55,16 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-panel:hover .close-panel { opacity:1; }
 .close-panel:hover { background:var(--al-overlay-chip-hover)!important; color:var(--al-text-1); }
 .close-panel:active { transform:scale(.88); }
-.gal-content { flex:1; min-height:0; padding:14px 34px 10px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font-serif); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content { position:relative; z-index:1; flex:1; min-height:0; padding:14px 34px 10px 16px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--al-scrollbar) transparent; user-select:text; -webkit-user-select:text; overflow-wrap:anywhere; font-family:var(--al-font); font-size:clamp(11.5px,4cqw,13px); line-height:1.65; }
+.gal-content .message-text { font-family:var(--al-font-serif); }
+.gal-content article.role-user .message-text { font-family:var(--al-font); }
 .gal-content::selection,.message-text::selection { background:var(--al-selection); }
 .gal-content::-webkit-scrollbar { width:5px; height:5px; }
 .gal-content::-webkit-scrollbar-thumb { background:var(--al-scrollbar); border-radius:3px; }
 .gal-content::-webkit-scrollbar-track { background:transparent; }
 /* 播放期间文字不可选：连点不会闪出选词高亮（gal 对话框手感）；划选复制去记录。 */
-.gal-panel.replying .gal-content { cursor:pointer; user-select:none; -webkit-user-select:none; }
+.gal-panel.replying .gal-content,
+.gal-panel.replying .gal-content img.msk-zoom { cursor:pointer; user-select:none; -webkit-user-select:none; }
 
 /* 回复分页：MSK 分段一段一页，图片/贴纸收敛到对话框尺度 */
 .gal-content .msk-segment + .msk-segment { margin-top:0; }
@@ -130,6 +134,8 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .gal-content .ghost:hover:not(:disabled) { background:var(--al-bg-4)!important; color:var(--al-text-1); }
 /* 不可用（如未开始授权时的「取消」）：灰字、无悬停与按压反馈 */
 .gal-content .ghost:disabled { color:var(--al-text-4); opacity:.6; pointer-events:none; }
+.gal-content .ghost.confirming { background:color-mix(in srgb, var(--al-danger) 18%, var(--al-bg-3))!important; color:var(--al-danger)!important; }
+.gal-content .auth-host { margin:-2px 0 6px; font-size:11px; color:var(--al-text-3); }
 .reply-error { font-family:var(--al-font); }
 .reply-error p { margin:0 0 10px; color:var(--al-text-2); font-size:12.5px; line-height:1.6; }
 .gal-content .ghost:active { transform:scale(.96); }
@@ -157,8 +163,11 @@ body.chat-window #chat-ui .chat-launcher { display:none!important; }
 .unread-dot { position:relative; width:5px; height:5px; border-radius:50%; background:var(--al-gold); }
 /* 呼吸涟漪：会话列表里「有新消息」的等待性提醒（Magic UI pulsating 思路的纯 CSS 版） */
 .unread-dot::after { content:''; position:absolute; inset:-3px; border-radius:50%; border:1px solid var(--al-gold); animation:al-pulse-ring 1.8s var(--al-ease) infinite; }
-.gal-footer { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:10px; height:0; padding:0 16px; overflow:hidden; opacity:0; color:var(--al-text-4); font-size:10.5px; font-variant-numeric:tabular-nums; transition:opacity var(--al-t-med) var(--al-ease); }
-.gal-footer.show { height:24px; padding:0 16px 8px; opacity:1; }
+.gal-footer { position:relative; z-index:1; display:flex; flex:none; align-items:center; justify-content:flex-end; gap:8px; height:0; padding:0 16px; overflow:hidden; opacity:0; color:var(--al-text-4); font-size:10.5px; font-variant-numeric:tabular-nums; transition:opacity var(--al-t-med) var(--al-ease); }
+.gal-footer.show { height:26px; padding:0 16px 8px; opacity:1; }
+#chat-ui .prev-page { margin-right:auto; height:20px; padding:0 6px!important; border-radius:var(--al-r-pill)!important; color:var(--al-text-3); font-family:var(--al-font)!important; font-size:11px!important; line-height:1; }
+#chat-ui .prev-page:hover { color:var(--al-text-1); background:var(--al-hover-fill); }
+#chat-ui .prev-page:active { transform:scale(.95); }
 .page-hint { display:flex; align-items:center; gap:6px; }
 /* 本页播完：提示变亮，前面一枚小三角轻轻呼吸，示意可点 */
 .page-hint.blink { color:var(--al-text-2); }
@@ -202,7 +211,7 @@ body.chat-window .chat-composer { box-shadow:none; }
 .chat-composer.busy textarea::placeholder { color:var(--al-text-2); }
 
 /* 图片入口：工具栏 × 左侧的线性图标键；待发送图片缩略图在输入行上方。 */
-#chat-ui .attach { display:grid; place-items:center; flex:none; width:22px; height:22px; margin-right:2px; padding:0!important; border-radius:50%!important; color:var(--al-text-3); }
+#chat-ui .attach { display:grid; place-items:center; flex:none; width:24px; height:24px; margin-right:2px; padding:0!important; border-radius:50%!important; color:var(--al-text-3); }
 #chat-ui .attach:hover:not(:disabled) { color:var(--al-accent-strong); }
 #chat-ui .attach:disabled { opacity:.4; }
 .composer-attachment { position:relative; display:flex; align-items:flex-end; gap:8px; width:fit-content; max-width:100%; margin:0 0 6px -4px; }
@@ -218,14 +227,15 @@ body.chat-window .chat-composer { box-shadow:none; }
 .composer-attachment.uploading .attachment-state::before { content:''; display:inline-block; width:6px; height:6px; margin-right:5px; border-radius:50%; background:var(--al-accent); vertical-align:1px; animation:al-breathe 1.15s ease-in-out infinite; }
 .composer-attachment.failed .attachment-state { color:var(--al-danger); }
 
-.composer-toolbar { display:flex; align-items:center; gap:2px; min-height:22px; margin:3px 0 0 -6px; font-size:11px; color:var(--al-text-3); }
-.composer-toolbar button { height:22px; padding:0 6px!important; color:var(--al-text-3); white-space:nowrap; }
+.composer-toolbar { display:flex; align-items:center; gap:2px; min-height:24px; margin:3px 0 0 -6px; font-size:11px; color:var(--al-text-3); }
+.composer-toolbar button { height:24px; padding:0 7px!important; color:var(--al-text-3); white-space:nowrap; }
 .composer-toolbar button:hover { color:var(--al-text-1); }
 .composer-toolbar button:disabled { opacity:.4; }
 .composer-toolbar svg { display:block; }
+.session-pill { flex:0 1 auto; max-width:86px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:2px; padding:1px 7px; border-radius:var(--al-r-pill); background:var(--al-bg-3); color:var(--al-text-2); font-size:10.5px; line-height:1.45; }
 .chat-status { flex:1; min-width:0; margin:0 4px 0 6px; overflow:hidden; color:var(--al-text-3); font-size:11px; text-align:right; white-space:nowrap; text-overflow:ellipsis; }
 .chat-status:not(:empty) { animation:al-fade-in var(--al-t-fast) var(--al-ease); }
-#chat-ui .close-window { display:grid; place-items:center; flex:none; width:22px; height:22px; padding:0!important; border-radius:50%; }
+#chat-ui .close-window { display:grid; place-items:center; flex:none; width:24px; height:24px; padding:0!important; border-radius:50%; }
 
 /* Windows 独立 chat 窗：外窗尺寸恒定（chat_window.rs CHAT_WINDOW_W/H_CSS），pet 前端逐帧按角色显示大小
    上报卡片宽，壳换算后以 chat-layout 下发：--chat-width 为排版宽、--chat-zoom 为整卡缩放（窄于 380 才 <1）。
@@ -307,6 +317,9 @@ body.android-main .composer-attachment img { height:72px; max-width:160px; }
 body.android-main #chat-ui .remove-attachment { width:24px; height:24px; left:calc(min(160px, 100%) - 14px); top:-8px; }
 body.android-main .composer-toolbar { min-height:36px; margin:4px 0 0 -10px; gap:0; font-size:13.5px; }
 body.android-main .composer-toolbar button { height:36px; padding:0 10px!important; }
+body.android-main .session-pill { max-width:120px; padding:2px 9px; font-size:12px; }
+body.android-main .gal-footer.show { height:36px; }
+body.android-main #chat-ui .prev-page { height:32px; padding:0 10px!important; font-size:13px!important; }
 body.android-main .chat-status { font-size:12.5px; }
 body.android-main #chat-ui .close-window { width:36px; height:36px; }
 body.android-main .session-row { padding-block:12px!important; font-size:15px; }

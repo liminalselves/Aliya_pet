@@ -9,15 +9,15 @@ import {
   BreathParameterData,
   CubismBreath,
 } from '@framework/effect/cubismbreath';
-import { CubismEyeBlink } from '@framework/effect/cubismeyeblink';
+import { CubismEyeBlink, EyeState } from '@framework/effect/cubismeyeblink';
 import { CubismLook, LookParameterData } from '@framework/effect/cubismlook';
-import { ContinuousEyeBlinkUpdater, FadingExpressionUpdater } from './animation-updaters';
-import { CubismBreathUpdater } from '@framework/motion/cubismbreathupdater';
+import { AttenuatedBreathUpdater, ContinuousEyeBlinkUpdater, FadingExpressionUpdater } from './animation-updaters';
 import { CubismUpdateScheduler } from '@framework/motion/cubismupdatescheduler';
 import { CubismMotion } from '@framework/motion/cubismmotion';
 import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion';
-import { applyFaceMouth, applyFaceVariant, expressionEye, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
+import { applyFaceMouth, applyFaceVariant, expressionEye, EyeVariantTransition, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
+import { FX_NAMES, FX_PARAMETERS, FxChannel, parseFxCues, type FxName, type FxSpan } from './fx-cue';
 import { InteractionParamInfo, InteractionTarget } from './interaction/target';
 import type { PetBehaviorHost } from './behavior';
 import { MOTION_NAMES } from './catalog';
@@ -49,6 +49,8 @@ interface ActionAssetEntry {
   name: string;
   /** 动作期间的整套眼型/替换嘴型时间轴（见 face-cue.ts）。 */
   face?: unknown;
+  /** 动作期间的情绪符号时间轴（见 fx-cue.ts）。 */
+  fx?: unknown;
 }
 
 const INVALID_MOTION_HANDLE = -1;
@@ -86,6 +88,7 @@ export class PetModel
 
   // 动作
   private readonly _motions = new Map<string, CubismMotion>();
+  private readonly _motionBaseFadeIn = new WeakMap<CubismMotion, number>();
   private _motionUpdated = false;
 
   // 表情（exp3.json；眼睑乘法，其余安全参数加性叠加）。
@@ -104,12 +107,15 @@ export class PetModel
   private _chEar: EarChannel = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  /** 情绪符号图层（ParamFx*），随动作时间轴与表情联动。 */
+  private _chFx: FxChannel = null;
   private _angerSplit: AngerMarkSplit | null = null;
   private _idAngerShadow: CubismIdHandle = null;
   private _lookAtReduction = false; // 抚摸期间视线跟随降权
   // 猫耳显隐：部件不透明度逐帧逼近目标（部件不进 saveParameters，每帧显式写入）。
   private _earPartIndex = -1;
   private _earsVisible = true;
+  private _earBlend = 1;
   private _earOpacity = 1;
   private static readonly _earFadeSeconds = 0.18;
   private static readonly _lookReductionScale = 0.25;
@@ -130,8 +136,13 @@ export class PetModel
   private _faceMouthIds: CubismIdHandle[] = [];
   /** 动作名 → 脸部提示时间轴（actions.json face 字段）。 */
   private readonly _faceCues = new Map<string, FaceCueSpan[]>();
+  /** 动作名 → 情绪符号时间轴（actions.json fx 字段）。 */
+  private readonly _fxCues = new Map<string, FxSpan[]>();
   private readonly _faceTrack = new FaceCueTrack();
   private _face: FaceState = { eye: null, mouth: null };
+  /** 特殊眼型（流泪/无语/受击）切换：先闭眼，流泪/无语再在闭眼下渐变。 */
+  private readonly _eyeTransition = new EyeVariantTransition();
+  private _holdClosedRemaining = 0;
   private _paramInfo: InteractionParamInfo = null;
 
   public constructor() {
@@ -166,7 +177,8 @@ export class PetModel
     this.loadModel(await this._fetchArrayBuffer(mocFile), false);
     this._model.saveParameters();
 
-    // 静态包围盒：默认姿态下全部 drawable 顶点的 min/max（native 同款算法）
+    // 静态包围盒：默认姿态下可见 drawable 顶点的 min/max（native 同款算法）。
+    // 默认透明的网格（情绪符号、替换脸）不计入：符号伸出头顶，计入会让人物整体缩小。
     {
       this._model.update();
       const dc = this._model.getDrawableCount();
@@ -175,6 +187,7 @@ export class PetModel
         minY = 1e9,
         maxY = -1e9;
       for (let i = 0; i < dc; i++) {
+        if (this._model.getDrawableOpacity(i) < 0.01) continue;
         const v = this._model.getDrawableVertices(i);
         for (let j = 0; j < v.length; j += 2) {
           if (v[j] < minX) minX = v[j];
@@ -248,18 +261,20 @@ export class PetModel
       )
     );
 
-    // 呼吸（待机基础动画，参数与官方 Demo 一致）
+    // 呼吸（收敛强绑定头侧倾，加入与呼吸同频的轻胸腔俯仰，并在动作期间平滑减幅头身摆动）
     this._breath = CubismBreath.create();
     const id = (s: string) => CubismFramework.getIdManager().getId(s);
+    const idBreath = id(CubismDefaultParameterId.ParamBreath);
     this._breath.setParameters([
-      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleX), 0.0, 15.0, 6.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleX), 0.0, 9.0, 6.5345, 0.5),
       new BreathParameterData(id(CubismDefaultParameterId.ParamAngleY), 0.0, 8.0, 3.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0.0, 10.0, 5.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 0.0, 4.0, 15.5345, 0.5),
-      new BreathParameterData(id(CubismDefaultParameterId.ParamBreath), 0.5, 0.5, 3.2345, 1.0),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0.0, 4.5, 5.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 0.0, 3.5, 15.5345, 0.5),
+      new BreathParameterData(id(CubismDefaultParameterId.ParamBodyAngleY), 0.0, 1.4, 3.2345, 0.5),
+      new BreathParameterData(idBreath, 0.5, 0.5, 3.2345, 1.0),
     ]);
     this._updateScheduler.addUpdatableList(
-      new CubismBreathUpdater(this._breath)
+      new AttenuatedBreathUpdater(() => this._motionUpdated, this._breath, idBreath, 0.35)
     );
 
     // 视线跟随增益（GazeController 内合成；头部按 Q 版模型调低：官方 ±30
@@ -336,6 +351,10 @@ export class PetModel
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    const fxIds = new Map<FxName, CubismIdHandle>();
+    for (const fx of FX_NAMES) fxIds.set(fx, id(FX_PARAMETERS[fx]));
+    this._chFx = new FxChannel(fxIds, [id('Param37'), id('Param40'), id('Param41')]);
+    this._overlays.add(this._chFx);
     // 黑脸 ArtMesh11 / 怒气符号 ArtMesh12 均由 Param32 驱动（Core 逐值扫描确认）
     const shadeIndex = this._model.getDrawableIndex(id('ArtMesh11'));
     const markIndex = this._model.getDrawableIndex(id('ArtMesh12'));
@@ -354,6 +373,8 @@ export class PetModel
         for (const entry of parsed.actions as ActionAssetEntry[]) {
           const spans = parseFaceCues(entry.face);
           if (spans.length > 0) this._faceCues.set(entry.name, spans);
+          const fx = parseFxCues(entry.fx);
+          if (fx.length > 0) this._fxCues.set(entry.name, fx);
         }
       }
     } catch {
@@ -416,6 +437,7 @@ export class PetModel
         this._expressionManager.startMotion(neutral, false);
       }
       this._currentExpression = null;
+      this._chFx?.setExpression(null);
       this._gaze.setExpression(null);
       this._angerSplit?.setMode(null);
       return true;
@@ -425,6 +447,7 @@ export class PetModel
     if (this._currentExpression === name) return true;
     this._expressionManager.startMotion(expr, false);
     this._currentExpression = name;
+    this._chFx?.setExpression(name);
     // 表情注视偏移（垂眼/回避/斜眼）由视线控制器合成，exp3 不直写眼球
     this._gaze.setExpression(name);
     this._angerSplit?.setMode(ANGER_SPLIT_MODES[name] ?? (name === 'angry' ? 'both' : null));
@@ -533,8 +556,10 @@ export class PetModel
           motion.setEffectIds(this._eyeBlinkIds, []);
           const fadeIn = this._setting.getMotionFadeInTimeValue(group, i);
           const fadeOut = this._setting.getMotionFadeOutTimeValue(group, i);
-          motion.setFadeInTime(fadeIn >= 0 ? fadeIn : 1.0);
+          const baseFadeIn = fadeIn >= 0 ? fadeIn : 1.0;
+          motion.setFadeInTime(baseFadeIn);
           motion.setFadeOutTime(fadeOut >= 0 ? fadeOut : 1.0);
+          this._motionBaseFadeIn.set(motion, baseFadeIn);
           this._motions.set(name, motion);
         } catch (e) {
           console.warn(`[pet] motion ${name} load failed`, e);
@@ -554,6 +579,14 @@ export class PetModel
     );
   }
 
+  /** 空闲起播用更紧凑的淡入以保留 0.1–0.25s 预备动作，打断进行中动作保留完整交叉淡化。 */
+  private _prepareMotionFadeIn(motion: CubismMotion): void {
+    const baseFadeIn = this._motionBaseFadeIn?.get(motion);
+    if (baseFadeIn === undefined || typeof motion.setFadeInTime !== 'function') return;
+    const interrupting = !this._motionManager.isFinished();
+    motion.setFadeInTime(interrupting ? baseFadeIn : Math.min(baseFadeIn, 0.22));
+  }
+
   /** 播放指定动作。低优先级不打断播放中的高优先级动作。 */
   public startMotion(group: string, index: number, priority: number): number {
     if (!this._ready) return INVALID_MOTION_HANDLE;
@@ -562,6 +595,7 @@ export class PetModel
     }
     const motion = this._motions.get(`${group}_${index}`);
     if (!motion) return INVALID_MOTION_HANDLE;
+    this._prepareMotionFadeIn(motion);
     // SDK startMotion 会让旧动作淡出，不提前清空它的参数贡献。
     const handle = this._motionManager.startMotionPriority(motion, false, priority);
     if (handle !== INVALID_MOTION_HANDLE) {
@@ -576,9 +610,17 @@ export class PetModel
 
   /** 新动作接管脸部时间轴；没有提示的动作会清掉被打断动作的眼型/嘴型。 */
   private _startFaceCue(name: string): void {
+    const lidL = this._eyeBlinkIds?.[0];
+    const lidR = this._eyeBlinkIds?.[1] ?? lidL;
+    const eyeL = lidL && this._model?.getParameterValueById ? this._model.getParameterValueById(lidL) : 1;
+    const eyeR = lidR && this._model?.getParameterValueById ? this._model.getParameterValueById(lidR) : eyeL;
+    const transitionActive = this._eyeTransition?.active ?? false;
+    const eyesClosed = (eyeL <= 0.05 && eyeR <= 0.05) || transitionActive;
+    this._holdClosedRemaining = name === 'kiss' && transitionActive ? 0.58 : 0;
     const spans = this._faceCues?.get(name);
-    if (spans) this._faceTrack.start(spans);
+    if (spans) this._faceTrack?.start(spans, { eyesClosed });
     else this._faceTrack?.stop();
+    this._chFx?.startAction(this._fxCues?.get(name));
   }
 
   /** 当前动作脸部提示（调试/测试用）。 */
@@ -598,6 +640,7 @@ export class PetModel
     const index = Math.floor(Math.random() * count);
     const motion = this._motions.get(`${name}_${index}`);
     if (!motion) return false;
+    this._prepareMotionFadeIn(motion);
     // SDK 在淡出完成后回收旧动作；保留短暂重叠以连续交接。
     const handle = this._motionManager.startMotionPriority(
       motion,
@@ -730,10 +773,54 @@ export class PetModel
     return this._earPartIndex >= 0;
   }
 
+  /**
+   * 少动态效果：情绪符号只渐入渐出，不摆动、不闪烁。
+   * 默认跟随系统「减少动态效果」，每帧读取（主桌宠与吊坠一致）；测试可显式覆盖。
+   */
+  public setReducedMotion(reduce: boolean | null): void {
+    this._reducedMotionOverride = reduce;
+  }
+  private _reducedMotionOverride: boolean | null = null;
+  private _reducedMotionQuery: MediaQueryList | null | undefined;
+  private _reducedMotion(): boolean {
+    if (this._reducedMotionOverride !== null) return this._reducedMotionOverride;
+    if (this._reducedMotionQuery === undefined) {
+      this._reducedMotionQuery = typeof matchMedia === 'function'
+        ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    }
+    return this._reducedMotionQuery?.matches ?? false;
+  }
+
+  /** 该网格是否属于猫耳部件（Part21 及其子部件）。 */
+  public isEarDrawable(drawableIndex: number): boolean {
+    if (this._earPartIndex < 0) return false;
+    const parents = this._model.getPartParentPartIndices();
+    let part = this._model.getDrawableParentPartIndex(drawableIndex);
+    for (let guard = 0; part >= 0 && guard < 64; guard++) {
+      if (part === this._earPartIndex) return true;
+      part = parents[part];
+    }
+    return false;
+  }
+
   /** 显示/隐藏猫耳；immediate 用于启动恢复，跳过淡变。 */
   public setCatEarsVisible(visible: boolean, immediate = false): void {
     this._earsVisible = visible;
-    if (immediate) this._earOpacity = visible ? 1 : 0;
+    if (immediate) {
+      this._earBlend = visible ? 1 : 0;
+      this._earOpacity = this._earBlend;
+    }
+  }
+
+  /**
+   * 物理「风力」（Cubism 粒子坐标，y 向下，量纲约为重力的倍数）。
+   * 鼠标吊坠用它把整体摆动的惯性力传给头发、裙摆等物理链；主桌宠不调用，保持 0。
+   */
+  public setPhysicsWind(x: number, y: number): void {
+    const options = this._physics?.getOption();
+    if (!options || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    options.wind.x = x;
+    options.wind.y = y;
   }
 
   public setPettingLookAtReduction(enabled: boolean): void {
@@ -741,6 +828,12 @@ export class PetModel
   }
 
   // ---------- 每帧（五阶段流水线） ----------
+
+  private _writeTransitionLid(model: PetModel['_model'], lid: number | null): void {
+    if (lid === null) return;
+    model.setParameterValueById(this._eyeBlinkIds[0], lid);
+    model.setParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0], lid);
+  }
 
   public update(deltaTimeSeconds: number): void {
     if (!this._ready) return;
@@ -767,38 +860,63 @@ export class PetModel
     }
     // 动作脸部提示优先于表情眼型：动作结束后回到表情自己的眼睛。
     this._face = this._faceTrack.advance(deltaTimeSeconds);
-    const eye = this._face.eye ?? expressionEye(this._currentExpression);
+    const targetEye = this._face.eye ?? expressionEye(this._currentExpression);
     // 眼睑必须先于物理写入，否则眼珠/高光物理读到的是另一套开合值。
     this._chEye.apply(model, deltaTimeSeconds);
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 特殊眼型切换先闭眼：读到的是眨眼/动作/互动合成后的真实眼睑。
+    const lidNow = Math.min(
+      model.getParameterValueById(this._eyeBlinkIds[0]),
+      model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
+    );
+    if (this._holdClosedRemaining > 0) {
+      this._holdClosedRemaining = Math.max(0, this._holdClosedRemaining - Math.max(0, deltaTimeSeconds));
+    }
+    const eyeTransition = this._eyeTransition.advance(
+      targetEye,
+      deltaTimeSeconds,
+      lidNow,
+      this._holdClosedRemaining > 0
+    );
+    const eye = eyeTransition.eye;
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑在物理前也写一次，眼珠/高光物理跟着一起闭合。
+    this._writeTransitionLid(model, eyeTransition.lid);
 
     // 4. 视线（唯一所有者：指针跟随 × 动作交控权重 × 抚摸降权
     //    + 表情注视偏移 → 眼球总钳制）
+    // 取两眼最大开合，保证得意单眼 wink / 单眼眨时睁开的那只眼仍正常注视。
+    const eyeL = model.getParameterValueById(this._eyeBlinkIds[0]);
+    const eyeR = model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0]);
+    const blinkState = (this._eyeBlink as { _blinkingState?: number } | null)?._blinkingState ?? EyeState.EyeState_Interval;
+    const blinking = !this._motionUpdated && !this._chEye.enabled && eyeTransition.lid === null
+      && blinkState >= EyeState.EyeState_Closing;
     this._gaze.update(model, deltaTimeSeconds, {
       motionActive: this._motionUpdated,
       reduction: this._lookAtReduction ? PetModel._lookReductionScale : 1,
-      eyeOpenness: Math.min(
-        model.getParameterValueById(this._eyeBlinkIds[0]),
-        model.getParameterValueById(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0])
-      ),
+      eyeOpenness: Math.max(eyeL, eyeR),
+      blinking,
     });
     if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
+    if (this._chFx) this._chFx.reducedMotion = this._reducedMotion();
     // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
 
     // 在动作、表情淡化、物理和互动之后独占写入整套眼型与替换嘴型。
-    // 受击/无语保留原生表现，但不经历会产生重影的中间值。
-    applyFaceVariant(model, this._faceVariantIds, eye);
+    // 受击始终 0/1；流泪/无语只在普通眼闭合时渐变。
+    applyFaceVariant(model, this._faceVariantIds, eye, eyeTransition.weight, eyeTransition.mute);
+    // 过渡眼睑最后写，盖过动作、眨眼与互动对 EyeOpen 的写入。
+    this._writeTransitionLid(model, eyeTransition.lid);
     applyFaceMouth(model, this._faceMouthIds, this._face.mouth, eye);
 
     if (this._earPartIndex >= 0) {
       const target = this._earsVisible ? 1 : 0;
-      if (this._earOpacity !== target) {
+      if (this._earBlend !== target) {
         const step = Math.max(0, deltaTimeSeconds) / PetModel._earFadeSeconds;
-        this._earOpacity = target > this._earOpacity
-          ? Math.min(target, this._earOpacity + step) : Math.max(target, this._earOpacity - step);
+        this._earBlend = target > this._earBlend
+          ? Math.min(target, this._earBlend + step) : Math.max(target, this._earBlend - step);
+        this._earOpacity = this._earBlend * this._earBlend * (3 - 2 * this._earBlend);
       }
       model.setPartOpacityByIndex(this._earPartIndex, this._earOpacity);
     }
