@@ -96,6 +96,8 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - `update`（420×520）承载更新提示：pet 窗口透明穿透不能画 UI，检查结果经 Rust
   `show_update` 转交（事件 + 暂存兜底）。非强制时关闭即隐藏；强制更新关闭 =
   退出应用（`mandatory` 标记由壳保存，见 main.rs `UpdateWindowState`）。
+- **游戏模式与全局快捷键**：`GAME_MODE` 开启时强制桌宠窗口穿透并收起 `chat`（释放键盘焦点），
+  由托盘勾选项或 Windows 全局快捷键（`RegisterHotKey`，默认 `Ctrl+Alt+G`，设置页可配置）切换。
 
 ## 鼠标吊坠（仅 Windows）
 

@@ -4,7 +4,7 @@
 
 <!-- Badge Row 1: Core Info -->
 [![GitHub](https://img.shields.io/badge/GitHub-liminalselves%2FAliya__pet-181717?logo=github&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
-[![Version](https://img.shields.io/badge/version-0.3.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
 
 <!-- Badge Row 2: Platform -->
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
@@ -58,9 +58,9 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 - **表情、动作、状态**：状态决定默认表情与待机动作（手动选择或按时段自动），表情和动作是临时表演，经 `window.petAI` 暴露给 AI / 自动化（见[动作库与资源](#动作库与资源)）。
 - **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页；支持 Windows 截图预览、图片上传、粘贴与拖放附件。
 - **显示与穿透**：设置页支持人物透明度 0–100%、5% 步进和实时预览；独立的“人物完全穿透”开关仅作用于人物悬浮窗，不影响聊天、设置和独立台词气泡。0% 会安全降级为完全穿透，保留原始 Alpha 命中掩码。
-- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
+- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启、游戏模式与可配置全局快捷键（默认 `Ctrl+Alt+G`，开启后不拦截点击并收起聊天窗）；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
 - **鼠标吊坠（仅 Windows）**：缩小的人物用绳子挂在鼠标指针上，随移动甩动，惯性力同时带动头发与裙摆；独立穿透窗口，不拦截点击，与主桌宠同时存在，默认关闭，设置页可调开关、大小和绳长。
-- **Android 桌面集成**：App 内全屏互动，退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
+- **Android 桌面集成**：App 内全屏互动，抚摸时提供触觉震动反馈；退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
 - **设置持久化**：缩放、位置、镜像、贴边、置顶、自启、人物透明度和完全穿透状态等在双端一致保存。
 
 ## 快速开始
@@ -134,7 +134,8 @@ npm run build            # TypeScript 检查与生产构建
 npm run test:bounds      # Live2D 动作 / 表情 / 渲染余量边界测试
 
 cd ../android
-.\gradlew.bat testPetDisplayPolicy  # 本地 JVM 显示与触摸安全策略检查
+.\gradlew.bat testPetDisplayPolicy      # 本地 JVM 显示与触摸安全策略检查
+.\gradlew.bat testOverlayGesturePolicy  # 本地 JVM 悬浮窗手势仲裁检查
 ```
 
 > Android 真机、Windows Tauri/WebView2 GUI、多屏/DPI/HDR 和不同 OEM 的透明区触摸策略仍需在目标设备上单独验收。悬浮窗窗外触摸受 Android `ACTION_OUTSIDE` 能力限制，不能承诺持续跟随其他 App 内的手指轨迹。
@@ -269,9 +270,9 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 - **Expressions, motions, states**: a state sets the default expression and idle motions (chosen manually or automatically by time of day); expressions and motions are temporary performances, exposed to AI/automation via `window.petAI` (see [Motion Library & Assets](#motion-library--assets)).
 - **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android; Windows screen-capture preview and image attachments support paste and drag-and-drop.
 - **Display & click-through**: the settings page provides 0–100% character opacity in 5% steps with live preview, plus a separate full click-through switch that only affects the character overlay, not chat, settings or the standalone dialogue bubble. At 0%, the character safely falls back to full click-through while preserving the original alpha hit mask.
-- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start; click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
+- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start, Game Mode with a configurable global hotkey (default `Ctrl+Alt+G`, makes the pet click-through and hides chat); click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
 - **Mouse pendant (Windows only)**: a shrunken character hangs from the mouse cursor on a rope and swings with the motion, with the inertia also driving hair and skirt physics; it lives in its own click-through window, never intercepts clicks, coexists with the main pet, is off by default, and the settings page adjusts the switch, size and rope length.
-- **Android desktop integration**: full-screen interaction inside the app; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
+- **Android desktop integration**: full-screen interaction inside the app with haptic vibration feedback during petting; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
 - **Persistent settings**: scale, position, mirroring, snapping, always-on-top, auto-start, character opacity and full click-through are stored consistently on both platforms.
 
 ### Quick Start
@@ -344,7 +345,8 @@ npm run build            # TypeScript check and production build
 npm run test:bounds      # Live2D motion / expression / render-margin boundary checks
 
 cd ../android
-.\gradlew.bat testPetDisplayPolicy  # Local JVM display and touch-safety policy checks
+.\gradlew.bat testPetDisplayPolicy      # Local JVM display and touch-safety policy checks
+.\gradlew.bat testOverlayGesturePolicy  # Local JVM overlay gesture arbitration checks
 ```
 
 > Android hardware, Windows Tauri/WebView2 GUI, multi-monitor/DPI/HDR and OEM-specific transparent-touch behavior still require target-device smoke testing. Overlay `ACTION_OUTSIDE` events are platform-limited and cannot provide continuous tracking of fingers inside other apps.

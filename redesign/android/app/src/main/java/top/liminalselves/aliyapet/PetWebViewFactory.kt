@@ -90,7 +90,7 @@ object PetWebViewFactory {
                         }
                     }, true);
                 })();
-            """.trimIndent(), setOf("*"))
+            """.trimIndent(), setOf(DOMAIN))
         }
         web.webViewClient = object : WebViewClientCompat() {
             private var firstDone = false
