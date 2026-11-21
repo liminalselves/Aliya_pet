@@ -546,9 +546,12 @@ fn spawn_click_through(app: tauri::AppHandle, state: HitMaskState) {
                     continue;
                 }
                 if label == "pet" {
-                    // 位置变化立即广播，静止时每秒补发，确保页面重载/恢复不会丢失目标。
-                    if pt.x != last_emit.0 || pt.y != last_emit.1
-                        || last_emit_at.elapsed() >= std::time::Duration::from_secs(1)
+                    // 位置变化广播节流到 ~30Hz（视线不需要更高频率，每次 emit 都是一次 WebView2 IPC）；
+                    // 静止时每秒补发，确保页面重载/恢复不会丢失目标。节流只延后，不丢最终位置。
+                    let moved = pt.x != last_emit.0 || pt.y != last_emit.1;
+                    let since = last_emit_at.elapsed();
+                    if (moved && since >= std::time::Duration::from_millis(32))
+                        || since >= std::time::Duration::from_secs(1)
                     {
                         last_emit = (pt.x, pt.y);
                         last_emit_at = std::time::Instant::now();

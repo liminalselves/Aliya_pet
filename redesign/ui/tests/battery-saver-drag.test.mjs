@@ -13,21 +13,16 @@ function load(name, imports = {}, globals = {}) {
   return exports;
 }
 
-test('省电模式：拖动与拎起摆动期间升到 60fps，其余互动仍保持 15fps', () => {
+test('省电模式：拖动、拎起摆动与其他互动全程保持 15fps', () => {
   const { PetApp } = load('pet-app');
   const app = Object.assign(Object.create(PetApp.prototype), {
-    _settings: { batterySaver: true }, _fpsCap: 15, _boostUntil: 0, _lift: { active: false },
-    _interaction: { isBusy: true }, _leftDown: true, _dragging: false, _nativeDragging: false,
+    _settings: { batterySaver: true }, _fpsCap: 15, _boostUntil: 0, _lift: { active: true },
+    _interaction: { isBusy: true }, _leftDown: true, _dragging: true, _nativeDragging: true,
   });
-  assert.equal(app._interactionBoost(1000), false, '点击/抚摸不升帧');
-  app._dragging = true;
-  assert.equal(app._interactionBoost(1000), true, '拖动升帧');
-  assert.equal(app._frameIntervalMs(1000), 1000 / 60);
-  app._dragging = false; app._leftDown = false;
-  assert.equal(app._interactionBoost(1200), true, '收尾 400ms 保持');
-  assert.equal(app._interactionBoost(1500), false);
-  app._nativeDragging = true;
-  assert.equal(app._interactionBoost(2000), true, 'Android 原生拖动也升帧');
+  assert.equal(app._interactionBoost(1000), false);
+  assert.equal(app._frameIntervalMs(1000), 1000 / 15);
+  app._settings.batterySaver = false; app._fpsCap = 30;
+  assert.equal(app._interactionBoost(1000), true, '非省电模式仍升帧');
 });
 
 test('拖动期间不做 GPU 画布回读', () => {

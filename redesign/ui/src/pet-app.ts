@@ -2581,12 +2581,9 @@ export class PetApp {
   /** 互动升帧：互动进行中、拎起摆动回正期间或刚结束 400ms 内（让收尾补间同样顺滑）。 */
   private _interactionBoost(now: number): boolean {
     if (this._fpsCap >= 60) return false;
-    // 省电模式只在拖动/拎起摆动期间升帧：窗口随鼠标以 60Hz+ 移动，画布仍按 15fps 重绘会与窗口错位、撕裂。
-    if (this._settings?.batterySaver) {
-      const dragging = this._dragging || this._nativeDragging || (this._lift?.active ?? false);
-      if (dragging) this._boostUntil = now + 400;
-      return now < this._boostUntil;
-    }
+    // 省电模式：任何互动（含拖动）都保持 15fps。窗口位置由系统按鼠标频率搬运，
+    // 与画布帧率无关；拖动错位的真因已在别处修掉（见 _maybeSendHitMask、LiftPose 子步长）。
+    if (this._settings?.batterySaver) return false;
     const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
       (this._lift?.active ?? false) || (this._interaction?.isBusy ?? false);
     if (active) this._boostUntil = now + 400;
