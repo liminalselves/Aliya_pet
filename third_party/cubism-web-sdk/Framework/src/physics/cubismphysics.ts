@@ -536,9 +536,6 @@ export class CubismPhysics {
         ++settingIndex
       ) {
         currentSetting = this._physicsRig.settings[settingIndex];
-        currentOutputs = this._physicsRig.outputs.slice(
-          currentSetting.baseOutputIndex
-        );
         for (let i = 0; i < currentSetting.outputCount; ++i) {
           this._previousRigOutputs[settingIndex].outputs[i] =
             this._currentRigOutputs[settingIndex].outputs[i];
@@ -566,15 +563,10 @@ export class CubismPhysics {
         totalTranslation.x = 0.0;
         totalTranslation.y = 0.0;
         currentSetting = this._physicsRig.settings[settingIndex];
-        currentInputs = this._physicsRig.inputs.slice(
-          currentSetting.baseInputIndex
-        );
-        currentOutputs = this._physicsRig.outputs.slice(
-          currentSetting.baseOutputIndex
-        );
-        currentParticles = this._physicsRig.particles.slice(
-          currentSetting.baseParticleIndex
-        );
+        const cached = this._settingSlices(settingIndex, currentSetting);
+        currentInputs = cached.inputs;
+        currentOutputs = cached.outputs;
+        currentParticles = cached.particles;
 
         // Load input parameters
         for (let i = 0; i < currentSetting.inputCount; ++i) {
@@ -657,32 +649,17 @@ export class CubismPhysics {
 
           const destinationParameterIndex: number =
             currentOutputs[i].destinationParameterIndex;
-          const outParameterCaches: Float32Array =
-            !Float32Array.prototype.slice &&
-            'subarray' in Float32Array.prototype
-              ? JSON.parse(
-                  JSON.stringify(
-                    this._parameterCaches.subarray(destinationParameterIndex)
-                  )
-                ) // 値渡しするため、JSON.parse, JSON.stringify
-              : this._parameterCaches.slice(destinationParameterIndex);
-
+          // updateOutputParameterValue only touches index 0: use a 1-element scratch instead of slice + copy-back.
+          const scratch = this._outScratch;
+          scratch[0] = this._parameterCaches[destinationParameterIndex];
           updateOutputParameterValue(
-            outParameterCaches,
+            scratch,
             parameterMinimumValues[destinationParameterIndex],
             parameterMaximumValues[destinationParameterIndex],
             outputValue,
             currentOutputs[i]
           );
-
-          // 値を反映
-          for (
-            let offset: number = destinationParameterIndex, outParamIndex = 0;
-            offset < this._parameterCaches.length;
-            offset++, outParamIndex++
-          ) {
-            this._parameterCaches[offset] = outParameterCaches[outParamIndex];
-          }
+          this._parameterCaches[destinationParameterIndex] = scratch[0];
         }
       }
       this._currentRemainTime -= physicsDeltaTime;
@@ -690,6 +667,26 @@ export class CubismPhysics {
 
     const alpha: number = this._currentRemainTime / physicsDeltaTime;
     this.interpolate(model, alpha);
+  }
+
+  private _outScratch = new Float32Array(1);
+  private _sliceCache: {
+    inputs: CubismPhysicsInput[];
+    outputs: CubismPhysicsOutput[];
+    particles: CubismPhysicsParticle[];
+  }[] = [];
+
+  /** Cache per-sub-rig views once instead of slicing every frame. */
+  private _settingSlices(index: number, setting: CubismPhysicsSubRig) {
+    let c = this._sliceCache[index];
+    if (!c) {
+      c = this._sliceCache[index] = {
+        inputs: this._physicsRig.inputs.slice(setting.baseInputIndex),
+        outputs: this._physicsRig.outputs.slice(setting.baseOutputIndex),
+        particles: this._physicsRig.particles.slice(setting.baseParticleIndex),
+      };
+    }
+    return c;
   }
 
   /**
@@ -713,9 +710,7 @@ export class CubismPhysics {
       ++settingIndex
     ) {
       currentSetting = this._physicsRig.settings[settingIndex];
-      currentOutputs = this._physicsRig.outputs.slice(
-        currentSetting.baseOutputIndex
-      );
+      currentOutputs = this._settingSlices(settingIndex, currentSetting).outputs;
 
       // Load input parameters.
       for (let i = 0; i < currentSetting.outputCount; ++i) {
@@ -725,32 +720,17 @@ export class CubismPhysics {
 
         const destinationParameterIndex: number =
           currentOutputs[i].destinationParameterIndex;
-        const outParameterValues: Float32Array =
-          !Float32Array.prototype.slice && 'subarray' in Float32Array.prototype
-            ? JSON.parse(
-                JSON.stringify(
-                  parameterValues.subarray(destinationParameterIndex)
-                )
-              ) // 値渡しするため、JSON.parse, JSON.stringify
-            : parameterValues.slice(destinationParameterIndex);
-
+        const scratch = this._outScratch;
+        scratch[0] = parameterValues[destinationParameterIndex];
         updateOutputParameterValue(
-          outParameterValues,
+          scratch,
           parameterMinimumValues[destinationParameterIndex],
           parameterMaximumValues[destinationParameterIndex],
           this._previousRigOutputs[settingIndex].outputs[i] * (1 - weight) +
             this._currentRigOutputs[settingIndex].outputs[i] * weight,
           currentOutputs[i]
         );
-
-        // 値を反映
-        for (
-          let offset: number = destinationParameterIndex, outParamIndex = 0;
-          offset < parameterValues.length;
-          offset++, outParamIndex++
-        ) {
-          parameterValues[offset] = outParameterValues[outParamIndex];
-        }
+        parameterValues[destinationParameterIndex] = scratch[0];
       }
     }
   }

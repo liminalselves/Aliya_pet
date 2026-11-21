@@ -62,10 +62,17 @@ export class LiftPose {
 
   /** @param reduce 少动态效果：只保留上提，不摆、不拉长。 */
   update(dt: number, reduce = false): void {
-    const step = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0));
-    if (step === 0) return;
+    const total = Math.min(0.1, Math.max(0, Number.isFinite(dt) ? dt : 0));
+    if (total === 0) return;
+    // 低帧率（省电 15fps）下拆成 ≤1/60s 的子步：弹簧在大步长欧拉积分下会过冲抖动。
+    const n = Math.max(1, Math.ceil(total / (1 / 60)));
+    for (let i = 0; i < n; i++) this._step(total / n, reduce, total);
+  }
+
+  private _step(step: number, reduce: boolean, frame: number): void {
     this._sinceVx += step;
-    if (this._sinceVx > VELOCITY_STALE) this._rawVx = 0;
+    // 速度过期阈值不得小于帧间隔，否则低帧率下相邻帧之间速度被误清零。
+    if (this._sinceVx > Math.max(VELOCITY_STALE, frame * 1.5)) this._rawVx = 0;
     this._vx += (this._rawVx - this._vx) * (1 - Math.exp(-step / 0.08));
 
     const lw = 2 * Math.PI * LIFT_HZ;
