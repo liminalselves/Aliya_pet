@@ -228,6 +228,7 @@ export class PetApp {
   private _dragging = false;
   private _catEarsVisible: boolean | null = null;
   private _boostUntil = 0;
+  private _projection: CubismMatrix44 | null = null;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
   private _touchPetting = false;
   private _touchTapCandidate = false;
@@ -2579,7 +2580,10 @@ export class PetApp {
 
   /** 互动升帧：互动进行中、拎起摆动回正期间或刚结束 400ms 内（让收尾补间同样顺滑）。 */
   private _interactionBoost(now: number): boolean {
-    if (this._settings?.batterySaver || this._fpsCap >= 60) return false;
+    if (this._fpsCap >= 60) return false;
+    // 省电模式：任何互动（含拖动）都保持 15fps。窗口位置由系统按鼠标频率搬运，
+    // 与画布帧率无关；拖动错位的真因已在别处修掉（见 _maybeSendHitMask、LiftPose 子步长）。
+    if (this._settings?.batterySaver) return false;
     const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
       (this._lift?.active ?? false) || (this._interaction?.isBusy ?? false);
     if (active) this._boostUntil = now + 400;
@@ -2826,7 +2830,8 @@ export class PetApp {
     if (this._lift?.active) modelMatrix.setMatrix(this._liftModelMatrix(scale, originX, originY));
 
     // 视口像素 -> NDC（y 翻转）
-    const projection = new CubismMatrix44();
+    const projection = (this._projection ??= new CubismMatrix44());
+    projection.loadIdentity();
     projection.scale(2.0 / vpW, -2.0 / vpH);
     projection.translate(-1.0, 1.0);
 
@@ -2913,6 +2918,8 @@ export class PetApp {
     const androidWrap = platform === 'android' && this._wrapWindow;
     if (!this._hitMaskSend && !androidWrap) return;
     if (!this._model?.isReady()) return;
+    // 拖动中窗口几何每帧变化，且原生层此时整窗接收输入、不读掩码：跳过 GPU→CPU 回读，避免拖动卡顿。
+    if (this._dragging || this._nativeDragging) return;
     const interacting = this._isPointerInteracting();
     const geometry = this._hitMaskGeometryKey();
     const now = performance.now();

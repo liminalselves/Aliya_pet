@@ -145,6 +145,14 @@ function startHitMaskRelay(isOpen: () => boolean): () => void {
   };
   const observer = new ResizeObserver(schedule);
   for (const el of document.querySelectorAll<HTMLElement>('.gal-panel, .chat-composer')) observer.observe(el);
-  setInterval(() => { if (isOpen()) schedule(); }, 500);
+  // 窗口移动/缩放/DPI 变化由原生事件驱动；低频轮询仅作兜底（原先每 500ms 两次跨进程查询）。
+  void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+    const win = getCurrentWindow();
+    const onChange = () => { if (isOpen()) schedule(); };
+    win.onMoved(onChange).catch(() => {});
+    win.onResized(onChange).catch(() => {});
+    win.onScaleChanged(onChange).catch(() => {});
+  }).catch(() => {});
+  setInterval(() => { if (isOpen()) schedule(); }, 3000);
   return schedule;
 }
