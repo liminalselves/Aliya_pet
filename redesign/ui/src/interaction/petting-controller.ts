@@ -10,6 +10,7 @@
  *   - 头部跟随：非线性响应 sign·|v/vref|^0.65，一阶滞后（运动 tau 0.10s / 回正 0.16s）
  *   - 静止姿态：短暂停手（<0.45s）保留最后方向 25~35% + 轻微低头
  *   - 抚摸闭眼 180~320ms、结束睁眼 280~500ms，完成后恢复自动眨眼
+ *   - 边缘贴手：指针在头部左右/上下边缘时头与上半身同向朝该侧偏倾，与速度跟随叠加（AngleX ≤22°、AngleZ ≤12°、BodyZ ≤3°）
  *
  * 反应组触发（reactions.json 的 petting.* 触发键）：start 40%（当日次数多时改 repeat）/
  *   fast(>250px/s 持续 0.8s) / long(10s) / soft·active(2~4s 起，最多 2 条间隔 4s，60%) /
@@ -21,7 +22,12 @@ import {
   PettingGestureRecognizer,
   PointerContext,
 } from './petting-recognizer';
-import { InteractionTarget, type InteractionPose } from './target';
+import {
+  InteractionTarget,
+  type ArmInteractionValues,
+  type FaceMicroInteractionValues,
+  type InteractionPose,
+} from './target';
 
 export type PettingState =
   | 'inactive'
@@ -59,6 +65,11 @@ export interface DailyInteractionPersistence {
   load(): { day: string; headPettingCountToday: number; headPettingDurationTodayMs: number; longestPettingDurationMs: number };
   save(stats: { day: string; headPettingCountToday: number; headPettingDurationTodayMs: number; longestPettingDurationMs: number }): void;
 }
+
+const smoothstep = (a: number, b: number, v: number) => {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
 /** 当日互动状态（跨天自动清零，可选持久化）。 */
 class DailyInteractionState {
@@ -174,6 +185,8 @@ export class PettingController {
   private _angleZMax = 30;
   private _bodyXMin = -30;
   private _bodyXMax = 30;
+  private _bodyYMin = -10;
+  private _bodyYMax = 10;
   private _eyeLMin = 0;
   private _eyeLMax = 1;
   private _eyeRMin = 0;
@@ -184,30 +197,67 @@ export class PettingController {
   private _curAngleY = 0;
   private _curAngleZ = 0;
   private _curBodyX = 0;
+  private _curBodyY = 0;
+  private _curBodyZ = 0;
   private _targetAngleX = 0;
   private _targetAngleY = 0;
   private _targetAngleZ = 0;
   private _targetBodyX = 0;
+  private _targetBodyY = 0;
   private _curCheek = 0;
+  private _curEarL = 0;
+  private _curEarR = 0;
+  private _curArmL01 = 0;
+  private _curArmL02 = 0;
+  private _curArmR01 = 0;
+  private _curArmR02 = 0;
+  private _curEyeSmile = 0;
+  private _curMouthForm = 0;
+  private _curBrowForm = 0;
+  private _curBrowY = 0;
+  private _lastHairImpulseMs = 0;
 
   // 眼睛（抚摸期间保持闭合，释放直接退出覆盖通道由 EyeOverrideChannel 按当前表情平滑睁眼）
   private _eyeOverrideActive = false;
 
   // ---- 头部跟随参数（度）----
-  private static readonly _maxAngleX = 7.0;
+  private static readonly _maxAngleX = 16.0;
   private static readonly _maxAngleZ = 9.0;
-  private static readonly _maxAngleY = 2.5;
+  private static readonly _basePetAngleY = -2.0;
+  private static readonly _maxAngleYSwing = 19.0;
   private static readonly _pettingDirectionSign = 1.0;
   private static readonly _velocityReference = 300.0;
-  private static readonly _minAngleX = 2.2;
+  private static readonly _minAngleX = 4.5;
   private static readonly _minAngleZ = 2.8;
-  private static readonly _idleHoldAngleX = 2.0;
+  private static readonly _minAngleYDelta = 5.0;
+  private static readonly _idleHoldAngleX = 4.5;
   private static readonly _idleHoldAngleZ = 2.6;
-  private static readonly _idleHoldAngleY = 1.5;
+  private static readonly _idleHoldAngleY = 2.5;
+  private static readonly _idleHoldAngleYDelta = 5.0;
+
+  // 边缘贴手：指针在头部边缘时头朝该侧偏（-1..1，模型空间；X 右为正，Y 上为正）
+  private _leanX = 0;
+  private _leanY = 0;
+  private _leanEngaged = false;
+  private _pressPxX = 0;
+  private _pressPxY = 0;
+  private static readonly _leanAngleX = 16.0;
+  private static readonly _leanAngleZ = 10.5;
+  private static readonly _leanAngleY = 8.0;
+  private static readonly _leanBodyX = 4.5;
+  private static readonly _leanBodyZ = 2.0;
+  private static readonly _leanFollowDamp = 0.55;
+  private static readonly _maxTotalAngleX = 22.0;
+  private static readonly _maxTotalAngleZ = 12.0;
+  private static readonly _maxTotalAngleY = 24.0;
+  private static readonly _maxTotalBodyX = 7.5;
+  private static readonly _maxTotalBodyZ = 2.4;
 
   private _pettingActive = false;
   private _lastVel = 0;
+  private _lastVelY = 0;
   private _lastDir = 0;
+  private _lastDirY = 0;
   private _lastInputMs = 0;
   private _lastRawPxX = 0;
   private _lastRawPxY = 0;
@@ -276,6 +326,10 @@ export class PettingController {
 
     if (this.state === 'pressed' || this.state === 'petting') {
       const result = this.recognizer.update(ctx);
+      if (!this._leanEngaged && Math.hypot(ctx.pxX - this._pressPxX, ctx.pxY - this._pressPxY) >= 8) {
+        this._leanEngaged = true; // 按住后移动 ≥8px 才算抚摸，避免右键单击抽动
+      }
+      if (this._leanEngaged) this._updateLean(ctx);
       const now = performance.now();
       const moved = Math.hypot(ctx.pxX - this._lastRawPxX, ctx.pxY - this._lastRawPxY) >= 1.5;
       if (moved) {
@@ -288,9 +342,10 @@ export class PettingController {
       }
       if (this.state === 'petting' || result.isValid) {
         if (moved || result.isValid || result.directionReversed) {
-          this.setVelocity(result.smoothedVelX, true, moved || result.directionReversed);
+          this.setVelocity(result.smoothedVelX, true, moved || result.directionReversed, result.smoothedVelY);
         }
       }
+      const speed = Math.hypot(result.smoothedVelX, result.smoothedVelY);
       if (result.isValid && this.state === 'pressed') {
         this._recognized = true;
         this._sessionStartMs = now;
@@ -302,9 +357,23 @@ export class PettingController {
         this._hapticLastY = ctx.pxY;
         this._hapticAccumPx = 0;
         this._hapticLastMs = now;
-        this._emitHaptic('start', result.smoothedVelX);
+        this._emitHaptic('start', speed);
       } else if (this.state === 'petting') {
-        this._updatePettingHaptic(ctx, result.directionReversed, result.smoothedVelX, now);
+        this._updatePettingHaptic(ctx, result.directionReversed, speed, now);
+        if (result.directionReversed || (moved && now - this._lastHairImpulseMs >= 180)) {
+          this._lastHairImpulseMs = now;
+          const target = this._getTarget();
+          if (target?.triggerPartImpulse) {
+            if (Math.abs(result.smoothedVelY) > Math.abs(result.smoothedVelX)) {
+              target.triggerPartImpulse('hair_bounce', result.smoothedVelY > 0 ? -0.35 : 0.3);
+            } else {
+              const vel = this._hitAreas.mirrored ? -result.smoothedVelX : result.smoothedVelX;
+              const dir = vel >= 0 ? 1 : -1;
+              target.triggerPartImpulse('hair_bounce', -0.25);
+              target.triggerPartImpulse('bangs', dir * 0.18);
+            }
+          }
+        }
       }
       return true;
     }
@@ -316,7 +385,10 @@ export class PettingController {
    * 抚摸仅允许右键触发（Windows 约定）；左键留给拖动桌宠/普通点击。
    */
   onPointerDown(ctx: PointerContext): boolean {
-    if (!ctx.isSecondary || !this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY)) return false;
+    const inZone =
+      this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY) ||
+      (ctx.pointerType === 'mouse' && !ctx.leftPressed && (this._hitAreas.isInHeadRegion?.(ctx.normX, ctx.normY) ?? false));
+    if (!ctx.isSecondary || !inZone) return false;
     if (this.state !== 'inactive' && this.state !== 'finishing') return false;
 
     this.resetAll();
@@ -331,10 +403,17 @@ export class PettingController {
     this._longTriggered = false;
     this._endDialogueTriggered = false;
     this._lastInputMs = this._sessionStartMs;
+    this._lastHairImpulseMs = 0;
     this._lastRawPxX = ctx.pxX;
     this._lastRawPxY = ctx.pxY;
+    this._pressPxX = ctx.pxX;
+    this._pressPxY = ctx.pxY;
     this.recognizer.startGesture(ctx);
     this.dailyState.beginPetting();
+    if (ctx.pointerType === 'mouse' && !ctx.leftPressed) {
+      this._leanEngaged = true;
+      this._updateLean(ctx);
+    }
     this._setState('pressed');
     return true;
   }
@@ -410,14 +489,29 @@ export class PettingController {
   /** 只转交恢复动画的所有权，不复位通道，也不重复结算会话或触发台词。 */
   releaseFinishing(): InteractionPose | null {
     if (this.state !== 'finishing') return null;
+    const arms: ArmInteractionValues = {
+      armL01: this._curArmL01,
+      armL02: this._curArmL02,
+      armR01: this._curArmR01,
+      armR02: this._curArmR02,
+    };
+    const faceMicro: FaceMicroInteractionValues = {
+      eyeSmile: this._curEyeSmile,
+      mouthForm: this._curMouthForm,
+      browForm: this._curBrowForm,
+      browY: this._curBrowY,
+    };
     const pose: InteractionPose = {
       headX: this._curAngleX, headY: this._curAngleY, headZ: this._curAngleZ,
-      bodyX: this._curBodyX, eyeEnabled: false,
+      bodyX: this._curBodyX, bodyY: this._curBodyY, bodyZ: this._curBodyZ,
+      eyeEnabled: false,
       eyeLeft: 0,
       eyeRight: 0,
-      earL: 0,
-      earR: 0,
+      earL: this._curEarL,
+      earR: this._curEarR,
       cheek: this._curCheek,
+      arms,
+      faceMicro,
     };
     this.recognizer.endGesture();
     this._applyLookAtReduction(false);
@@ -428,34 +522,44 @@ export class PettingController {
 
   // ---------- 反应：目标计算 ----------
 
-  /** 按平滑水平速度设置头部目标（petting=false 时全部回正；镜像时翻转方向）。 */
-  setVelocity(velXPxPerSec: number, petting: boolean, refreshInput = true): void {
+  /** 按平滑水平/垂直速度设置头部目标（petting=false 时全部回正；镜像时翻转水平方向）。 */
+  setVelocity(velXPxPerSec: number, petting: boolean, refreshInput = true, velYPxPerSec = 0): void {
     if (!petting) {
       this._pettingActive = false;
       this._lastVel = 0;
+      this._lastVelY = 0;
       this._lastDir = 0;
+      this._lastDirY = 0;
       this._targetAngleX = 0;
       this._targetAngleY = 0;
       this._targetAngleZ = 0;
       this._targetBodyX = 0;
+      this._targetBodyY = 0;
+      this._leanX = 0;
+      this._leanY = 0;
+      this._leanEngaged = false;
       this._applyLookAtReduction(false);
       return;
     }
-    if (refreshInput && Math.abs(velXPxPerSec) > 20) {
+    if (refreshInput && Math.hypot(velXPxPerSec, velYPxPerSec) > 20) {
       this._lastInputMs = performance.now();
     }
     const modelVel = this._hitAreas.mirrored ? -velXPxPerSec : velXPxPerSec;
     this._pettingActive = true;
     this._lastVel = Math.min(Math.max(modelVel, -800), 800);
+    this._lastVelY = Math.min(Math.max(velYPxPerSec, -800), 800);
     if (Math.abs(this._lastVel) > 20) {
       this._lastDir = Math.sign(this._lastVel);
     }
+    if (Math.abs(this._lastVelY) > 20) {
+      this._lastDirY = Math.sign(this._lastVelY);
+    }
     this._applyLookAtReduction(true);
-    this._computePettingTargets(this._lastVel);
+    this._computePettingTargets(this._lastVel, this._lastVelY);
   }
 
   /** 非线性响应：低速也有明显反馈，高速仍受上限限制。 */
-  private _computePettingTargets(vel: number): void {
+  private _computePettingTargets(vel: number, velY = 0): void {
     const normalized = Math.min(
       Math.max(vel / PettingController._velocityReference, -1),
       1
@@ -464,7 +568,7 @@ export class PettingController {
     let angleX = response * PettingController._maxAngleX * PettingController._pettingDirectionSign;
     let angleZ = -response * PettingController._maxAngleZ * PettingController._pettingDirectionSign;
 
-    // 有效抚摸最低反馈
+    // 有效水平抚摸最低反馈
     if (Math.abs(normalized) > 0.02) {
       const xSign = angleX >= 0 ? 1 : -1;
       const zSign = angleZ >= 0 ? 1 : -1;
@@ -476,24 +580,64 @@ export class PettingController {
       }
     }
 
+    const normalizedY = Math.min(
+      Math.max(velY / PettingController._velocityReference, -1),
+      1
+    );
+    const responseY = Math.sign(normalizedY) * Math.pow(Math.abs(normalizedY), 0.65);
+    // 屏幕 Y 向下为正，Live2D AngleY / BodyAngleY 向上为正
+    let deltaY = -responseY * PettingController._maxAngleYSwing;
+    if (Math.abs(normalizedY) > 0.02 && Math.abs(deltaY) < PettingController._minAngleYDelta) {
+      deltaY = Math.sign(deltaY) * PettingController._minAngleYDelta;
+    }
+
     this._targetAngleX = angleX;
     this._targetAngleZ = angleZ;
-    this._targetAngleY = -PettingController._maxAngleY; // 轻微低头
-    this._targetBodyX = angleX * 0.3;
+    this._targetAngleY = PettingController._basePetAngleY + deltaY;
+    this._targetBodyX = Math.max(-4.8, Math.min(4.8, angleX * 0.28));
+    const bodyVelY = Math.abs(velY) > 25 ? Math.sign(velY) * (Math.abs(velY) - 25) : 0;
+    const bodyNormY = Math.min(Math.max(bodyVelY / (PettingController._velocityReference - 25), -1), 1);
+    const bodyRespY = Math.sign(bodyNormY) * Math.pow(Math.abs(bodyNormY), 0.65);
+    this._targetBodyY = Math.max(-4.8, Math.min(3.8, -0.7 - bodyRespY * 4.8));
   }
 
   private _beginEyeClose(): void {
     this._eyeOverrideActive = true;
   }
 
+  /** 按指针在头部的位置计算贴手偏向：中心小死区，边缘满偏；远离头部（r>1.8 起）渐隐。 */
+  private _updateLean(ctx: PointerContext): void {
+    // 部分测试桩/调用方的 hitAreas 未实现该方法
+    const off = this._hitAreas.headPetOffset?.(ctx.normX, ctx.normY);
+    if (!off) { this._leanX = 0; this._leanY = 0; return; }
+    const presence = 1 - smoothstep(1.8, 2.6, Math.hypot(off.x, off.y));
+    this._leanX = Math.sign(off.x) * smoothstep(0.2, 0.85, Math.abs(off.x)) * presence;
+    // 屏幕 Y 向下为正，AngleY 向上为正
+    this._leanY = -Math.sign(off.y) * smoothstep(0.25, 0.9, Math.abs(off.y)) * presence;
+    if (!this._pettingActive) {
+      this._applyLookAtReduction(Math.abs(this._leanX) > 0.01 || Math.abs(this._leanY) > 0.01);
+    }
+  }
+
   /** 立即复位全部互动参数（退出抚摸/异常恢复）。 */
   resetAll(): void {
     this._curAngleX = this._curAngleY = this._curAngleZ = this._curBodyX = 0;
-    this._targetAngleX = this._targetAngleY = this._targetAngleZ = this._targetBodyX = 0;
+    this._curBodyY = this._curBodyZ = 0;
+    this._targetAngleX = this._targetAngleY = this._targetAngleZ = this._targetBodyX = this._targetBodyY = 0;
+    this._leanX = 0;
+    this._leanY = 0;
+    this._leanEngaged = false;
     this._curCheek = 0;
+    this._curEarL = this._curEarR = 0;
+    this._curArmL01 = this._curArmL02 = this._curArmR01 = this._curArmR02 = 0;
+    this._curEyeSmile = this._curMouthForm = this._curBrowForm = this._curBrowY = 0;
+    this._lastHairImpulseMs = 0;
     this._eyeOverrideActive = false;
     this._pettingActive = false;
+    this._lastVel = 0;
+    this._lastVelY = 0;
     this._lastDir = 0;
+    this._lastDirY = 0;
     this._hapticLastMs = 0;
     this._hapticLastX = 0;
     this._hapticLastY = 0;
@@ -503,9 +647,12 @@ export class PettingController {
     if (target) {
       try {
         target.setInteractionOffsets(0, 0, 0, 0);
+        target.setBodyTilt?.(0, 0);
         target.setEyeOverride(false, 0, 0);
         target.setEarInteraction(false, 0, 0);
         target.setFaceCheek(false, 0);
+        target.setArmInteraction?.(false);
+        target.setFaceMicroInteraction?.(false);
       } catch {
         // 写入失败不影响互动流程
       }
@@ -543,7 +690,7 @@ export class PettingController {
     const idleSec = (performance.now() - this._lastInputMs) / 1000;
     if (this._pettingActive) {
       if (idleSec < 0.08) {
-        this._computePettingTargets(this._lastVel);
+        this._computePettingTargets(this._lastVel, this._lastVelY);
       } else if (idleSec < 0.45) {
         this._targetAngleX =
           this._lastDir *
@@ -553,26 +700,49 @@ export class PettingController {
           -this._lastDir *
           PettingController._idleHoldAngleZ *
           PettingController._pettingDirectionSign;
-        this._targetAngleY = -PettingController._idleHoldAngleY;
+        this._targetAngleY =
+          -PettingController._idleHoldAngleY - this._lastDirY * PettingController._idleHoldAngleYDelta;
         this._targetBodyX = this._targetAngleX * 0.25;
+        this._targetBodyY = Math.max(-2.6, Math.min(1.8, -0.7 - this._lastDirY * 1.3));
       } else {
         this._targetAngleX = 0;
         this._targetAngleZ = 0;
         this._targetAngleY = 0;
         this._targetBodyX = 0;
+        this._targetBodyY = 0;
       }
     }
 
     // 头部与身体一阶滞后：运动响应快，回正慢
-    const tau = this._pettingActive
+    const leanActive = this._leanEngaged && (Math.abs(this._leanX) > 0.01 || Math.abs(this._leanY) > 0.01);
+    const tau = (this._pettingActive || leanActive)
       ? PettingController._headTauSeconds
       : PettingController._returnTauSeconds;
     const k = 1.0 - Math.exp(-dt / tau);
+    const followW = 1 - PettingController._leanFollowDamp * Math.abs(this._leanX);
+    const clampAbs = (v: number, m: number) => Math.max(-m, Math.min(m, v));
+    const goalAngleX = clampAbs(
+      this._targetAngleX * followW + this._leanX * PettingController._leanAngleX,
+      PettingController._maxTotalAngleX
+    );
+    // 实测模型 ParamAngleZ > 0 为头向右倾，与 AngleX 同号朝抚摸侧偏
+    const goalAngleZ = clampAbs(
+      this._targetAngleZ * followW + this._leanX * PettingController._leanAngleZ,
+      PettingController._maxTotalAngleZ
+    );
+    const goalAngleY = clampAbs(
+      this._targetAngleY + this._leanY * PettingController._leanAngleY,
+      PettingController._maxTotalAngleY
+    );
+    const goalBodyX = clampAbs(
+      this._targetBodyX * followW + this._leanX * PettingController._leanBodyX,
+      PettingController._maxTotalBodyX
+    );
     this._curAngleX +=
       (PettingController._clampHead(
         this._angleXMin,
         this._angleXMax,
-        this._targetAngleX
+        goalAngleX
       ) -
         this._curAngleX) *
       k;
@@ -580,7 +750,7 @@ export class PettingController {
       (PettingController._clampHead(
         this._angleYMin,
         this._angleYMax,
-        this._targetAngleY
+        goalAngleY
       ) -
         this._curAngleY) *
       k;
@@ -588,22 +758,70 @@ export class PettingController {
       (PettingController._clampHead(
         this._angleZMin,
         this._angleZMax,
-        this._targetAngleZ
+        goalAngleZ
       ) -
         this._curAngleZ) *
       k;
     this._curBodyX +=
-      (PettingController._clampHead(this._bodyXMin, this._bodyXMax, this._targetBodyX) -
+      (PettingController._clampHead(this._bodyXMin, this._bodyXMax, goalBodyX) -
         this._curBodyX) *
       k;
 
-    // 渐进红晕（只在识别到抚摸后激活，结束时平滑回 0；耳朵不额外压耳）
-    const targetCheek = this.state === 'petting'
+    // 身体俯仰与侧倾、渐进红晕、猫耳放松、四腕微收与微笑微表情（识别到抚摸后激活，结束时平滑回 0）
+    const activePetting = this.state === 'petting';
+    const targetBodyY = activePetting
+      ? PettingController._clampHead(this._bodyYMin, this._bodyYMax, this._targetBodyY)
+      : 0;
+    const followBodyZ = activePetting
+      ? Math.max(-1.2, Math.min(1.2, this._targetAngleZ * followW * 0.12))
+      : 0;
+    const targetBodyZ = clampAbs(
+      followBodyZ + this._leanX * PettingController._leanBodyZ,
+      PettingController._maxTotalBodyZ
+    );
+    this._curBodyY += (targetBodyY - this._curBodyY) * k;
+    this._curBodyZ += (targetBodyZ - this._curBodyZ) * k;
+    if (Math.abs(this._curBodyY) < 0.001) this._curBodyY = 0;
+    if (Math.abs(this._curBodyZ) < 0.001) this._curBodyZ = 0;
+
+    const targetCheek = activePetting
       ? Math.min(0.55, 0.12 + (this._sessionElapsedMs / 8000) * 0.43 + Math.min(0.1, this.dailyState.headPettingCountToday * 0.03))
       : 0;
-    const cheekK = 1.0 - Math.exp(-dt / (this.state === 'petting' ? 0.35 : 0.22));
+    const cheekK = 1.0 - Math.exp(-dt / (activePetting ? 0.35 : 0.22));
     this._curCheek += (targetCheek - this._curCheek) * cheekK;
     if (this._curCheek < 0.001) this._curCheek = 0;
+
+    const earBase = activePetting ? Math.min(0.65, 0.45 + (this._sessionElapsedMs / 8000) * 0.2) : 0;
+    const earVert = activePetting ? Math.max(-0.12, Math.min(0.12, (this._lastVelY / 300) * 0.12)) : 0;
+    const earPitch = activePetting ? Math.max(0.2, Math.min(0.8, earBase + earVert)) : 0;
+    const earLean = activePetting ? Math.max(-0.12, Math.min(0.12, (this._curAngleX / 16) * 0.12)) : 0;
+    const earK = 1.0 - Math.exp(-dt / (activePetting ? 0.18 : 0.16));
+    this._curEarL += ((earPitch + earLean) - this._curEarL) * earK;
+    this._curEarR += ((earPitch - earLean) - this._curEarR) * earK;
+    if (Math.abs(this._curEarL) < 0.001) this._curEarL = 0;
+    if (Math.abs(this._curEarR) < 0.001) this._curEarR = 0;
+
+    const armSway = activePetting ? this._curBodyX * 0.25 : 0;
+    const armK = 1.0 - Math.exp(-dt / (activePetting ? 0.2 : 0.16));
+    this._curArmL01 += ((activePetting ? -1.5 + armSway : 0) - this._curArmL01) * armK;
+    this._curArmR01 += ((activePetting ? -1.5 - armSway : 0) - this._curArmR01) * armK;
+    this._curArmL02 += ((activePetting ? -2.6 : 0) - this._curArmL02) * armK;
+    this._curArmR02 += ((activePetting ? -2.6 : 0) - this._curArmR02) * armK;
+    if (Math.abs(this._curArmL01) < 0.001) this._curArmL01 = 0;
+    if (Math.abs(this._curArmR01) < 0.001) this._curArmR01 = 0;
+    if (Math.abs(this._curArmL02) < 0.001) this._curArmL02 = 0;
+    if (Math.abs(this._curArmR02) < 0.001) this._curArmR02 = 0;
+
+    const microK = 1.0 - Math.exp(-dt / (activePetting ? 0.16 : 0.18));
+    const targetSmile = activePetting ? Math.min(0.95, 0.75 + (this._sessionElapsedMs / 6000) * 0.2) : 0;
+    this._curEyeSmile += (targetSmile - this._curEyeSmile) * microK;
+    this._curMouthForm += ((activePetting ? 0.42 : 0) - this._curMouthForm) * microK;
+    this._curBrowForm += ((activePetting ? 0.25 : 0) - this._curBrowForm) * microK;
+    this._curBrowY += ((activePetting ? -0.1 : 0) - this._curBrowY) * microK;
+    if (this._curEyeSmile < 0.001) this._curEyeSmile = 0;
+    if (Math.abs(this._curMouthForm) < 0.001) this._curMouthForm = 0;
+    if (Math.abs(this._curBrowForm) < 0.001) this._curBrowForm = 0;
+    if (Math.abs(this._curBrowY) < 0.001) this._curBrowY = 0;
 
     // 写入
     try {
@@ -613,14 +831,33 @@ export class PettingController {
         this._curAngleZ,
         this._curBodyX
       );
+      target.setBodyTilt?.(this._curBodyY, this._curBodyZ);
       const eyeEnabled = this._eyeOverrideActive && this._hasEyes;
       if (eyeEnabled) {
         target.setEyeOverride(true, this._eyeLMin, this._eyeRMin);
       } else {
         target.setEyeOverride(false, 0, 0);
       }
-      target.setEarInteraction(false, 0, 0);
+      target.setEarInteraction(this._curEarL !== 0 || this._curEarR !== 0, this._curEarL, this._curEarR);
       target.setFaceCheek(this._curCheek > 0, this._curCheek);
+
+      const armActive = this._curArmL01 !== 0 || this._curArmL02 !== 0 ||
+        this._curArmR01 !== 0 || this._curArmR02 !== 0;
+      target.setArmInteraction?.(armActive, {
+        armL01: this._curArmL01,
+        armL02: this._curArmL02,
+        armR01: this._curArmR01,
+        armR02: this._curArmR02,
+      });
+
+      const microActive = this._curEyeSmile !== 0 || this._curMouthForm !== 0 ||
+        this._curBrowForm !== 0 || this._curBrowY !== 0;
+      target.setFaceMicroInteraction?.(microActive, {
+        eyeSmile: this._curEyeSmile,
+        mouthForm: this._curMouthForm,
+        browForm: this._curBrowForm,
+        browY: this._curBrowY,
+      });
     } catch {
       // 写入失败不影响互动流程
     }
@@ -647,7 +884,8 @@ export class PettingController {
     // 停手不累计有效抚摸时间，也不把最后一次高速样本当作持续高速。
     const moving = performance.now() - this._lastInputMs < 120;
     if (moving) this._sessionElapsedMs += dtMs;
-    this._fastElapsedMs = moving && Math.abs(this.recognizer.smoothedVelXPxPerSec) > 250
+    const speed = Math.hypot(this.recognizer.smoothedVelXPxPerSec, this.recognizer.smoothedVelYPxPerSec);
+    this._fastElapsedMs = moving && speed > 250
       ? this._fastElapsedMs + dtMs : 0;
 
     // 持续过快 0.8s 以上：每次会话最多一条 petting_fast
@@ -716,6 +954,8 @@ export class PettingController {
       this._angleZMax = info.angleZMax;
       this._bodyXMin = info.bodyXMin;
       this._bodyXMax = info.bodyXMax;
+      this._bodyYMin = info.bodyYMin ?? -10;
+      this._bodyYMax = info.bodyYMax ?? 10;
       this._eyeLMin = info.eyeLMin;
       this._eyeLMax = info.eyeLMax;
       this._eyeRMin = info.eyeRMin;

@@ -33,6 +33,8 @@ export interface PettingGestureResult {
   direction: number;
   /** 平滑水平速度（物理像素/秒） */
   smoothedVelX: number;
+  /** 平滑垂直速度（物理像素/秒） */
+  smoothedVelY: number;
   startDistancePx: number;
   strokeDistancePx: number;
 }
@@ -43,11 +45,42 @@ interface Sample {
   pxY: number;
 }
 
+interface AxisTrack {
+  anchor: number;
+  origin: number;
+  dir: number;
+  lastReversalTime: number;
+  reversals: number;
+  maxStroke: number;
+  smoothedVel: number;
+}
+
+const createAxisTrack = (): AxisTrack => ({
+  anchor: 0,
+  origin: 0,
+  dir: 0,
+  lastReversalTime: 0,
+  reversals: 0,
+  maxStroke: 0,
+  smoothedVel: 0,
+});
+
+const resetAxisTrack = (axis: AxisTrack, pos = 0): void => {
+  axis.anchor = pos;
+  axis.origin = pos;
+  axis.dir = 0;
+  axis.lastReversalTime = 0;
+  axis.reversals = 0;
+  axis.maxStroke = 0;
+  axis.smoothedVel = 0;
+};
+
 const INVALID_RESULT: PettingGestureResult = {
   isValid: false,
   directionReversed: false,
   direction: 0,
   smoothedVelX: 0,
+  smoothedVelY: 0,
   startDistancePx: 0,
   strokeDistancePx: 0,
 };
@@ -60,7 +93,7 @@ export class PettingGestureRecognizer {
   private readonly _maxStrokeDistanceLimitPx = 80;
   private readonly _minVelocityPxPerSec = 40;
   private readonly _maxVelocityPxPerSec = 500;
-  private readonly _horizontalDominance = 0.6;
+  private readonly _axisDominance = 0.6;
   private readonly _minReversalDistancePx = 18;
   private readonly _reversalDebounceSeconds = 0.12;
   private readonly _jitterPx = 4;
@@ -77,13 +110,8 @@ export class PettingGestureRecognizer {
   private _lastCumulative = 0;
   private _lastPxX = 0;
   private _lastPxY = 0;
-  private _directionAnchorX = 0;
-  private _strokeOriginX = 0;
-  private _currentDirection = 0;
-  private _lastReversalTime = 0;
-  private _reversalCount = 0;
-  private _maxStrokeDistancePx = 0;
-  private _smoothedVelX = 0;
+  private readonly _axisX: AxisTrack = createAxisTrack();
+  private readonly _axisY: AxisTrack = createAxisTrack();
   private _gestureElapsed = 0;
 
   constructor(capacity = 64, sampleIntervalSeconds = 1.0 / 60.0) {
@@ -119,14 +147,10 @@ export class PettingGestureRecognizer {
     this._lastCumulative = 0;
     this._lastPxX = 0;
     this._lastPxY = 0;
-    this._currentDirection = 0;
-    this._lastReversalTime = 0;
-    this._reversalCount = 0;
-    this._maxStrokeDistancePx = 0;
-    this._smoothedVelX = 0;
+    resetAxisTrack(this._axisX, origin?.pxX ?? 0);
+    resetAxisTrack(this._axisY, origin?.pxY ?? 0);
     this._gestureElapsed = 0;
     if (origin) {
-      this._directionAnchorX = this._strokeOriginX = origin.pxX;
       this._lastPxX = origin.pxX;
       this._lastPxY = origin.pxY;
       Object.assign(this._samples[0], { timeSeconds: 0, pxX: origin.pxX, pxY: origin.pxY });
@@ -139,8 +163,10 @@ export class PettingGestureRecognizer {
     this._gestureActive = false;
     this._sampleHead = 0;
     this._sampleCount = 0;
-    this._smoothedVelX = 0;
-    this._currentDirection = 0;
+    this._axisX.smoothedVel = 0;
+    this._axisX.dir = 0;
+    this._axisY.smoothedVel = 0;
+    this._axisY.dir = 0;
   }
 
   get isGestureActive(): boolean {
@@ -148,15 +174,19 @@ export class PettingGestureRecognizer {
   }
 
   get smoothedVelXPxPerSec(): number {
-    return this._smoothedVelX;
+    return this._axisX.smoothedVel;
+  }
+
+  get smoothedVelYPxPerSec(): number {
+    return this._axisY.smoothedVel;
   }
 
   get currentDirection(): number {
-    return this._currentDirection;
+    return this._axisX.dir !== 0 ? this._axisX.dir : this._axisY.dir;
   }
 
   get reversalCount(): number {
-    return this._reversalCount;
+    return Math.max(this._axisX.reversals, this._axisY.reversals);
   }
 
   get gestureElapsedSeconds(): number {
@@ -181,8 +211,9 @@ export class PettingGestureRecognizer {
       return {
         isValid: false,
         directionReversed: false,
-        direction: this._currentDirection,
-        smoothedVelX: this._smoothedVelX,
+        direction: this.currentDirection,
+        smoothedVelX: this._axisX.smoothedVel,
+        smoothedVelY: this._axisY.smoothedVel,
         startDistancePx: 0,
         strokeDistancePx: 0,
       };
@@ -192,7 +223,8 @@ export class PettingGestureRecognizer {
     this._lastSampleElapsed = this._gestureElapsed;
 
     if (this._sampleCount === 0) {
-      this._directionAnchorX = this._strokeOriginX = ctx.pxX;
+      resetAxisTrack(this._axisX, ctx.pxX);
+      resetAxisTrack(this._axisY, ctx.pxY);
       this._lastPxX = ctx.pxX;
       this._lastPxY = ctx.pxY;
     }
@@ -200,52 +232,13 @@ export class PettingGestureRecognizer {
     const dy = ctx.pxY - this._lastPxY;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    const clampVel = (v: number) => Math.min(Math.max(v, -800), 800);
-    const velX = clampVel(dx / sampleDt);
-    // 方向反转时立即换向（绕过 EMA 滞后，快速往返抚摸下头部转向不迟钝）
-    if (Math.abs(dx) >= this._jitterPx) {
-      const newDir = dx > 0 ? 1 : -1;
-      if (newDir !== this._currentDirection && this._currentDirection !== 0) {
-        this._smoothedVelX = velX;
-      } else {
-        this._smoothedVelX = this._smoothedVelX * 0.7 + velX * 0.3;
-      }
-    } else {
-      this._smoothedVelX = this._smoothedVelX * 0.7 + velX * 0.3;
-    }
+    const reversedX = this._updateAxis(this._axisX, ctx.pxX, dx, sampleDt);
+    const reversedY = this._updateAxis(this._axisY, ctx.pxY, dy, sampleDt);
+    const reversed = reversedX || reversedY;
 
     this._lastPxX = ctx.pxX;
     this._lastPxY = ctx.pxY;
     this._lastCumulative += distance;
-
-    // 用累计水平距离而非单个采样的 dx 判方向，低速/高回报率鼠标同样有效。
-    let reversed = false;
-    if (this._currentDirection === 0) {
-      const travel = ctx.pxX - this._directionAnchorX;
-      if (Math.abs(travel) >= this._jitterPx) {
-        this._currentDirection = Math.sign(travel);
-        this._lastReversalTime = this._gestureElapsed;
-        this._directionAnchorX = ctx.pxX;
-      }
-    } else {
-      const travel = (ctx.pxX - this._directionAnchorX) * this._currentDirection;
-      if (travel > 0) {
-        this._directionAnchorX = ctx.pxX;
-      } else if (-travel >= this._minReversalDistancePx &&
-                 this._gestureElapsed - this._lastReversalTime >= this._reversalDebounceSeconds) {
-        const stroke = Math.abs(this._directionAnchorX - this._strokeOriginX);
-        if (stroke >= this._minStrokeDistancePx && stroke <= this._maxStrokeDistanceLimitPx) {
-          this._maxStrokeDistancePx = stroke;
-          this._reversalCount++;
-          reversed = true;
-        }
-        this._strokeOriginX = this._directionAnchorX;
-        this._directionAnchorX = ctx.pxX;
-        this._currentDirection *= -1;
-        this._smoothedVelX = velX;
-        this._lastReversalTime = this._gestureElapsed;
-      }
-    }
 
     const sample = this._samples[this._sampleHead];
     sample.timeSeconds = this._gestureElapsed;
@@ -267,11 +260,58 @@ export class PettingGestureRecognizer {
     return {
       isValid: valid,
       directionReversed: reversed,
-      direction: this._currentDirection,
-      smoothedVelX: this._smoothedVelX,
+      direction: this.currentDirection,
+      smoothedVelX: this._axisX.smoothedVel,
+      smoothedVelY: this._axisY.smoothedVel,
       startDistancePx: this._lastCumulative - this._startCumulative,
       strokeDistancePx: strokeDistance,
     };
+  }
+
+  private _updateAxis(axis: AxisTrack, pos: number, delta: number, sampleDt: number): boolean {
+    const vel = Math.min(Math.max(delta / sampleDt, -800), 800);
+    // 方向反转时立即换向（绕过 EMA 滞后，快速往返抚摸下头部转向不迟钝）
+    if (Math.abs(delta) >= this._jitterPx) {
+      const newDir = delta > 0 ? 1 : -1;
+      if (newDir !== axis.dir && axis.dir !== 0) {
+        axis.smoothedVel = vel;
+      } else {
+        axis.smoothedVel = axis.smoothedVel * 0.7 + vel * 0.3;
+      }
+    } else {
+      axis.smoothedVel = axis.smoothedVel * 0.7 + vel * 0.3;
+    }
+
+    let reversed = false;
+    if (axis.dir === 0) {
+      const travel = pos - axis.anchor;
+      if (Math.abs(travel) >= this._jitterPx) {
+        axis.dir = Math.sign(travel);
+        axis.lastReversalTime = this._gestureElapsed;
+        axis.anchor = pos;
+      }
+    } else {
+      const travel = (pos - axis.anchor) * axis.dir;
+      if (travel > 0) {
+        axis.anchor = pos;
+      } else if (
+        -travel >= this._minReversalDistancePx &&
+        this._gestureElapsed - axis.lastReversalTime >= this._reversalDebounceSeconds
+      ) {
+        const stroke = Math.abs(axis.anchor - axis.origin);
+        if (stroke >= this._minStrokeDistancePx && stroke <= this._maxStrokeDistanceLimitPx) {
+          axis.maxStroke = stroke;
+          axis.reversals++;
+          reversed = true;
+        }
+        axis.origin = axis.anchor;
+        axis.anchor = pos;
+        axis.dir *= -1;
+        axis.smoothedVel = vel;
+        axis.lastReversalTime = this._gestureElapsed;
+      }
+    }
+    return reversed;
   }
 
   private get _oldestIndex(): number {
@@ -287,11 +327,20 @@ export class PettingGestureRecognizer {
     ];
   }
 
+  private _isAxisValid(axis: AxisTrack, ratio: number): boolean {
+    if (ratio < this._axisDominance) return false;
+    const vel = Math.abs(axis.smoothedVel);
+    if (vel < this._minVelocityPxPerSec || vel > this._maxVelocityPxPerSec) return false;
+    if (axis.reversals <= 0) return false;
+    return axis.maxStroke >= this._minStrokeDistancePx && axis.maxStroke <= this._maxStrokeDistanceLimitPx;
+  }
+
   private _evaluateGesture(): [boolean, number] {
     if (this._sampleCount < 2) return [false, 0];
 
     let total = 0;
     let horizontal = 0;
+    let vertical = 0;
     let prev = this._sampleAt(0);
     for (let i = 1; i < this._sampleCount; i++) {
       const cur = this._sampleAt(i);
@@ -299,27 +348,19 @@ export class PettingGestureRecognizer {
       const ddy = cur.pxY - prev.pxY;
       total += Math.sqrt(ddx * ddx + ddy * ddy);
       horizontal += Math.abs(ddx);
+      vertical += Math.abs(ddy);
       prev = cur;
     }
 
     if (total < this._minStartDistancePx) return [false, 0];
-    const horizontalRatio = total > 0 ? horizontal / total : 0;
-    if (horizontalRatio < this._horizontalDominance) return [false, 0];
+    const validX = this._isAxisValid(this._axisX, total > 0 ? horizontal / total : 0);
+    const validY = this._isAxisValid(this._axisY, total > 0 ? vertical / total : 0);
+    if (!validX && !validY) return [false, 0];
 
-    const vel = Math.abs(this._smoothedVelX);
-    if (vel < this._minVelocityPxPerSec || vel > this._maxVelocityPxPerSec) {
-      return [false, 0];
-    }
-
-    // 至少一次有效方向反转，且存在一段划动距离在 18~80px
-    if (this._reversalCount <= 0) return [false, 0];
-    const strokeDistance = this._maxStrokeDistancePx;
-    if (
-      strokeDistance < this._minStrokeDistancePx ||
-      strokeDistance > this._maxStrokeDistanceLimitPx
-    ) {
-      return [false, 0];
-    }
+    const strokeDistance = Math.max(
+      validX ? this._axisX.maxStroke : 0,
+      validY ? this._axisY.maxStroke : 0
+    );
     return [true, strokeDistance];
   }
 }
