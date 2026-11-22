@@ -1435,6 +1435,7 @@ export class PetApp {
    * busy 让位期间允许展示互动表情。
    */
   private _expressForReaction(name: string, line: ResolvedDialogue | null): void {
+    this._chatPerformance?.tick?.();
     if (this._chatPerformance?.applied) return;
     if (!this._model?.startExpression(name)) return;
     this._ai?.cancelExpressionTimer?.();

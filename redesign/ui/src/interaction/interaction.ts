@@ -192,7 +192,14 @@ export class InteractionService {
   onClick(ctx: PointerContext, wasDrag: boolean): boolean {
     if (wasDrag) {
       const wasDragging = this.dragReaction.isDragging;
-      if (this.dragReaction.endDrag()) {
+      const hadShake = this.dragReaction.hadShake || this.procedural.isHoldDizzyActive;
+      const fastDrag = this.dragReaction.endDrag();
+      if (hadShake) {
+        // 本轮已触发过摇晃转晕：松手只做落地回中，不再用 drag.fast/drag.slow 覆盖流泪表情与转晕摇晃。
+        if (wasDragging && this.procedural.isHolding) {
+          this.procedural.releaseHoldAfterShake?.();
+        }
+      } else if (fastDrag) {
         this.react('drag.fast', { fallback: 'eyes_widen' });
         this._onInteraction?.({ kind: 'drag', trigger: 'drag.fast' });
       } else if (wasDragging && this.procedural.isHolding) {
@@ -288,12 +295,13 @@ export class InteractionService {
     }
   }
 
-  /** 拖动中快速往返摇晃：保持拎起姿态，补充晕眩表情与台词。 */
+  /** 拖动中快速往返摇晃：保持拎起姿态，切换流泪表情、触发被转晕摇晃动作与台词。 */
   onDragShake(): void {
     if (!this.dragReaction.isDragging || !this.procedural.isHolding) return;
     const withLine = this._host.canSpeak(true);
     const pick = this._reactions.pick('drag.fast', { withLine });
-    if (pick?.group.expression) this._host.express(pick.group.expression, pick.line ?? null);
+    this._host.express('sad', pick?.line ?? null);
+    this.procedural.triggerHoldDizzy?.();
     if (pick?.line) this._host.speak(pick.line, { urgent: true });
     this._onInteraction?.({ kind: 'drag', trigger: 'drag.shake' });
   }

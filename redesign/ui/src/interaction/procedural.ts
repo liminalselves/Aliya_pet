@@ -460,6 +460,9 @@ export class ProceduralReactionService {
   private _lastHoldVy = 0;
   private _lastHoldBounceMs = 0;
   private _lastTickMs = 0;
+  private static readonly _holdDizzyDurationMs = 1800;
+  private _holdDizzyActive = false;
+  private _holdDizzyStartMs = 0;
 
   constructor(deps: {
     getTarget: () => InteractionTarget | null;
@@ -472,11 +475,16 @@ export class ProceduralReactionService {
   }
 
   get isPlaying(): boolean {
-    return this._phases.length > 0 || this._recovery !== null || this._holding;
+    return this._phases.length > 0 || this._recovery !== null || this._holding || this._holdDizzyActive;
   }
 
   get isHolding(): boolean {
     return this._holding;
+  }
+
+  get isHoldDizzyActive(): boolean {
+    if (!this._holdDizzyActive) return false;
+    return performance.now() - this._holdDizzyStartMs < ProceduralReactionService._holdDizzyDurationMs;
   }
 
   apply(reaction: ProceduralReaction): void {
@@ -704,8 +712,90 @@ export class ProceduralReactionService {
     this._holdSwayYTarget = 0;
     this._lastHoldVy = 0;
     this._lastHoldBounceMs = 0;
+    this._holdDizzyActive = false;
+    this._holdDizzyStartMs = 0;
     this._lastTickMs = performance.now();
     target.triggerPartImpulse?.('hair_bounce', 0.7);
+  }
+
+  /** 拖动中快速往返摇晃触发被转晕的身体与头部摇晃，保持拎起姿态。 */
+  triggerHoldDizzy(): void {
+    if (!this._holding || this._isPettingActive()) return;
+    this._holdDizzyActive = true;
+    this._holdDizzyStartMs = performance.now();
+    this._getTarget()?.triggerPartImpulse?.('hair_bounce', 0.65);
+  }
+
+  /** 摇晃转晕后松手：结束拎起姿态并平滑落地，同时保留进行中的转晕摇晃。 */
+  releaseHoldAfterShake(): void {
+    const target = this._getTarget();
+    if (target == null || !this._holding || this._isPettingActive()) return;
+    this._holding = false;
+    this._start([
+      phase(120, 0.85, 0, -5.0, 0, 0.35, 0.35, 0, 0, false, {
+        bodyY: -4.0, armL01: 1.2, armR01: 1.2, armL02: -1.0, armR02: -1.0,
+      }),
+      phase(260, 1, 0, 0, 0, 0, 0, 0, 0, true),
+    ], true);
+    this._eyeOverrideActive = false;
+    target.triggerPartImpulse?.('hair_bounce', -0.75);
+  }
+
+  private _holdDizzyPose(now: number): {
+    env: number;
+    headX: number; headY: number; headZ: number;
+    bodyX: number; bodyY: number; bodyZ: number;
+    armL01: number; armL02: number; armR01: number; armR02: number;
+    earL: number; earR: number;
+  } {
+    if (!this._holdDizzyActive) {
+      return {
+        env: 0,
+        headX: 0, headY: 0, headZ: 0,
+        bodyX: 0, bodyY: 0, bodyZ: 0,
+        armL01: 0, armL02: 0, armR01: 0, armR02: 0,
+        earL: 0, earR: 0,
+      };
+    }
+    const elapsedMs = now - this._holdDizzyStartMs;
+    if (elapsedMs < 0 || elapsedMs >= ProceduralReactionService._holdDizzyDurationMs) {
+      this._holdDizzyActive = false;
+      return {
+        env: 0,
+        headX: 0, headY: 0, headZ: 0,
+        bodyX: 0, bodyY: 0, bodyZ: 0,
+        armL01: 0, armL02: 0, armR01: 0, armR02: 0,
+        earL: 0, earR: 0,
+      };
+    }
+    const t = elapsedMs / 1000;
+    const inK = Math.min(1, t / 0.12);
+    const inEnv = inK * inK * (3 - 2 * inK);
+    const outK = 1 - Math.min(1, elapsedMs / ProceduralReactionService._holdDizzyDurationMs);
+    const env = inEnv * outK * outK;
+    const phase = 2 * Math.PI * 2.4 * t;
+    const bodySin = Math.sin(phase);
+    const bodyCos = Math.cos(phase);
+    const headSin = Math.sin(phase - 0.55);
+    const headCos = Math.cos(phase - 0.55);
+    const armSin = Math.sin(phase - 0.35);
+    const armCos = Math.cos(phase - 0.35);
+    const earSin = Math.sin(phase - 0.7);
+    return {
+      env,
+      bodyZ: bodySin * 5.2 * env,
+      bodyX: bodyCos * 4.8 * env,
+      bodyY: (-1.8 + Math.sin(phase * 2) * 2.0) * env,
+      headZ: headSin * 9.5 * env,
+      headX: headCos * 10.5 * env,
+      headY: (-3.0 + Math.cos(phase * 2 - 0.4) * 3.2) * env,
+      armL01: armSin * 2.4 * env,
+      armR01: -armSin * 2.4 * env,
+      armL02: armCos * 1.4 * env,
+      armR02: -armCos * 1.4 * env,
+      earL: earSin * 0.25 * env,
+      earR: -earSin * 0.25 * env,
+    };
   }
 
   /** 拖动时头身按惯性反向轻摆；vx 为模型空间水平速度（+ = 模型右），vy 为画面垂直速度（+ = 向下）。 */
@@ -740,6 +830,8 @@ export class ProceduralReactionService {
     this._holdSwayY = this._holdSwayYTarget = 0;
     this._lastHoldVy = 0;
     this._lastHoldBounceMs = 0;
+    this._holdDizzyActive = false;
+    this._holdDizzyStartMs = 0;
     this._phases.length = 0;
     this._recovery = null;
     this._phaseIndex = 0;
@@ -765,36 +857,45 @@ export class ProceduralReactionService {
     }
   }
 
-  private _start(phases: Phase[]): void {
+  private _start(phases: Phase[], keepDizzy = false): void {
     // 恢复期内再次点击，从上一帧实际输出重新交接，不能回退到旧抚摸姿态。
     if (this._recovery) {
       this._recovery.from = this._recovery.current;
       this._recovery.startMs = performance.now();
     }
-    // 拎起摆动并入可见姿态后再交接，松手反应从当前头角、身倾与双臂继续而非跳回。
+    // 拎起摆动（以及未保留时的转晕摇晃）并入可见姿态后再交接，松手反应从当前姿态继续而非跳回。
+    const now = performance.now();
+    const dizzy = keepDizzy
+      ? { env: 0, headX: 0, headY: 0, headZ: 0, bodyX: 0, bodyY: 0, bodyZ: 0, armL01: 0, armL02: 0, armR01: 0, armR02: 0, earL: 0, earR: 0 }
+      : this._holdDizzyPose(now);
     const swayYAbs = Math.abs(this._holdSwayY);
     const earScale = this._holding ? 1 - Math.min(1, Math.hypot(this._holdSway, this._holdSwayY) / 6) * 0.75 : 1;
-    this._headX += this._holdSway * 1.5;
-    this._headY += this._holdSwayY * 2.2;
-    this._headZ += this._holdSway;
-    this._bodyX += this._holdSway * 0.55;
-    this._bodyY += this._holdSwayY * 0.9;
-    this._bodyZ += this._holdSway * 0.35;
-    this._armL01 += this._holdSway * 0.32 + this._holdSwayY * 0.85;
-    this._armL02 += this._holdSwayY * 0.45;
-    this._armR01 += -this._holdSway * 0.32 + this._holdSwayY * 0.85;
-    this._armR02 += this._holdSwayY * 0.45;
-    this._earL = this._earL * earScale + this._holdSway * 0.06 - this._holdSwayY * 0.05;
-    this._earR = this._earR * earScale - this._holdSway * 0.06 - this._holdSwayY * 0.05;
+    this._headX += this._holdSway * 1.5 + dizzy.headX;
+    this._headY += this._holdSwayY * 2.2 + dizzy.headY;
+    this._headZ += this._holdSway + dizzy.headZ;
+    this._bodyX += this._holdSway * 0.55 + dizzy.bodyX;
+    this._bodyY += this._holdSwayY * 0.9 + dizzy.bodyY;
+    this._bodyZ += this._holdSway * 0.35 + dizzy.bodyZ;
+    this._armL01 += this._holdSway * 0.32 + this._holdSwayY * 0.85 + dizzy.armL01;
+    this._armL02 += this._holdSwayY * 0.45 + dizzy.armL02;
+    this._armR01 += -this._holdSway * 0.32 + this._holdSwayY * 0.85 + dizzy.armR01;
+    this._armR02 += this._holdSwayY * 0.45 + dizzy.armR02;
+    this._earL = this._earL * earScale + this._holdSway * 0.06 - this._holdSwayY * 0.05 + dizzy.earL;
+    this._earR = this._earR * earScale - this._holdSway * 0.06 - this._holdSwayY * 0.05 + dizzy.earR;
     this._mouthOpen += swayYAbs * 0.04;
-    this._browY += swayYAbs * 0.04;
+    this._browY = this._browY * (1 - dizzy.env) + swayYAbs * 0.04;
+    this._browAngle *= 1 - dizzy.env;
     this._holdSway = this._holdSwayTarget = 0;
     this._holdSwayY = this._holdSwayYTarget = 0;
     this._lastHoldVy = 0;
     this._lastHoldBounceMs = 0;
+    if (!keepDizzy) {
+      this._holdDizzyActive = false;
+      this._holdDizzyStartMs = 0;
+    }
     this._phases = phases.length > 0 ? [...phases] : [NEUTRAL];
     this._phaseIndex = 0;
-    this._phaseStartMs = performance.now();
+    this._phaseStartMs = now;
     this._prev = {
       durationMs: 0,
       eyeOpen: this._eyeOpen,
@@ -889,36 +990,37 @@ export class ProceduralReactionService {
     }
 
     // 只由本服务写通道：从抚摸的最后一帧平滑混入新反应，而非先清零。
+    const dizzy = this._holdDizzyPose(now);
     const sway = this._holdSway;
     const swayY = this._holdSwayY;
     const swayYAbs = Math.abs(swayY);
     const earScale = this._holding ? 1 - Math.min(1, Math.hypot(sway, swayY) / 6) * 0.75 : 1;
     const armsOut: ArmInteractionValues = {
-      armL01: this._armL01 + sway * 0.32 + swayY * 0.85,
-      armL02: this._armL02 + swayY * 0.45,
-      armR01: this._armR01 - sway * 0.32 + swayY * 0.85,
-      armR02: this._armR02 + swayY * 0.45,
+      armL01: this._armL01 + sway * 0.32 + swayY * 0.85 + dizzy.armL01,
+      armL02: this._armL02 + swayY * 0.45 + dizzy.armL02,
+      armR01: this._armR01 - sway * 0.32 + swayY * 0.85 + dizzy.armR01,
+      armR02: this._armR02 + swayY * 0.45 + dizzy.armR02,
     };
     const microOut: FaceMicroInteractionValues = {
       eyeSmile: this._eyeSmile,
       mouthForm: this._mouthForm,
       mouthOpen: this._mouthOpen + swayYAbs * 0.04,
-      browY: this._browY + swayYAbs * 0.04,
-      browAngle: this._browAngle,
+      browY: this._browY * (1 - dizzy.env) + swayYAbs * 0.04,
+      browAngle: this._browAngle * (1 - dizzy.env),
       browForm: this._browForm,
     };
     let output: InteractionPose = {
-      headX: this._headX + sway * 1.5,
-      headY: this._headY + swayY * 2.2,
-      headZ: this._headZ + sway,
-      bodyX: this._bodyX + sway * 0.55,
-      bodyY: this._bodyY + swayY * 0.9,
-      bodyZ: this._bodyZ + sway * 0.35,
+      headX: this._headX + sway * 1.5 + dizzy.headX,
+      headY: this._headY + swayY * 2.2 + dizzy.headY,
+      headZ: this._headZ + sway + dizzy.headZ,
+      bodyX: this._bodyX + sway * 0.55 + dizzy.bodyX,
+      bodyY: this._bodyY + swayY * 0.9 + dizzy.bodyY,
+      bodyZ: this._bodyZ + sway * 0.35 + dizzy.bodyZ,
       eyeEnabled: this._eyeOverrideActive,
       eyeLeft: this._eyeOpen,
       eyeRight: this._eyeOpen,
-      earL: this._earL * earScale + sway * 0.06 - swayY * 0.05,
-      earR: this._earR * earScale - sway * 0.06 - swayY * 0.05,
+      earL: this._earL * earScale + sway * 0.06 - swayY * 0.05 + dizzy.earL,
+      earR: this._earR * earScale - sway * 0.06 - swayY * 0.05 + dizzy.earR,
       cheek: this._cheek,
       arms: armsOut,
       faceMicro: microOut,
