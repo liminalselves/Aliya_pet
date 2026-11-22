@@ -7,7 +7,12 @@
  *     经互动覆盖通道写头部偏移、眼睑、猫耳、脸红
  */
 
-import { InteractionTarget, type InteractionPose } from './target';
+import {
+  InteractionTarget,
+  type ArmInteractionValues,
+  type FaceMicroInteractionValues,
+  type InteractionPose,
+} from './target';
 
 // ---------- 连续点击检测 ----------
 
@@ -87,6 +92,24 @@ export class ClickSequenceService {
 
 // ---------- 快速拖动与摇晃检测 ----------
 
+interface ShakeAxisTrack {
+  dir: number;
+  travel: number;
+  oppositeTravel: number;
+  reversals: number[];
+}
+
+function createShakeAxisTrack(): ShakeAxisTrack {
+  return { dir: 0, travel: 0, oppositeTravel: 0, reversals: [] };
+}
+
+function resetShakeAxisTrack(track: ShakeAxisTrack): void {
+  track.dir = 0;
+  track.travel = 0;
+  track.oppositeTravel = 0;
+  track.reversals.length = 0;
+}
+
 export class DragReactionService {
   private static readonly _fastDragSpeedThreshold = 160; // CSS px/秒（兼容高 DPI 下实际鼠标/触控位移尺度）
   private static readonly _shakeMinSpeed = 100;
@@ -96,10 +119,8 @@ export class DragReactionService {
 
   private _dragging = false;
   private _maxSpeedPxPerSec = 0;
-  private _shakeDir = 0;
-  private _shakeTravel = 0;
-  private _shakeOppositeTravel = 0;
-  private _shakeReversals: number[] = [];
+  private _shakeX = createShakeAxisTrack();
+  private _shakeY = createShakeAxisTrack();
   private _lastShakeAtMs = -Infinity;
   private _shakeDetected = false;
 
@@ -114,20 +135,16 @@ export class DragReactionService {
   beginDrag(): void {
     this._dragging = true;
     this._maxSpeedPxPerSec = 0;
-    this._shakeDir = 0;
-    this._shakeTravel = 0;
-    this._shakeOppositeTravel = 0;
-    this._shakeReversals.length = 0;
+    resetShakeAxisTrack(this._shakeX);
+    resetShakeAxisTrack(this._shakeY);
     this._shakeDetected = false;
   }
 
   cancel(): void {
     this._dragging = false;
     this._maxSpeedPxPerSec = 0;
-    this._shakeDir = 0;
-    this._shakeTravel = 0;
-    this._shakeOppositeTravel = 0;
-    this._shakeReversals.length = 0;
+    resetShakeAxisTrack(this._shakeX);
+    resetShakeAxisTrack(this._shakeY);
     this._shakeDetected = false;
   }
 
@@ -141,62 +158,66 @@ export class DragReactionService {
     }
   }
 
-  /** 带方向信息的拖动步进（CSS px/s），检测高速与连续快速摇晃。 */
+  /** 带方向信息的拖动步进（CSS px/s），检测高速与水平/垂直连续快速摇晃。 */
   onDragMotion(vxCssPerSec: number, vyCssPerSec: number, dtSeconds: number): { shakeTriggered: boolean } {
     if (!this._dragging) return { shakeTriggered: false };
     if (Number.isFinite(vxCssPerSec) && Number.isFinite(vyCssPerSec)) {
       this.onDragMove(Math.hypot(vxCssPerSec, vyCssPerSec));
     }
-    if (!Number.isFinite(vxCssPerSec) || !Number.isFinite(dtSeconds) || dtSeconds <= 0) {
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return { shakeTriggered: false };
     }
-    const speed = Math.abs(vxCssPerSec);
-    if (speed < DragReactionService._shakeMinSpeed) return { shakeTriggered: false };
-    const dir = Math.sign(vxCssPerSec);
-    const step = Math.abs(vxCssPerSec * Math.min(dtSeconds, 0.1));
-    if (this._shakeDir === 0) {
-      this._shakeDir = dir;
-      this._shakeTravel = step;
-      this._shakeOppositeTravel = 0;
-      return { shakeTriggered: false };
-    }
-    if (dir === this._shakeDir) {
-      this._shakeTravel += step;
-      this._shakeOppositeTravel = 0;
-      return { shakeTriggered: false };
-    }
-    // 反向累积位移达到阈值才计入一次有效摇晃反转，过滤微小抖动
-    this._shakeOppositeTravel += step;
-    if (this._shakeTravel < DragReactionService._shakeMinTravelPx) {
-      this._shakeDir = dir;
-      this._shakeTravel = this._shakeOppositeTravel;
-      this._shakeOppositeTravel = 0;
-      return { shakeTriggered: false };
-    }
-    if (this._shakeOppositeTravel < DragReactionService._shakeMinTravelPx) {
-      return { shakeTriggered: false };
-    }
-    this._shakeDir = dir;
-    this._shakeTravel = this._shakeOppositeTravel;
-    this._shakeOppositeTravel = 0;
+    const clampedDt = Math.min(dtSeconds, 0.1);
     const now = performance.now();
-    this._shakeReversals.push(now);
-    while (
-      this._shakeReversals.length > 0 &&
-      now - this._shakeReversals[0] > DragReactionService._shakeWindowMs
-    ) {
-      this._shakeReversals.shift();
-    }
-    if (
-      this._shakeReversals.length >= 3 &&
-      now - this._lastShakeAtMs >= DragReactionService._shakeCooldownMs
-    ) {
+    const xTrig = Number.isFinite(vxCssPerSec) && this._stepShakeAxis(this._shakeX, vxCssPerSec, clampedDt, now);
+    const yTrig = Number.isFinite(vyCssPerSec) && this._stepShakeAxis(this._shakeY, vyCssPerSec, clampedDt, now);
+    if ((xTrig || yTrig) && now - this._lastShakeAtMs >= DragReactionService._shakeCooldownMs) {
       this._lastShakeAtMs = now;
-      this._shakeReversals.length = 0;
+      this._shakeX.reversals.length = 0;
+      this._shakeY.reversals.length = 0;
       this._shakeDetected = true;
       return { shakeTriggered: true };
     }
     return { shakeTriggered: false };
+  }
+
+  private _stepShakeAxis(track: ShakeAxisTrack, velocity: number, dtSeconds: number, now: number): boolean {
+    if (Math.abs(velocity) < DragReactionService._shakeMinSpeed) return false;
+    const dir = Math.sign(velocity);
+    const step = Math.abs(velocity * dtSeconds);
+    if (track.dir === 0) {
+      track.dir = dir;
+      track.travel = step;
+      track.oppositeTravel = 0;
+      return false;
+    }
+    if (dir === track.dir) {
+      track.travel += step;
+      track.oppositeTravel = 0;
+      return false;
+    }
+    // 反向累积位移达到阈值才计入一次有效摇晃反转，过滤微小抖动
+    track.oppositeTravel += step;
+    if (track.travel < DragReactionService._shakeMinTravelPx) {
+      track.dir = dir;
+      track.travel = track.oppositeTravel;
+      track.oppositeTravel = 0;
+      return false;
+    }
+    if (track.oppositeTravel < DragReactionService._shakeMinTravelPx) {
+      return false;
+    }
+    track.dir = dir;
+    track.travel = track.oppositeTravel;
+    track.oppositeTravel = 0;
+    track.reversals.push(now);
+    while (
+      track.reversals.length > 0 &&
+      now - track.reversals[0] > DragReactionService._shakeWindowMs
+    ) {
+      track.reversals.shift();
+    }
+    return track.reversals.length >= 3;
   }
 
   /** 结束拖动。返回本轮是否达到快速拖动阈值。 */
@@ -311,6 +332,18 @@ interface Phase {
   earR: number;
   cheek: number;
   bodyX: number;
+  bodyY?: number;
+  bodyZ?: number;
+  armL01?: number;
+  armL02?: number;
+  armR01?: number;
+  armR02?: number;
+  eyeSmile?: number;
+  mouthForm?: number;
+  mouthOpen?: number;
+  browY?: number;
+  browAngle?: number;
+  browForm?: number;
   releaseEye?: boolean;
 }
 
@@ -324,7 +357,23 @@ const NEUTRAL: Phase = {
   earR: 0,
   cheek: 0,
   bodyX: 0,
+  bodyY: 0,
+  bodyZ: 0,
+  armL01: 0,
+  armL02: 0,
+  armR01: 0,
+  armR02: 0,
+  eyeSmile: 0,
+  mouthForm: 0,
+  mouthOpen: 0,
+  browY: 0,
+  browAngle: 0,
+  browForm: 0,
 };
+
+type PhaseExtras = Partial<Omit<Phase,
+  'durationMs' | 'eyeOpen' | 'headX' | 'headY' | 'headZ' | 'earL' | 'earR' | 'cheek' | 'bodyX' | 'releaseEye'
+>>;
 
 function phase(
   durationMs: number,
@@ -336,9 +385,33 @@ function phase(
   earR: number,
   cheek = 0,
   bodyX = 0,
-  releaseEye = false
+  releaseEye = false,
+  extras?: PhaseExtras
 ): Phase {
-  return { durationMs, eyeOpen, headX, headY, headZ, earL, earR, cheek, bodyX, releaseEye };
+  return {
+    durationMs,
+    eyeOpen,
+    headX,
+    headY,
+    headZ,
+    earL,
+    earR,
+    cheek,
+    bodyX,
+    bodyY: extras?.bodyY ?? 0,
+    bodyZ: extras?.bodyZ ?? 0,
+    armL01: extras?.armL01 ?? 0,
+    armL02: extras?.armL02 ?? 0,
+    armR01: extras?.armR01 ?? 0,
+    armR02: extras?.armR02 ?? 0,
+    eyeSmile: extras?.eyeSmile ?? 0,
+    mouthForm: extras?.mouthForm ?? 0,
+    mouthOpen: extras?.mouthOpen ?? 0,
+    browY: extras?.browY ?? 0,
+    browAngle: extras?.browAngle ?? 0,
+    browForm: extras?.browForm ?? 0,
+    releaseEye,
+  };
 }
 
 /**
@@ -361,15 +434,31 @@ export class ProceduralReactionService {
   private _headY = 0;
   private _headZ = 0;
   private _bodyX = 0;
+  private _bodyY = 0;
+  private _bodyZ = 0;
   private _earL = 0;
   private _earR = 0;
   private _cheek = 0;
+  private _armL01 = 0;
+  private _armL02 = 0;
+  private _armR01 = 0;
+  private _armR02 = 0;
+  private _eyeSmile = 0;
+  private _mouthForm = 0;
+  private _mouthOpen = 0;
+  private _browY = 0;
+  private _browAngle = 0;
+  private _browForm = 0;
   private _eyeOverrideActive = false;
   private _eyeSide: 'both' | 'left' | 'right' = 'both';
   /** 拖动「拎起」姿态：相位播完后保持末相位，直到下一次 apply/cancel。 */
   private _holding = false;
   private _holdSway = 0;
   private _holdSwayTarget = 0;
+  private _holdSwayY = 0;
+  private _holdSwayYTarget = 0;
+  private _lastHoldVy = 0;
+  private _lastHoldBounceMs = 0;
   private _lastTickMs = 0;
 
   constructor(deps: {
@@ -391,7 +480,8 @@ export class ProceduralReactionService {
   }
 
   apply(reaction: ProceduralReaction): void {
-    if (this._getTarget() == null) return;
+    const target = this._getTarget();
+    if (target == null) return;
     // Finishing 可被点击接管；Pressed/Petting 仍独占互动通道。
     const pose = this._takeOverPetting?.();
     if (this._isPettingActive()) return;
@@ -403,109 +493,194 @@ export class ProceduralReactionService {
     // 镜像已由 HitAreas 还原，这里只映射一次；脸红和单纯转头不抢占眼睑。
     this._eyeSide = reaction.areaId === 'ear_left' ? 'right'
       : reaction.areaId === 'ear_right' ? 'left' : 'both';
+    const side = (reaction.side ?? 1) >= 0 ? 1 : -1;
     switch (reaction.type) {
       case 'acknowledge': {
         const s = Math.min(1, Math.max(0, reaction.strength));
+        const isLeftTouch = reaction.areaId === 'hand' || reaction.areaId === 'shoulder_left';
+        const isRightTouch = reaction.areaId === 'tablet' || reaction.areaId === 'shoulder_right';
+        const armPeak: PhaseExtras = isLeftTouch
+          ? { bodyY: -2.2 * s, bodyZ: -0.6 * s, armR01: -1.8 * s, armR02: -2.4 * s, armL02: -0.8 * s, mouthForm: 0.2 * s }
+          : isRightTouch
+            ? { bodyY: -2.2 * s, bodyZ: 0.6 * s, armL01: -1.8 * s, armL02: -2.4 * s, armR02: -0.8 * s, mouthForm: 0.2 * s }
+            : { bodyY: -2.2 * s, bodyZ: 0.6 * s, armL02: -1.0 * s, armR02: -1.0 * s, mouthForm: 0.2 * s };
         this._start([
-          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0, 0, 0.8 * s),
-          phase(140, 1, 1.5 * s, -3 * s, 2 * s, 0, 0, 0, 0.8 * s),
+          phase(140, 1, 3.5 * s, -3 * s, 2 * s, 0.25 * s, 0.25 * s, 0, 1.8 * s, false, armPeak),
+          phase(140, 1, 3.5 * s, -3 * s, 2 * s, -0.15 * s, -0.15 * s, 0, 1.8 * s, false, armPeak),
           phase(280, 1, 0, 0, 0, 0, 0, 0, 0),
         ]);
         break;
       }
       case 'tilt':
         this._start([
-          phase(180, 0.85, 2.5, 0, -3, 0, 0, 0, -1.0),
-          phase(320, 0.85, 2.5, 0, -3, 0, 0, 0, -1.0),
+          phase(180, 0.85, 8.0, 4.5, -3, -0.35, 0.25, 0, -3.0, false, {
+            bodyY: 1.5, bodyZ: -1.6, armL01: -0.8, armR01: 0.8,
+            browY: 0.25, browAngle: -0.15, mouthForm: 0.15,
+          }),
+          phase(320, 0.85, 8.0, 4.5, -3, -0.3, 0.2, 0, -3.0, false, {
+            bodyY: 1.5, bodyZ: -1.6, armL01: -0.8, armR01: 0.8,
+            browY: 0.25, browAngle: -0.15, mouthForm: 0.15,
+          }),
           phase(320, 1.0, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       case 'ear_blink': {
+        // 保持 EarChannel 为 0（兼容既有回归契约），猫耳抖动通过 PartImpulseChannel 弹簧触发。
         const left = reaction.areaId === 'ear_left';
+        const bodyZ = left ? -1.0 : 1.0;
+        const headX = left ? 5.0 : -5.0;
+        const bodyX = left ? 2.0 : -2.0;
         this._start([
-          phase(120, 0, 0, 0, left ? -1.5 : 1.5, 0, 0),
-          phase(60, 0, 0, 0, left ? -1.5 : 1.5, 0, 0),
-          phase(240, 1, 0, 0, 0, 0, 0),
+          phase(120, 0, headX, -2.5, left ? -1.5 : 1.5, 0, 0, 0, bodyX, false, {
+            bodyY: -1.5, bodyZ, eyeSmile: 0.35, browY: 0.2, mouthForm: 0.15,
+            armL02: -1.2, armR02: -1.2,
+          }),
+          phase(60, 0, headX * 0.8, -1.8, left ? -1.5 : 1.5, 0, 0, 0, bodyX * 0.8, false, {
+            bodyY: -1.0, bodyZ: bodyZ * 0.7, eyeSmile: 0.25, browY: 0.15, mouthForm: 0.15,
+            armL02: -0.8, armR02: -0.8,
+          }),
+          phase(240, 1, 0, 0, 0, 0, 0, 0, 0),
         ]);
+        target.triggerPartImpulse?.(left ? 'ear_left' : 'ear_right', 1.0);
+        target.triggerPartImpulse?.(left ? 'ear_right' : 'ear_left', 0.3);
         break;
       }
       case 'eyes_widen':
         this._start([
-          phase(180, 1.3, 0, 0, 0, 0, 0),
-          phase(260, 1.3, 0, 0, 0, 0, 0),
+          phase(180, 1.3, 0, 8.0, 0, -0.55, -0.55, 0, 0, false, {
+            bodyY: 4.5, armL01: 2.2, armR01: 2.2, armL02: -1.5, armR02: -1.5,
+            browY: 0.55, browAngle: -0.25, mouthOpen: 0.3,
+          }),
+          phase(260, 1.3, 0, 6.5, 0, -0.4, -0.4, 0, 0, false, {
+            bodyY: 3.5, armL01: 1.8, armR01: 1.8, armL02: -1.2, armR02: -1.2,
+            browY: 0.45, browAngle: -0.2, mouthOpen: 0.22,
+          }),
           phase(300, 1.0, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
+        target.triggerPartImpulse?.('hair_bounce', 0.55);
         break;
-      case 'blush':
+      case 'blush': {
+        const s = Math.min(1, Math.max(0, reaction.strength));
+        const shyPose: PhaseExtras = {
+          bodyY: -0.6 * s,
+          armL01: -1.4 * s,
+          armR01: -1.4 * s,
+          armL02: -2.4 * s,
+          armR02: -2.4 * s,
+          mouthForm: 0.25 * s,
+          browForm: 0.25 * s,
+        };
         this._start([
-          phase(300, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
-          phase(900, 1.0, 0, 0, 0, 0, 0, 0.85 * Math.min(1, Math.max(0, reaction.strength))),
+          phase(300, 1.0, 0, 0, 0, 0.35 * s, 0.35 * s, 0.85 * s, 0, false, shyPose),
+          phase(900, 1.0, 0, 0, 0, 0.35 * s, 0.35 * s, 0.85 * s, 0, false, shyPose),
           phase(700, 1.0, 0, 0, 0, 0, 0, 0.0),
         ]);
         break;
+      }
       case 'nuzzle': {
-        // 闭眼把头蹭向触点一侧，带一点红晕。
+        // 闭眼把头蹭向触点一侧，带一点红晕与收臂猫耳反应。
         const s = Math.min(1, Math.max(0, reaction.strength));
-        const side = (reaction.side ?? 1) >= 0 ? 1 : -1;
         const z = side * 5 * s;
         this._start([
-          phase(240, 0, z * 0.3, -1.5 * s, z, 0, 0, 0.4 * s, 1.5 * s * side),
-          phase(520, 0, z * 0.3, -1.5 * s, z * 1.15, 0, 0, 0.45 * s, 1.5 * s * side),
+          phase(240, 0, side * 9.0 * s, -7.5 * s, z, 0.55 * s, 0.55 * s, 0.4 * s, 3.5 * s * side, false, {
+            bodyY: -3.2 * s, bodyZ: 1.8 * s * side,
+            armL01: -1.8 * s, armR01: -1.8 * s, armL02: -3.0 * s, armR02: -3.0 * s,
+            eyeSmile: 0.85 * s, mouthForm: 0.4 * s, browForm: 0.25 * s,
+          }),
+          phase(520, 0, side * 10.0 * s, -8.5 * s, z * 1.15, 0.6 * s, 0.6 * s, 0.45 * s, 3.5 * s * side, false, {
+            bodyY: -3.6 * s, bodyZ: 2.0 * s * side,
+            armL01: -1.8 * s, armR01: -1.8 * s, armL02: -3.2 * s, armR02: -3.2 * s,
+            eyeSmile: 0.9 * s, mouthForm: 0.45 * s, browForm: 0.25 * s,
+          }),
           phase(380, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
       case 'flinch': {
-        // 被戳脸：缩一下眯眼，再红着脸回来。
+        // 被戳脸：缩一下眯眼收臂折耳，再红着脸回来。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(90, 0.35, 0, 3 * s, -1.5 * s, 0, 0, 0.5 * s, -1.4 * s),
-          phase(220, 0.4, 0, 2.5 * s, -1.5 * s, 0, 0, 0.6 * s, -1.2 * s),
+          phase(110, 0.35, -6.0 * s * side, 7.5 * s, -1.5 * s, 0.75 * s, 0.75 * s, 0.5 * s, -3.2 * s * side, false, {
+            bodyY: -4.5 * s, bodyZ: -1.2 * s * side,
+            armL01: -2.6 * s, armR01: -2.6 * s, armL02: -3.4 * s, armR02: -3.4 * s,
+            mouthOpen: 0.25 * s, mouthForm: -0.25 * s, browY: 0.35 * s, browForm: 0.35 * s,
+          }),
+          phase(220, 0.4, -5.0 * s * side, 6.0 * s, -1.5 * s, 0.65 * s, 0.65 * s, 0.6 * s, -2.6 * s * side, false, {
+            bodyY: -3.8 * s, bodyZ: -1.0 * s * side,
+            armL01: -2.2 * s, armR01: -2.2 * s, armL02: -3.0 * s, armR02: -3.0 * s,
+            mouthOpen: 0.15 * s, mouthForm: -0.2 * s, browY: 0.25 * s, browForm: 0.3 * s,
+          }),
           phase(450, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
+        target.triggerPartImpulse?.('hair_bounce', 0.55);
         break;
       }
       case 'tie_tug': {
-        // 领带被拽：头被带着往下点，再抬回来。
+        // 领带被拽：头被带着往下点，身体前倾、护住胸前，再抬回来。
         const s = Math.min(1, Math.max(0, reaction.strength));
+        const tugPose: PhaseExtras = {
+          bodyY: -5.5 * s, bodyZ: 0.8 * s,
+          armR01: -2.0 * s, armR02: -3.8 * s, armL01: -1.0 * s, armL02: -2.0 * s,
+          browY: 0.3 * s, browAngle: 0.25 * s, mouthOpen: 0.18 * s, mouthForm: -0.25 * s,
+        };
         this._start([
-          phase(150, 1, 0, -5 * s, 2 * s, 0, 0, 0, 0.8 * s),
-          phase(260, 1, 0, -5 * s, 2 * s, 0, 0, 0, 0.8 * s),
-          phase(200, 1, 0, -1 * s, 0.5 * s, 0, 0),
+          phase(150, 1, 0, -11.0 * s, 2 * s, -0.3 * s, -0.3 * s, 0, 2.2 * s, false, tugPose),
+          phase(260, 1, 0, -11.0 * s, 2 * s, -0.25 * s, -0.25 * s, 0, 2.2 * s, false, tugPose),
+          phase(200, 1, 0, -2.5 * s, 0.5 * s, 0, 0, 0, 0.6 * s, false, { bodyY: -1.2 * s }),
           phase(300, 1, 0, 0, 0, 0, 0),
         ]);
+        target.triggerPartImpulse?.('tie', 0.95 * side);
         break;
       }
       case 'leg_pout': {
-        // 碰到腿：扭头半眯眼，脸微红。
+        // 碰到腿：扭头半眯眼，抱臂折耳，脸微红。
         const s = Math.min(1, Math.max(0, reaction.strength));
+        const poutPose: PhaseExtras = {
+          bodyY: -2.5 * s, bodyZ: -1.6 * s,
+          armL01: -2.8 * s, armR01: -2.2 * s, armL02: -3.8 * s, armR02: -3.0 * s,
+          browAngle: 0.35 * s, browY: -0.2 * s, mouthForm: -0.35 * s,
+        };
         this._start([
-          phase(200, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s, -1.5 * s),
-          phase(600, 0.75, -4 * s, 1.5 * s, -2 * s, 0, 0, 0.35 * s, -1.5 * s),
+          phase(200, 0.75, -12.0 * s, 4.5 * s, -2 * s, 0.55 * s, 0.55 * s, 0.35 * s, -4.2 * s, false, poutPose),
+          phase(600, 0.75, -12.0 * s, 4.5 * s, -2 * s, 0.55 * s, 0.55 * s, 0.35 * s, -4.2 * s, false, poutPose),
           phase(400, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
       case 'look_back': {
-        // 朝触点一侧回头看（缺省画面左侧，AngleX 负），眨一下再转回。
+        // 朝触点一侧回头看（缺省画面左侧，AngleX 负），异侧立耳、眨一下再转回。
         const s = Math.min(1, Math.max(0, reaction.strength));
         const d = (reaction.side ?? -1) >= 0 ? -1 : 1;
+        const earL = d > 0 ? -0.45 * s : 0.2 * s;
+        const earR = d > 0 ? 0.2 * s : -0.45 * s;
+        const backPose: PhaseExtras = {
+          bodyY: 1.8 * s, bodyZ: -1.2 * s * d,
+          armL01: 1.2 * s * d, armR01: -1.2 * s * d,
+          browY: 0.25 * s, mouthOpen: 0.1 * s,
+        };
         this._start([
-          phase(260, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0, 0, -2.2 * s * d),
-          phase(420, 1, -8 * s * d, 1.5 * s, 2.5 * s * d, 0, 0, 0, -2.2 * s * d),
-          phase(90, 0, -7 * s * d, 1 * s, 2 * s * d, 0, 0, 0, -1.8 * s * d),
-          phase(110, 1, -6 * s * d, 1 * s, 2 * s * d, 0, 0, 0, -1.4 * s * d, true),
+          phase(260, 1, -16.0 * s * d, 4.0 * s, 2.5 * s * d, earL, earR, 0, -5.5 * s * d, false, backPose),
+          phase(420, 1, -16.0 * s * d, 4.0 * s, 2.5 * s * d, earL, earR, 0, -5.5 * s * d, false, backPose),
+          phase(90, 0, -14.0 * s * d, 3.0 * s, 2 * s * d, earL * 0.7, earR * 0.7, 0, -4.5 * s * d, false, { ...backPose, bodyY: 1.2 * s }),
+          phase(110, 1, -12.0 * s * d, 2.5 * s, 2 * s * d, earL * 0.5, earR * 0.5, 0, -3.5 * s * d, true, { ...backPose, bodyY: 0.8 * s }),
           phase(380, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
         break;
       }
       case 'landing': {
-        // 慢慢放下：落地轻轻一顿。
+        // 慢慢放下：落地轻轻蹲顿回弹。
         const s = Math.min(1, Math.max(0, reaction.strength));
         this._start([
-          phase(120, 0.75, 0, -3 * s, 0, 0, 0),
-          phase(280, 1, 0, 0, 0, 0, 0, 0, 0, true),
+          phase(120, 0.75, 0, -8.0 * s, 0, 0.45 * s, 0.45 * s, 0, 0, false, {
+            bodyY: -6.0 * s, armL01: 1.8 * s, armR01: 1.8 * s, armL02: -1.5 * s, armR02: -1.5 * s,
+            mouthOpen: 0.12 * s,
+          }),
+          phase(110, 1, 0, 2.5 * s, 0, -0.2 * s, -0.2 * s, 0, 0, true, {
+            bodyY: 2.0 * s, armL01: 0.5 * s, armR01: 0.5 * s,
+          }),
+          phase(220, 1, 0, 0, 0, 0, 0, 0, 0, true),
         ]);
+        target.triggerPartImpulse?.('hair_bounce', -0.9);
         break;
       }
     }
@@ -514,20 +689,43 @@ export class ProceduralReactionService {
       && reaction.type !== 'tie_tug';
   }
 
-  /** 拖动期间保持「被拎起」姿态：睁大眼、微抬头；松手由下一个反应平滑接管。 */
+  /** 拖动期间保持「被拎起」姿态：睁大眼、微抬头、伸展身体与双臂、立耳；松手由下一个反应平滑接管。 */
   hold(): void {
-    if (this._getTarget() == null || this._isPettingActive()) return;
-    this._start([phase(220, 1.15, 0, 3, 0, 0, 0)]);
+    const target = this._getTarget();
+    if (target == null || this._isPettingActive()) return;
+    this._start([phase(220, 1.15, 0, 7.5, 0, -0.22, -0.22, 0, 0, false, {
+      bodyY: 5.0, armL01: 2.8, armR01: 2.8, armL02: -2.2, armR02: -2.2,
+      browY: 0.45, browAngle: -0.2, mouthOpen: 0.22,
+    })]);
     this._holding = true;
     this._holdSway = 0;
     this._holdSwayTarget = 0;
+    this._holdSwayY = 0;
+    this._holdSwayYTarget = 0;
+    this._lastHoldVy = 0;
+    this._lastHoldBounceMs = 0;
     this._lastTickMs = performance.now();
+    target.triggerPartImpulse?.('hair_bounce', 0.7);
   }
 
-  /** 拖动时头部按惯性反向轻摆；vx 为模型空间水平速度（px/s，+ = 模型右）。 */
-  setHoldSway(vxPxPerSec: number): void {
-    if (!this._holding || !Number.isFinite(vxPxPerSec)) return;
-    this._holdSwayTarget = Math.max(-6, Math.min(6, -vxPxPerSec / 600 * 5));
+  /** 拖动时头身按惯性反向轻摆；vx 为模型空间水平速度（+ = 模型右），vy 为画面垂直速度（+ = 向下）。 */
+  setHoldSway(vxPxPerSec: number, vyPxPerSec = 0): void {
+    if (!this._holding) return;
+    if (Number.isFinite(vxPxPerSec)) {
+      this._holdSwayTarget = Math.max(-6, Math.min(6, -vxPxPerSec / 600 * 5));
+    }
+    if (Number.isFinite(vyPxPerSec)) {
+      this._holdSwayYTarget = Math.max(-6, Math.min(6, vyPxPerSec / 450 * 6));
+      const now = performance.now();
+      const dv = vyPxPerSec - this._lastHoldVy;
+      const reversed = this._lastHoldVy !== 0 && Math.sign(vyPxPerSec) !== Math.sign(this._lastHoldVy);
+      if ((reversed || Math.abs(dv) > 220) && Math.abs(vyPxPerSec) > 140 && now - this._lastHoldBounceMs >= 130) {
+        this._lastHoldBounceMs = now;
+        const amp = Math.max(-0.85, Math.min(0.85, vyPxPerSec / 800));
+        this._getTarget()?.triggerPartImpulse?.('hair_bounce', amp);
+      }
+      this._lastHoldVy = vyPxPerSec;
+    }
   }
 
   cancelAll(immediate = false): void {
@@ -539,20 +737,28 @@ export class ProceduralReactionService {
     }
     this._holding = false;
     this._holdSway = this._holdSwayTarget = 0;
+    this._holdSwayY = this._holdSwayYTarget = 0;
+    this._lastHoldVy = 0;
+    this._lastHoldBounceMs = 0;
     this._phases.length = 0;
     this._recovery = null;
     this._phaseIndex = 0;
     this._eyeOverrideActive = false;
     this._eyeOpen = 1;
-    this._headX = this._headY = this._headZ = this._bodyX = this._earL = this._earR = 0;
-    this._cheek = 0;
+    this._headX = this._headY = this._headZ = this._bodyX = this._bodyY = this._bodyZ = 0;
+    this._earL = this._earR = this._cheek = 0;
+    this._armL01 = this._armL02 = this._armR01 = this._armR02 = 0;
+    this._eyeSmile = this._mouthForm = this._mouthOpen = this._browY = this._browAngle = this._browForm = 0;
     const target = this._getTarget();
     if (target) {
       try {
         target.setInteractionOffsets(0, 0, 0, 0);
+        target.setBodyTilt?.(0, 0);
         target.setEyeOverride(false, 0, 0);
         target.setEarInteraction(false, 0, 0);
         target.setFaceCheek(false, 0);
+        target.setArmInteraction?.(false);
+        target.setFaceMicroInteraction?.(false);
       } catch {
         // 忽略
       }
@@ -565,15 +771,53 @@ export class ProceduralReactionService {
       this._recovery.from = this._recovery.current;
       this._recovery.startMs = performance.now();
     }
-    // 拎起摆动并入可见姿态后再交接，松手反应从当前头角继续而非跳回。
+    // 拎起摆动并入可见姿态后再交接，松手反应从当前头角、身倾与双臂继续而非跳回。
+    const swayYAbs = Math.abs(this._holdSwayY);
+    const earScale = this._holding ? 1 - Math.min(1, Math.hypot(this._holdSway, this._holdSwayY) / 6) * 0.75 : 1;
+    this._headX += this._holdSway * 1.5;
+    this._headY += this._holdSwayY * 2.2;
     this._headZ += this._holdSway;
+    this._bodyX += this._holdSway * 0.55;
+    this._bodyY += this._holdSwayY * 0.9;
+    this._bodyZ += this._holdSway * 0.35;
+    this._armL01 += this._holdSway * 0.32 + this._holdSwayY * 0.85;
+    this._armL02 += this._holdSwayY * 0.45;
+    this._armR01 += -this._holdSway * 0.32 + this._holdSwayY * 0.85;
+    this._armR02 += this._holdSwayY * 0.45;
+    this._earL = this._earL * earScale + this._holdSway * 0.06 - this._holdSwayY * 0.05;
+    this._earR = this._earR * earScale - this._holdSway * 0.06 - this._holdSwayY * 0.05;
+    this._mouthOpen += swayYAbs * 0.04;
+    this._browY += swayYAbs * 0.04;
     this._holdSway = this._holdSwayTarget = 0;
+    this._holdSwayY = this._holdSwayYTarget = 0;
+    this._lastHoldVy = 0;
+    this._lastHoldBounceMs = 0;
     this._phases = phases.length > 0 ? [...phases] : [NEUTRAL];
     this._phaseIndex = 0;
     this._phaseStartMs = performance.now();
-    this._prev = { durationMs: 0, eyeOpen: this._eyeOpen, headX: this._headX,
-      headY: this._headY, headZ: this._headZ, earL: this._earL, earR: this._earR,
-      cheek: this._cheek, bodyX: this._bodyX };
+    this._prev = {
+      durationMs: 0,
+      eyeOpen: this._eyeOpen,
+      headX: this._headX,
+      headY: this._headY,
+      headZ: this._headZ,
+      earL: this._earL,
+      earR: this._earR,
+      cheek: this._cheek,
+      bodyX: this._bodyX,
+      bodyY: this._bodyY,
+      bodyZ: this._bodyZ,
+      armL01: this._armL01,
+      armL02: this._armL02,
+      armR01: this._armR01,
+      armR02: this._armR02,
+      eyeSmile: this._eyeSmile,
+      mouthForm: this._mouthForm,
+      mouthOpen: this._mouthOpen,
+      browY: this._browY,
+      browAngle: this._browAngle,
+      browForm: this._browForm,
+    };
     this._eyeOverrideActive = true;
   }
 
@@ -589,16 +833,22 @@ export class ProceduralReactionService {
       // 惯性摆动：时间常数 0.12s 逼近目标，目标自身也缓慢回中（停手后头回正）。
       const dt = Math.max(0, Math.min(0.1, (now - this._lastTickMs) / 1000));
       this._lastTickMs = now;
-      this._holdSway += (this._holdSwayTarget - this._holdSway) * (1 - Math.exp(-dt / 0.12));
-      this._holdSwayTarget *= Math.exp(-dt / 0.25);
+      const swayK = 1 - Math.exp(-dt / 0.12);
+      const decay = Math.exp(-dt / 0.25);
+      this._holdSway += (this._holdSwayTarget - this._holdSway) * swayK;
+      this._holdSwayTarget *= decay;
+      this._holdSwayY += (this._holdSwayYTarget - this._holdSwayY) * swayK;
+      this._holdSwayYTarget *= decay;
     }
     if (this._holding && this._phaseIndex >= this._phases.length) {
       // 保持末相位，不回中性。
     } else if (this._phaseIndex >= this._phases.length) {
       // 已结束：回到中性
       this._eyeOpen = 1;
-      this._headX = this._headY = this._headZ = this._bodyX = this._earL = this._earR = 0;
-      this._cheek = 0;
+      this._headX = this._headY = this._headZ = this._bodyX = this._bodyY = this._bodyZ = 0;
+      this._earL = this._earR = this._cheek = 0;
+      this._armL01 = this._armL02 = this._armR01 = this._armR02 = 0;
+      this._eyeSmile = this._mouthForm = this._mouthOpen = this._browY = this._browAngle = this._browForm = 0;
       this._eyeOverrideActive = false;
       this._phases.length = 0;
     } else {
@@ -609,14 +859,27 @@ export class ProceduralReactionService {
         1
       );
       const k = progress * progress * (3 - 2 * progress);
+      const lerp = (a: number | undefined, b: number | undefined) => (a ?? 0) + ((b ?? 0) - (a ?? 0)) * k;
       this._eyeOpen = this._prev.eyeOpen + (p.eyeOpen - this._prev.eyeOpen) * k;
       this._headX = this._prev.headX + (p.headX - this._prev.headX) * k;
       this._headY = this._prev.headY + (p.headY - this._prev.headY) * k;
       this._headZ = this._prev.headZ + (p.headZ - this._prev.headZ) * k;
       this._bodyX = this._prev.bodyX + (p.bodyX - this._prev.bodyX) * k;
+      this._bodyY = lerp(this._prev.bodyY, p.bodyY);
+      this._bodyZ = lerp(this._prev.bodyZ, p.bodyZ);
       this._earL = this._prev.earL + (p.earL - this._prev.earL) * k;
       this._earR = this._prev.earR + (p.earR - this._prev.earR) * k;
       this._cheek = this._prev.cheek + (p.cheek - this._prev.cheek) * k;
+      this._armL01 = lerp(this._prev.armL01, p.armL01);
+      this._armL02 = lerp(this._prev.armL02, p.armL02);
+      this._armR01 = lerp(this._prev.armR01, p.armR01);
+      this._armR02 = lerp(this._prev.armR02, p.armR02);
+      this._eyeSmile = lerp(this._prev.eyeSmile, p.eyeSmile);
+      this._mouthForm = lerp(this._prev.mouthForm, p.mouthForm);
+      this._mouthOpen = lerp(this._prev.mouthOpen, p.mouthOpen);
+      this._browY = lerp(this._prev.browY, p.browY);
+      this._browAngle = lerp(this._prev.browAngle, p.browAngle);
+      this._browForm = lerp(this._prev.browForm, p.browForm);
 
       if (k >= 1.0) {
         this._prev = p;
@@ -626,21 +889,53 @@ export class ProceduralReactionService {
     }
 
     // 只由本服务写通道：从抚摸的最后一帧平滑混入新反应，而非先清零。
+    const sway = this._holdSway;
+    const swayY = this._holdSwayY;
+    const swayYAbs = Math.abs(swayY);
+    const earScale = this._holding ? 1 - Math.min(1, Math.hypot(sway, swayY) / 6) * 0.75 : 1;
+    const armsOut: ArmInteractionValues = {
+      armL01: this._armL01 + sway * 0.32 + swayY * 0.85,
+      armL02: this._armL02 + swayY * 0.45,
+      armR01: this._armR01 - sway * 0.32 + swayY * 0.85,
+      armR02: this._armR02 + swayY * 0.45,
+    };
+    const microOut: FaceMicroInteractionValues = {
+      eyeSmile: this._eyeSmile,
+      mouthForm: this._mouthForm,
+      mouthOpen: this._mouthOpen + swayYAbs * 0.04,
+      browY: this._browY + swayYAbs * 0.04,
+      browAngle: this._browAngle,
+      browForm: this._browForm,
+    };
     let output: InteractionPose = {
-      headX: this._headX, headY: this._headY, headZ: this._headZ + this._holdSway, bodyX: this._bodyX,
+      headX: this._headX + sway * 1.5,
+      headY: this._headY + swayY * 2.2,
+      headZ: this._headZ + sway,
+      bodyX: this._bodyX + sway * 0.55,
+      bodyY: this._bodyY + swayY * 0.9,
+      bodyZ: this._bodyZ + sway * 0.35,
       eyeEnabled: this._eyeOverrideActive,
-      eyeLeft: this._eyeOpen, eyeRight: this._eyeOpen,
-      earL: this._earL, earR: this._earR, cheek: this._cheek,
+      eyeLeft: this._eyeOpen,
+      eyeRight: this._eyeOpen,
+      earL: this._earL * earScale + sway * 0.06 - swayY * 0.05,
+      earR: this._earR * earScale - sway * 0.06 - swayY * 0.05,
+      cheek: this._cheek,
+      arms: armsOut,
+      faceMicro: microOut,
     };
     let side = this._eyeSide;
     if (this._recovery) {
       const { from, startMs } = this._recovery;
-      const rt = Math.min(Math.max((now - startMs) / 240, 0), 1);
+      const rt = Math.min(Math.max((now - startMs) / 360, 0), 1);
       const rk = rt * rt * (3 - 2 * rt);
       const blend = (a: number, b: number) => a + (b - a) * rk;
       output = {
-        headX: blend(from.headX, output.headX), headY: blend(from.headY, output.headY),
-        headZ: blend(from.headZ, output.headZ), bodyX: blend(from.bodyX, output.bodyX),
+        headX: blend(from.headX, output.headX),
+        headY: blend(from.headY, output.headY),
+        headZ: blend(from.headZ, output.headZ),
+        bodyX: blend(from.bodyX, output.bodyX),
+        bodyY: blend(from.bodyY ?? 0, output.bodyY ?? 0),
+        bodyZ: blend(from.bodyZ ?? 0, output.bodyZ ?? 0),
         eyeEnabled: output.eyeEnabled || (from.eyeEnabled && rt < 1),
         eyeLeft: blend(from.eyeEnabled ? from.eyeLeft : 1,
           output.eyeEnabled && side !== 'right' ? this._eyeOpen : 1),
@@ -649,6 +944,20 @@ export class ProceduralReactionService {
         earL: blend(from.earL ?? 0, output.earL ?? 0),
         earR: blend(from.earR ?? 0, output.earR ?? 0),
         cheek: blend(from.cheek ?? 0, output.cheek ?? 0),
+        arms: {
+          armL01: blend(from.arms?.armL01 ?? 0, armsOut.armL01),
+          armL02: blend(from.arms?.armL02 ?? 0, armsOut.armL02),
+          armR01: blend(from.arms?.armR01 ?? 0, armsOut.armR01),
+          armR02: blend(from.arms?.armR02 ?? 0, armsOut.armR02),
+        },
+        faceMicro: {
+          eyeSmile: blend(from.faceMicro?.eyeSmile ?? 0, microOut.eyeSmile ?? 0),
+          mouthForm: blend(from.faceMicro?.mouthForm ?? 0, microOut.mouthForm ?? 0),
+          mouthOpen: blend(from.faceMicro?.mouthOpen ?? 0, microOut.mouthOpen ?? 0),
+          browY: blend(from.faceMicro?.browY ?? 0, microOut.browY ?? 0),
+          browAngle: blend(from.faceMicro?.browAngle ?? 0, microOut.browAngle ?? 0),
+          browForm: blend(from.faceMicro?.browForm ?? 0, microOut.browForm ?? 0),
+        },
       };
       // 另一只眼只平滑睁开，不跟随耳朵点击再次闭眼。
       if (from.eyeEnabled && rt < 1) side = 'both';
@@ -656,19 +965,33 @@ export class ProceduralReactionService {
       if (rt >= 1) this._recovery = null;
     }
     try {
-      target.setInteractionOffsets(output.headX, output.headY, output.headZ, output.bodyX);
+      target.setInteractionOffsets(
+        output.headX,
+        output.headY,
+        output.headZ,
+        output.bodyX
+      );
+      target.setBodyTilt?.(output.bodyY ?? 0, output.bodyZ ?? 0);
       if (output.eyeEnabled) {
         target.setEyeOverride(true, output.eyeLeft, output.eyeRight, side);
       } else {
         target.setEyeOverride(false, 0, 0);
       }
-      target.setEarInteraction(
-        this._earL !== 0 || this._earR !== 0,
-        this._earL,
-        this._earR
-      );
+      const earL = output.earL ?? this._earL;
+      const earR = output.earR ?? this._earR;
+      target.setEarInteraction(earL !== 0 || earR !== 0, earL, earR);
       const cheek = output.cheek ?? this._cheek;
       target.setFaceCheek(cheek !== 0, cheek);
+
+      const arms = output.arms ?? armsOut;
+      const armActive = arms.armL01 !== 0 || arms.armL02 !== 0 || arms.armR01 !== 0 || arms.armR02 !== 0;
+      target.setArmInteraction?.(armActive, arms);
+
+      const micro = output.faceMicro ?? microOut;
+      const microActive = (micro.eyeSmile ?? 0) !== 0 || (micro.mouthForm ?? 0) !== 0 ||
+        (micro.mouthOpen ?? 0) !== 0 || (micro.browY ?? 0) !== 0 ||
+        (micro.browAngle ?? 0) !== 0 || (micro.browForm ?? 0) !== 0;
+      target.setFaceMicroInteraction?.(microActive, micro);
     } catch {
       // 写入失败忽略
     }

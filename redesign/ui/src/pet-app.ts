@@ -196,6 +196,9 @@ export class PetApp {
   private readonly _lift: LiftPose | undefined = new LiftPose();
   /** 悬挂支点（模型单位）：抓取点；原生拖动没有坐标时取上半身。 */
   private _liftPivot: { x: number; y: number } | null = null;
+  private _dragWindX = 0;
+  private _dragWindY = 0;
+  private _dragWindActive = false;
   private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
   private _glContextLost = false;
@@ -2031,8 +2034,8 @@ export class PetApp {
             this._dragVelY += (dy / moveDt - this._dragVelY) * alpha;
             const shake = this._interaction?.dragReaction.onDragMotion?.(this._dragVelX, this._dragVelY, moveDt);
             if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
-            this._interaction?.updateHoldVelocity(this._dragVelX);
-            this._lift?.setVelocity(this._dragVelX);
+            this._interaction?.updateHoldVelocity(this._dragVelX, this._dragVelY);
+            this._lift?.setVelocity(this._dragVelX, this._dragVelY);
           }
           if (!this._wrapWindow) {
             // 贴合模式：拖动由壳侧原生接管（OnTouchListener 直移窗口）
@@ -2416,10 +2419,11 @@ export class PetApp {
   public onNativeDragMove(vxCss: number, vyCss: number, dtSec = 0.033): void {
     if (!this._nativeDragging || !Number.isFinite(vxCss)) return;
     this._coordination.activity();
-    const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, Number.isFinite(vyCss) ? vyCss : 0, dtSec);
+    const vy = Number.isFinite(vyCss) ? vyCss : 0;
+    const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, vy, dtSec);
     if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
-    this._interaction?.updateHoldVelocity(vxCss);
-    this._lift?.setVelocity(vxCss);
+    this._interaction?.updateHoldVelocity(vxCss, vy);
+    this._lift?.setVelocity(vxCss, vy);
   }
 
   /**
@@ -2714,7 +2718,26 @@ export class PetApp {
     this._interaction?.tick(dt * 1000);
     this._lift?.setHolding(this._dragging || this._nativeDragging);
     this._reduceMotionQuery ??= window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
-    this._lift?.update(dt, this._reduceMotionQuery?.matches ?? false);
+    const reduceMotion = this._reduceMotionQuery?.matches ?? false;
+    this._lift?.update(dt, reduceMotion);
+    const windSourceActive = !reduceMotion && ((this._lift?.active ?? false) || this._dragging || this._nativeDragging);
+    if (windSourceActive || this._dragWindActive) {
+      const dir = this._settings?.mirror ? -1 : 1;
+      const wxTarget = windSourceActive
+        ? Math.max(-0.7, Math.min(0.7, ((this._lift?.angle ?? 0) / 9) * 0.65 * dir))
+        : 0;
+      const wyTarget = windSourceActive
+        ? Math.max(-0.8, Math.min(0.8, (this._lift?.bounce ?? 0) * 0.8))
+        : 0;
+      const wk = dt > 0 ? 1 - Math.exp(-dt / 0.035) : 1;
+      this._dragWindX += (wxTarget - this._dragWindX) * wk;
+      this._dragWindY += (wyTarget - this._dragWindY) * wk;
+      if (Math.abs(this._dragWindX) < 0.001) this._dragWindX = 0;
+      if (Math.abs(this._dragWindY) < 0.001) this._dragWindY = 0;
+      const nonZero = this._dragWindX !== 0 || this._dragWindY !== 0;
+      this._model?.setPhysicsWind?.(this._dragWindX, this._dragWindY);
+      this._dragWindActive = nonZero;
+    }
     this._model?.update(dt);
   }
 
@@ -2782,6 +2805,7 @@ export class PetApp {
       pivotY: originY - pivot.y * scale,
       angleDeg: this._settings.mirror ? -this._lift.angle : this._lift.angle,
       lift: this._lift.lift,
+      bounce: this._lift.bounce,
       bounds: b,
       width: this._canvas.width,
       height: this._canvas.height,

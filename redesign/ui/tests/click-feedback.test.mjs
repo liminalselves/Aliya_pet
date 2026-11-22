@@ -446,7 +446,7 @@ test('Android身体触摸：手指轻微滚动仍算点击且不触发前端拖�
   }
 });
 
-test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时，渐进红晕激活且不额外拨耳', () => {
+test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时，渐进红晕与柔和猫耳放松同步激活', () => {
   const h = harness();
   h.service.hitAreas.mirrored = true;
   h.area('head');
@@ -460,7 +460,8 @@ test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时�
   }
   assert.ok(h.writes.offsets[0] < -1, `镜像右滑应转负角: ${h.writes.offsets[0]}`);
   assert.ok(Math.abs(h.writes.offsets[3]) > 0.2, '抚摸期间应带动轻微身体偏转');
-  assert.deepEqual(h.writes.ears, [false, 0, 0], '抚摸应还原原版不额外写入耳动');
+  assert.equal(h.writes.ears[0], true, '抚摸期间应柔和放平猫耳');
+  assert.ok(h.writes.ears[1] > 0.2 && h.writes.ears[1] <= 0.8 && h.writes.ears[2] > 0.2 && h.writes.ears[2] <= 0.8);
   assert.equal(h.writes.cheek[0], true, '持续抚摸应产生渐进红晕');
   // 静止微抖（<1.5px）不应刷新 _lastInputMs：0.5s 后回到放松/中性，且不计入活跃耗时
   const elapsedBefore = h.service.petting._sessionElapsedMs;

@@ -70,6 +70,7 @@ export class InteractionService {
   readonly procedural: ProceduralReactionService;
   private readonly _reactions: ReactionLibrary;
   private readonly _host: ReactionHost;
+  private readonly _getTarget: () => InteractionTarget | null;
   private readonly _random: () => number;
   private readonly _onInteraction?: (event: PetInteractionEvent) => void;
   private _earClickUntilMs = 0;
@@ -103,6 +104,7 @@ export class InteractionService {
     this.hitAreas = deps.hitAreas;
     this._reactions = deps.reactions;
     this._host = deps.host;
+    this._getTarget = deps.getTarget;
     this._onInteraction = deps.onInteraction;
     this._random = deps.random ?? Math.random;
     this.petting = new PettingController({
@@ -238,9 +240,52 @@ export class InteractionService {
     const tier = result === ClickResult.doubt ? 'repeat' : result === ClickResult.comment ? 'annoyed' : null;
     const trigger = !tier ? base
       : this._reactions.has(`${key}.${tier}`) ? `${key}.${tier}` : `click.${tier}`;
+    this._triggerAreaImpulse(streakKey, side);
     this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed' });
     this._onInteraction?.({ kind: 'click', trigger, areaId, side, tier: tier ?? undefined });
     return true;
+  }
+
+  /** 对被点击部位施加一次局部阻尼弹簧脉冲，使领带/刘海/侧发/马尾/双手链有即时物理回弹。 */
+  private _triggerAreaImpulse(area: string, side: number): void {
+    const target = this._getTarget();
+    const trigger = target?.triggerPartImpulse;
+    if (!trigger) return;
+    switch (area) {
+      case 'tie':
+        trigger.call(target, 'tie', side * 0.7);
+        break;
+      case 'bangs':
+        trigger.call(target, 'bangs', side * 0.65);
+        break;
+      case 'crown':
+      case 'head':
+        trigger.call(target, 'hair_bounce', -0.5);
+        trigger.call(target, 'bangs', side * 0.25);
+        break;
+      case 'side_hair_left':
+        trigger.call(target, 'side_hair_left', -0.9);
+        break;
+      case 'side_hair_right':
+        trigger.call(target, 'side_hair_right', 0.9);
+        break;
+      case 'ponytail':
+      case 'ponytail_upper':
+        trigger.call(target, 'ponytail', side * 0.9);
+        break;
+      case 'hand':
+        trigger.call(target, 'hand_right', -0.85);
+        break;
+      case 'tablet':
+        trigger.call(target, 'hand_left', 0.85);
+        break;
+      case 'shoulder_left':
+        trigger.call(target, 'hand_right', -0.45);
+        break;
+      case 'shoulder_right':
+        trigger.call(target, 'hand_left', 0.45);
+        break;
+    }
   }
 
   /** 拖动中快速往返摇晃：保持拎起姿态，补充晕眩表情与台词。 */
@@ -258,9 +303,12 @@ export class InteractionService {
     this.procedural.hold();
   }
 
-  /** 拖动中按画面水平速度做惯性摆头；mirrored 时换算到模型空间。 */
-  updateHoldVelocity(screenVxPxPerSec: number): void {
-    this.procedural.setHoldSway(this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec);
+  /** 拖动中按画面水平/垂直速度做惯性摆头与俯仰；mirrored 时水平速度换算到模型空间。 */
+  updateHoldVelocity(screenVxPxPerSec: number, screenVyPxPerSec = 0): void {
+    this.procedural.setHoldSway(
+      this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec,
+      screenVyPxPerSec
+    );
   }
 
   /** 互动动作在保护期内不重启；可以打断待机或聊天动作（触碰优先）。 */
