@@ -398,6 +398,53 @@ test('窄屏感应带重叠时选最近边，窗口大于工作区时不产生�
  assert.equal(PetApp._snapAxis(70,0,80,48).v,80);
  assert.equal(PetApp._snapAxis(100,0,-40,48).v,0);
 });
+test('松手惯性滑动：快拖顺势滑出且有上限、滑进感应带同步贴边、停顿/慢速/少动态不漂移、在途抓取可中断',async()=>{
+ // 1. 屏幕中间快拖松手：产生有限距离惯性滑动并保存终点
+ const h=snapHarness([-1000,300],true);
+ Object.assign(h.app,{_dragVelX:600,_dragVelY:-200,_dragLastMoveMs:performance.now()});
+ h.app._onDragFinished(true);await settleWindow();
+ assert.equal(h.animations.length,1);
+ await h.frame(60);assert.ok(h.pos[0]>-1000&&h.pos[1]<300,'松手后应向拖动方向惯性滑行');
+ await h.finish();
+ assert.ok(h.pos[0]>-1000&&h.pos[0]<=-1000+Math.round(64*1.5),'滑行距离受上限约束');
+ assert.equal(h.saved.at(-1).posX,h.pos[0]);assert.equal(h.saved.at(-1).posY,h.pos[1]);
+
+ // 2. 滑行途中再次抓取可立即中断
+ const mid=snapHarness([-1000,300],false);
+ Object.assign(mid.app,{_dragVelX:900,_dragVelY:0,_dragLastMoveMs:performance.now()});
+ mid.app._onDragFinished(true);await settleWindow();await mid.frame(60);
+ const stoppedX=mid.pos[0];assert.ok(stoppedX>-1000);
+ mid.app._cancelSnapAnimation();await mid.finish();
+ assert.equal(mid.pos[0],stoppedX,'中断后停在当前位置，不再继续滑行');
+ assert.equal(mid.saved.length,0);
+
+ // 3. 惯性滑入边缘感应带或越界时，在单次动画中顺滑贴边不冲出屏幕
+ const edge=snapHarness([-1810,300],true);
+ Object.assign(edge.app,{_dragVelX:-1200,_dragVelY:0,_dragLastMoveMs:performance.now()});
+ edge.app._onDragFinished(true);await settleWindow();await edge.finish();
+ assert.deepEqual(edge.pos,[-1920,300]);
+
+ // 4. 慢速、松手前停顿、系统取消与少动态效果下不触发惯性漂移
+ const slow=snapHarness([-1000,300],true);
+ Object.assign(slow.app,{_dragVelX:80,_dragVelY:40,_dragLastMoveMs:performance.now()});
+ slow.app._onDragFinished(true);await settleWindow();await slow.finish();
+ assert.deepEqual(slow.pos,[-1000,300]);assert.equal(slow.animations.length,0);
+
+ const stale=snapHarness([-1000,300],true);
+ Object.assign(stale.app,{_dragVelX:800,_dragVelY:0,_dragLastMoveMs:performance.now()-200});
+ stale.app._onDragFinished(true);await settleWindow();await stale.finish();
+ assert.deepEqual(stale.pos,[-1000,300]);assert.equal(stale.animations.length,0);
+
+ const cancelled=snapHarness([-1000,300],true);
+ Object.assign(cancelled.app,{_dragVelX:800,_dragVelY:0,_dragLastMoveMs:performance.now()});
+ cancelled.app._onDragFinished(false);await settleWindow();await cancelled.finish();
+ assert.deepEqual(cancelled.pos,[-1000,300]);assert.equal(cancelled.animations.length,0);
+
+ const reduced=snapHarness([-1000,300],true);reduced.reduce();
+ Object.assign(reduced.app,{_dragVelX:800,_dragVelY:0,_dragLastMoveMs:performance.now()});
+ reduced.app._onDragFinished(true);await settleWindow();await reduced.finish();
+ assert.deepEqual(reduced.pos,[-1000,300]);assert.equal(reduced.animations.length,0);
+});
 
 test('半闭眼收小瞳孔行程，完全闭眼回中',()=>{
  const {controller,model,values}=gaze();controller.setTarget(1,0);

@@ -464,7 +464,11 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         val upXCss = ev.x / d
                         val upYCss = ev.y / d
                         val cancelled = ev.actionMasked == MotionEvent.ACTION_CANCEL
-                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled, $upXCss, $upYCss);")
+                        val staleMs = (ev.eventTime - dragLastAt).coerceAtLeast(0L)
+                        val decay = if (cancelled || staleMs > 120L) 0f else kotlin.math.exp(-staleMs / 45f)
+                        val releaseVx = dragEmaVx * decay
+                        val releaseVy = dragEmaVy * decay
+                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled, $upXCss, $upYCss, $releaseVx, $releaseVy);")
                         true
                     } else {
                         false

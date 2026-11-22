@@ -722,6 +722,22 @@ test('Android 左下角贴边在松手时保存终点，进入 App 打断动画�
   assert.deepEqual(prefs, [['petX', '20'], ['petY', '700']], '必须在原生动画结束回调之前双写最终原点');
   assert.equal(saved.at(-1).posX, 20); assert.equal(saved.at(-1).posY, 700);
   assert.equal(animations.length, 1);
+
+  // Android 原生拖动带速度松手应产生惯性滑行（含关闭贴边时）与贴边合并
+  animations.length = 0; prefs.length = 0;
+  Object.assign(app, {
+    _originCssX: 200, _originCssY: 400, _appliedRectX: 120, _appliedRectY: 140,
+    _settings: { ...settings.DEFAULT_SETTINGS, snapEdges: false },
+    _interaction: null, _behavior: null, _coordination: { activity() {} },
+    _wrapToRefNorm: () => ({ nx: 0.5, ny: 0.5 }),
+  });
+  app.onNativeDragEnd(0, 0, 500, false, 150, 150, 500, 0);
+  assert.equal(animations.length, 1, '带速度松手应触发原生惯性滑行动画');
+  assert.ok(app._originCssX > 200 && app._originCssX <= 264, `预期顺势右滑，实际=${app._originCssX}`);
+
+  animations.length = 0;
+  app.onNativeDragEnd(0, 0, 500, true, 150, 150, 500, 0);
+  assert.equal(animations.length, 0, '系统取消拖动不得触发惯性滑行');
 });
 
 function androidRotationHarness({ origin = [375, 160], snapEdges = true, scale = 0.2 } = {}) {

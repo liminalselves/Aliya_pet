@@ -249,6 +249,9 @@ export class PetApp {
   private _dragVelX = 0;
   private _dragVelY = 0;
   private _dragLastMoveMs = 0;
+  private _nativeDragVelX = 0;
+  private _nativeDragVelY = 0;
+  private _nativeDragMoveMs = 0;
   private _hoverCursor = '';
 
   /** 渲染暂停（屏幕熄灭/后台，由壳或 visibilitychange 触发）。 */
@@ -256,6 +259,12 @@ export class PetApp {
 
   /** 拖动判定阈值（CSS px）。 */
   private static readonly _dragThresholdPx = 5;
+  /** 松手惯性滑行参数（CSS px/s、滑行时间常数、上限距离、停顿衰减）。 */
+  private static readonly _inertiaMinSpeedPxPerSec = 120;
+  private static readonly _inertiaTimeSec = 0.07;
+  private static readonly _inertiaMaxDistCss = 64;
+  private static readonly _inertiaStaleLimitMs = 120;
+  private static readonly _inertiaStaleTauMs = 45;
   /** 触屏轻点容差（CSS px）：快速点按时手指滚动/抬手偏移常超过 5px，仍应算点击。 */
   private static readonly _touchTapTolerancePx = 16;
   private static readonly _interactiveCursorAreas = new Set([
@@ -1555,10 +1564,42 @@ export class PetApp {
     return { v: pos, edge: null };
   }
 
-  /** 松手后才贴边；Windows 由系统选择所在显示器，完全出屏时选择最近显示器。 */
-  private _onDragFinished(): void {
+  private _computeReleaseInertia(
+    vxCss: number,
+    vyCss: number,
+    lastMoveMs: number,
+    now = performance.now(),
+  ): { dxCss: number; dyCss: number; durMs: number } {
+    if (!Number.isFinite(vxCss) || !Number.isFinite(vyCss)) return { dxCss: 0, dyCss: 0, durMs: 220 };
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      return { dxCss: 0, dyCss: 0, durMs: 220 };
+    }
+    let decay = 1;
+    if (lastMoveMs > 0) {
+      const staleMs = Math.max(0, now - lastMoveMs);
+      if (staleMs > PetApp._inertiaStaleLimitMs) return { dxCss: 0, dyCss: 0, durMs: 220 };
+      decay = Math.exp(-staleMs / PetApp._inertiaStaleTauMs);
+    }
+    const rvX = vxCss * decay;
+    const rvY = vyCss * decay;
+    const speed = Math.hypot(rvX, rvY);
+    if (speed < PetApp._inertiaMinSpeedPxPerSec) return { dxCss: 0, dyCss: 0, durMs: 220 };
+    const dist = Math.min(PetApp._inertiaMaxDistCss, speed * PetApp._inertiaTimeSec);
+    const scale = dist / speed;
+    const durMs = Math.round(160 + Math.min(1, dist / PetApp._inertiaMaxDistCss) * 100);
+    return { dxCss: rvX * scale, dyCss: rvY * scale, durMs };
+  }
+
+  /** 松手后执行惯性滑行与贴边；Windows 由系统选择所在显示器，完全出屏时选择最近显示器。 */
+  private _onDragFinished(
+    allowInertia = false,
+    presetInertia?: { dxCss: number; dyCss: number; durMs: number },
+  ): void {
+    const inertia = presetInertia ?? (allowInertia
+      ? this._computeReleaseInertia(this._dragVelX, this._dragVelY, this._dragLastMoveMs)
+      : { dxCss: 0, dyCss: 0, durMs: 220 });
     if (platform === 'android') {
-      this._onDragFinishedAndroid();
+      this._onDragFinishedAndroid(false, inertia);
       return;
     }
     const win = this._tauriWindow;
@@ -1579,29 +1620,44 @@ export class PetApp {
         if (!current()) return;
         this._winPhysX = pos.x;
         this._winPhysY = pos.y;
+        const hasInertia = inertia.dxCss !== 0 || inertia.dyCss !== 0;
+        let sf = this._scaleFactor || 1;
+        let tx = pos.x;
+        let ty = pos.y;
+        const edges: string[] = [];
         if (this._settings.snapEdges) {
           const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
           if (!current()) return;
           if (mon) {
+            sf = mon.scaleFactor || sf;
+            tx += Math.round(inertia.dxCss * sf);
+            ty += Math.round(inertia.dyCss * sf);
             // 贴边按可见舞台算，透明外窗可以越出工作区。
             const r = this._physStageRect(size);
-            const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
+            const zone = Math.round(PetApp._snapZonePx * sf);
             const left = mon.workArea.position.x - Math.round(r.left);
             const top = mon.workArea.position.y - Math.round(r.top);
             const right = mon.workArea.position.x + mon.workArea.size.width - Math.round(r.left + r.width);
             const bottom = mon.workArea.position.y + mon.workArea.size.height - Math.round(r.top + r.height);
-            const sx = PetApp._snapAxis(pos.x, left, right, zone);
-            const sy = PetApp._snapAxis(pos.y, top, bottom, zone);
-            const edges: string[] = [];
+            const sx = PetApp._snapAxis(tx, left, right, zone);
+            const sy = PetApp._snapAxis(ty, top, bottom, zone);
+            tx = sx.v;
+            ty = sy.v;
             if (sx.edge) edges.push(sx.edge === 'min' ? 'left' : 'right');
             if (sy.edge) edges.push(sy.edge === 'min' ? 'top' : 'bottom');
-            if (sx.v !== pos.x || sy.v !== pos.y) {
-              await this._animateWindowToPhys(sx.v, sy.v);
-              if (token !== this._snapAnimToken) return;
-            }
-            this._showSnapHint(edges);
+          } else {
+            tx += Math.round(inertia.dxCss * sf);
+            ty += Math.round(inertia.dyCss * sf);
           }
+        } else {
+          tx += Math.round(inertia.dxCss * sf);
+          ty += Math.round(inertia.dyCss * sf);
         }
+        if (tx !== pos.x || ty !== pos.y) {
+          await this._animateWindowToPhys(tx, ty, hasInertia ? Math.max(220, inertia.durMs) : 220);
+          if (token !== this._snapAnimToken) return;
+        }
+        this._showSnapHint(edges);
         if (token !== this._snapAnimToken || this._windowGeometryPending) return;
         this._persistDesktopPos();
         // 拖到另一块显示器后按新显示器重新开足容量（唯一一次需要隐藏交接的场景）。
@@ -1682,28 +1738,33 @@ export class PetApp {
     }
   }
 
-  private async _animateWindowToPhys(tx: number, ty: number): Promise<void> {
+  private async _animateWindowToPhys(tx: number, ty: number, durMs = 220): Promise<void> {
     const sx = this._winPhysX;
     const sy = this._winPhysY;
     const completed = await this._animateSnap(async progress => {
       this._winPhysX = Math.round(sx + (tx - sx) * progress);
       this._winPhysY = Math.round(sy + (ty - sy) * progress);
       await this._submitWindowPos();
-    });
+    }, durMs);
     if (completed) this._syncChatAnchor();
   }
 
   /**
-   * Android 拖动结束：贴边吸附（缓动归位）+ 位置持久化。
+   * Android 拖动结束：惯性滑行 + 贴边吸附（缓动归位）+ 位置持久化。
    * 开启贴边时越界必归位（越界即近边的延伸）；关闭时可整个拖出屏幕
    * （找不回时走设置页「重置位置」）。
    */
-  private _onDragFinishedAndroid(forceNearestEdge = false): void {
+  private _onDragFinishedAndroid(
+    forceNearestEdge = false,
+    inertia?: { dxCss: number; dyCss: number; durMs: number },
+  ): void {
     const shell = androidShell();
     if (!shell) return;
     // App 内全屏模式没有可移动的窗口：不吸附、不持久化
     // （曾在此把 winX/winY(=0,0) 当窗口坐标写进 posX/posY，污染悬浮窗原点）
     if (!this._wrapWindow) return;
+    let tx = this._originCssX + (inertia?.dxCss ?? 0);
+    let ty = this._originCssY + (inertia?.dyCss ?? 0);
     if (this._settings.snapEdges) {
       this._refreshShellMetrics();
       const m = { screenW: this._screenW, screenH: this._screenH };
@@ -1711,8 +1772,6 @@ export class PetApp {
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
         const zone = forceNearestEdge ? 0 : PetApp._snapZonePx;
-        let tx = this._originCssX;
-        let ty = this._originCssY;
         const charL = tx + b.minX * s;
         const charR = tx + b.maxX * s;
         const charT = ty - b.maxY * s;
@@ -1724,13 +1783,15 @@ export class PetApp {
         else if (charR >= m.screenW - zone || nearest === 1) tx += m.screenW - charR;
         if (charT <= zone || nearest === 2) ty -= charT;
         else if (charB >= m.screenH - zone || nearest === 3) ty += m.screenH - charB;
-        if (tx !== this._originCssX || ty !== this._originCssY) {
-          // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
-          this._persistWrapOrigin(tx, ty);
-          this._animateOriginTo(tx, ty);
-          return;
-        }
       }
+    }
+    if (tx !== this._originCssX || ty !== this._originCssY) {
+      const hasInertia = !!inertia && (inertia.dxCss !== 0 || inertia.dyCss !== 0);
+      const durMs = hasInertia ? inertia.durMs : 220;
+      // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
+      this._persistWrapOrigin(tx, ty);
+      this._animateOriginTo(tx, ty, durMs);
+      return;
     }
     this._persistWrapOrigin();
   }
@@ -2066,9 +2127,9 @@ export class PetApp {
 
       if (e.button === 0 && !viaPetting) {
         if (this._dragging) {
-          // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）
+          // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）+ 松手惯性滑行
           this._interaction?.onClick(ctx, true);
-          this._onDragFinished();
+          this._onDragFinished(true);
         } else if (this._dragCandidate && !handled && (!this._touchClickCandidateActive || this._touchClickCandidate)) {
           // 普通单击（Android 触摸：位移在轻点容差内才算）
           this._interaction?.onClick(ctx, false);
@@ -2397,6 +2458,9 @@ export class PetApp {
    */
   public onNativeDragStart(downCssX?: number, downCssY?: number): void {
     this._nativeDragging = true;
+    this._nativeDragVelX = 0;
+    this._nativeDragVelY = 0;
+    this._nativeDragMoveMs = 0;
     const rect = this._canvas?.getBoundingClientRect?.();
     this._liftPivot = rect && Number.isFinite(downCssX) && Number.isFinite(downCssY)
       ? this._modelPointAt(rect.left + downCssX!, rect.top + downCssY!)
@@ -2421,6 +2485,9 @@ export class PetApp {
     if (!this._nativeDragging || !Number.isFinite(vxCss)) return;
     this._coordination.activity();
     const vy = Number.isFinite(vyCss) ? vyCss : 0;
+    this._nativeDragVelX = vxCss;
+    this._nativeDragVelY = vy;
+    this._nativeDragMoveMs = performance.now();
     const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, vy, dtSec);
     if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
     this._interaction?.updateHoldVelocity(vxCss, vy);
@@ -2457,6 +2524,8 @@ export class PetApp {
     cancelled: boolean,
     upCssX?: number,
     upCssY?: number,
+    releaseVxCss?: number,
+    releaseVyCss?: number,
   ): void {
     this._coordination.activity();
     this._nativeDragging = false;
@@ -2466,17 +2535,26 @@ export class PetApp {
     this._appliedRectX += dxCss;
     this._appliedRectY += dyCss;
     if (this._behavior) this._behavior.isDragging = false;
+    let inertia: { dxCss: number; dyCss: number; durMs: number } | undefined;
     if (cancelled) {
       this._interaction?.dragReaction.cancel();
       this._interaction?.procedural.cancelAll();
     } else {
+      const hasReleaseVel = Number.isFinite(releaseVxCss) && Number.isFinite(releaseVyCss);
+      const vx = hasReleaseVel ? releaseVxCss! : this._nativeDragVelX;
+      const vy = hasReleaseVel ? releaseVyCss! : this._nativeDragVelY;
+      const lastMoveMs = hasReleaseVel ? 0 : this._nativeDragMoveMs;
+      inertia = this._computeReleaseInertia(vx, vy, lastMoveMs);
       const hasUp = Number.isFinite(upCssX) && Number.isFinite(upCssY) && this._model?.isReady?.();
       const norm = hasUp ? this._wrapToRefNorm(upCssX!, upCssY!) : { nx: 0.5, ny: 0.5 };
       this._interaction?.dragReaction.onDragMove(maxSpeedPxPerSec);
       this._interaction?.onClick({ normX: norm.nx, normY: norm.ny, pxX: upCssX ?? 0, pxY: upCssY ?? 0,
         dtSeconds: 0.016, leftPressed: false, isSecondary: false, pointerType: 'touch' }, true);
     }
-    this._onDragFinished();
+    this._nativeDragVelX = 0;
+    this._nativeDragVelY = 0;
+    this._nativeDragMoveMs = 0;
+    this._onDragFinished(!cancelled, inertia);
   }
 
   /** 调整帧率上限（省电模式 15fps）。 */
