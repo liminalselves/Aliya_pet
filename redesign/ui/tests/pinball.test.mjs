@@ -440,3 +440,78 @@ test('PetApp: 弹跳过程中不触发转晕摇晃且直连 rAF 原生高帧率�
   app._pinball.stopBouncing();
   assert.equal(app._frameIntervalMs(2000), 1000 / 15);
 });
+
+test('PetApp 桌面端: 弹球边界扣除透明渲染余量，触底时脚底贴近工作区底边而非悬空留白', async () => {
+  const h = desktopPinballHarness({ pinballMode: true });
+  h.app._model = {
+    isReady: () => true,
+    boundsH: 1.2,
+    boundsAspect: 200 / 300,
+    getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+    triggerPartImpulse() {},
+    update() {},
+    setPhysicsWind() {},
+  };
+  // 舞台高 300 时，角色实际高度 = 300 / 1.39 ≈ 215.8，底部透明留白 ≈ 42px
+  const contentRect = h.app._physPinballContentRect({ width: 200, height: 300 });
+  assert.ok(contentRect.top > 40 && contentRect.top < 45);
+  assert.ok(contentRect.top + contentRect.height < 260);
+
+  h.app._dragVelX = 1200;
+  h.app._dragVelY = 600;
+  h.app._dragLastMoveMs = performance.now();
+  h.app._onDragFinished(true);
+  await settle();
+  await settle();
+  for (let i = 0; i < 1200 && h.app._pinball.active; i++) {
+    h.app._update(1 / 60);
+    await settle();
+  }
+  assert.equal(h.app._pinball.active, false);
+  // 触底时窗口 y 应下沉到让角色实际脚底接触 workArea 底边 800（大于原先的 500）
+  assert.ok(h.pos[1] > 535 && h.pos[1] <= 545, `期望窗口触底 y≈542，实际 ${h.pos[1]}`);
+});
+
+test('PinballPhysics 与 PetApp: 弹跳触底瞬间压扁并横舒且以脚底为支点平滑回弹', () => {
+  const { PinballPhysics } = load('pinball');
+  const pb = new PinballPhysics();
+  let bottomSquash = null;
+  pb.launch({
+    x: 200,
+    y: 480,
+    vx: 100,
+    vy: 800,
+    bounds: { minX: 0, maxX: 600, minY: 0, maxY: 500 },
+    onBounce: ev => {
+      if (ev.wall === 'bottom' && !bottomSquash) bottomSquash = pb.squashScale;
+    },
+  });
+  for (let i = 0; i < 10 && !bottomSquash; i++) pb.step(1 / 120);
+  assert.ok(bottomSquash, '触底应立即触发压扁形变');
+  assert.ok(bottomSquash.sy < 0.92, `触底时纵向应明显压扁: sy=${bottomSquash.sy}`);
+  assert.ok(bottomSquash.sx > 1.04, `触底时横向应轻微舒展: sx=${bottomSquash.sx}`);
+
+  const { PetApp } = load('pet-app', {
+    './pinball': { PinballPhysics },
+    './platform': { platform: 'tauri', androidShell: () => null, isAndroidOverlay: () => false },
+  }, {
+    window: { matchMedia: () => ({ matches: false }) },
+  });
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _pinball: pb,
+    _model: {
+      isReady: () => true,
+      getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+    },
+  });
+  const tr = app._pinballSquashTransform(100, 150, 150);
+  assert.ok(tr && tr.sy < 0.92 && tr.sx > 1.04);
+  // 脚底模型点 (-0.6) 经压扁矩阵映射后的屏幕 y 应保持在 footY = 150 - (-0.6)*100 = 210
+  const mappedFootY = (-100 * tr.sy) * (-0.6) + tr.originY;
+  assert.ok(Math.abs(mappedFootY - tr.footY) < 1e-6, '压扁后脚底位置应锚定不变');
+
+  // 继续步进，压扁弹性应收回恢复 1:1
+  for (let i = 0; i < 60; i++) pb.stepSquash(1 / 60);
+  assert.equal(pb.squashActive, false);
+  assert.deepEqual({ ...pb.squashScale }, { sx: 1, sy: 1 });
+});

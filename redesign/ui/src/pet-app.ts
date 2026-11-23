@@ -1692,7 +1692,7 @@ export class PetApp {
           ]);
           if (!current()) return;
           const sf = mon?.scaleFactor || this._scaleFactor || 1;
-          const r = this._physStageRect(size);
+          const r = this._physPinballContentRect(size);
           const bounds: PinballBounds = mon
             ? {
                 minX: (mon.workArea.position.x - Math.round(r.left)) / sf,
@@ -1770,6 +1770,26 @@ export class PetApp {
     const H = size?.height ?? Math.round(window.innerHeight * this._scaleFactor);
     if (!this._deskCapacityReady || !this._model?.isReady()) return { left: 0, top: 0, width: W, height: H };
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
+  }
+
+  /** 桌面弹球碰撞边界：扣除舞台四周透明渲染余量，让角色脚底与轮廓贴齐工作区四壁。 */
+  private _physPinballContentRect(size: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
+    const r = this._physStageRect(size);
+    const b = this._model?.isReady() ? this._model.getStaticBounds?.() : null;
+    const boundsH = this._model?.boundsH ?? 0;
+    if (!b || !(boundsH > 0) || !(r.height > 0)) return r;
+    const aspect = this._model?.boundsAspect ?? 0;
+    const fitH = this._chatView?.isOpen && aspect > 0
+      ? Math.min(r.height, r.width / aspect)
+      : r.height;
+    const s = fitH / PetApp._renderMarginRatio / boundsH;
+    const mirror = !!this._settings?.mirror;
+    const left = r.left + r.width / 2 + (mirror ? -b.maxX : b.minX) * s;
+    const right = r.left + r.width / 2 + (mirror ? -b.minX : b.maxX) * s;
+    const top = r.top + r.height / 2 - b.maxY * s;
+    const bottom = r.top + r.height / 2 - b.minY * s;
+    if (!(right > left) || !(bottom > top)) return r;
+    return { left, top, width: right - left, height: bottom - top };
   }
 
   /** 入口按钮：聊天打开或设置关闭时隐藏（hidden 同时让命中区与穿透放行区一并撤掉）。 */
@@ -1891,7 +1911,11 @@ export class PetApp {
 
   private _stepPinball(dt: number): void {
     const pb = this._pinball;
-    if (!pb?.active) return;
+    if (!pb) return;
+    if (!pb.active) {
+      pb.stepSquash(dt);
+      return;
+    }
     this._pinballSimMs = (this._pinballSimMs || 0) + Math.max(0, dt * 1000);
     const prevX = pb.x;
     const prevY = pb.y;
@@ -3209,6 +3233,29 @@ export class PetApp {
     return fitH / PetApp._renderMarginRatio / this._model.boundsH;
   }
 
+  /** 以静态脚底为支点的弹球触底压扁参数（保持脚底贴地不浮空）。 */
+  private _pinballSquashTransform(
+    scale: number,
+    originX: number,
+    originY: number,
+  ): { sx: number; sy: number; footX: number; footY: number; originX: number; originY: number } | null {
+    const pb = this._pinball;
+    if (!pb?.squashActive || this._isReduceMotion()) return null;
+    const { sx, sy } = pb.squashScale;
+    if (sx === 1 && sy === 1) return null;
+    const b = this._model?.isReady() ? this._model.getStaticBounds?.() : null;
+    const footX = b ? originX + ((b.minX + b.maxX) / 2) * scale : originX;
+    const footY = b ? originY - b.minY * scale : originY;
+    return {
+      sx,
+      sy,
+      footX,
+      footY,
+      originX: footX + sx * (originX - footX),
+      originY: footY + sy * (originY - footY),
+    };
+  }
+
   private _render(): void {
     const gl = this._gl;
     if (gl.isContextLost()) return;
@@ -3227,9 +3274,25 @@ export class PetApp {
     const modelMatrix = this._model.getModelMatrix();
     modelMatrix.loadIdentity();
     const { scale, originX, originY } = this._modelViewportTransform();
-    modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
-    modelMatrix.translate(originX, originY);
-    if (this._lift?.active) modelMatrix.setMatrix(this._liftModelMatrix(scale, originX, originY));
+    const squash = this._pinballSquashTransform(scale, originX, originY);
+    if (this._lift?.active) {
+      const m = this._liftModelMatrix(scale, originX, originY);
+      if (squash) {
+        m[0] *= squash.sx;
+        m[4] *= squash.sx;
+        m[12] = squash.footX + squash.sx * (m[12] - squash.footX);
+        m[1] *= squash.sy;
+        m[5] *= squash.sy;
+        m[13] = squash.footY + squash.sy * (m[13] - squash.footY);
+      }
+      modelMatrix.setMatrix(m);
+    } else if (squash) {
+      modelMatrix.scale(scale * squash.sx, -scale * squash.sy);
+      modelMatrix.translate(squash.originX, squash.originY);
+    } else {
+      modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
+      modelMatrix.translate(originX, originY);
+    }
 
     // 视口像素 -> NDC（y 翻转）
     const projection = (this._projection ??= new CubismMatrix44());

@@ -34,7 +34,7 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 export class PinballPhysics {
   static readonly MIN_LAUNCH_SPEED = 140;
-  static readonly MAX_SPEED = 2000;
+  static readonly MAX_SPEED = 3600;
   static readonly LAUNCH_GAIN = 1.45;
   static readonly GRAVITY = 1600;
   static readonly AIR_DRAG = 0.15;
@@ -44,7 +44,12 @@ export class PinballPhysics {
   static readonly RESTITUTION_Y = 0.88;
   static readonly GROUND_BOUNCE_MIN_VY = 120;
   static readonly STOP_SPEED = 25;
+  static readonly SQUASH_MAX_Y = 0.16;
+  static readonly SQUASH_MAX_X = 0.09;
   private static readonly _SUBSTEP_DT = 1 / 240;
+  private static readonly _SQUASH_HZ = 4.2;
+  private static readonly _SQUASH_ZETA = 0.45;
+  private static readonly _SQUASH_REF_SPEED = 950;
 
   active = false;
   bouncing = false;
@@ -53,10 +58,24 @@ export class PinballPhysics {
   vx = 0;
   vy = 0;
   bounceCount = 0;
+  squash = 0;
 
+  private _squashVel = 0;
   private _bounds: PinballBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
   private _onBounce: ((event: PinballBounceEvent) => void) | null = null;
   private _onSettled: ((x: number, y: number) => void) | null = null;
+
+  get squashActive(): boolean {
+    return Math.abs(this.squash) > 0.002 || Math.abs(this._squashVel) > 0.02;
+  }
+
+  get squashScale(): { sx: number; sy: number } {
+    const s = clamp(this.squash, -0.35, 1.15);
+    return {
+      sx: 1 + PinballPhysics.SQUASH_MAX_X * s,
+      sy: 1 - PinballPhysics.SQUASH_MAX_Y * s,
+    };
+  }
 
   canLaunch(vxCss: number, vyCss: number): boolean {
     return Number.isFinite(vxCss) && Number.isFinite(vyCss)
@@ -104,18 +123,24 @@ export class PinballPhysics {
     this.active = true;
     this.bouncing = true;
     this.bounceCount = 0;
+    this.squash = 0;
+    this._squashVel = 0;
     this._onBounce = opts.onBounce ?? null;
     this._onSettled = opts.onSettled ?? null;
     return true;
   }
 
-  /** 立即停止运动（就地停住，不改变大小与旋转）。 */
-  stopBouncing(): void {
+  /** 立即停止运动（就地停住，不旋转；自然落地时保留收尾压扁回弹）。 */
+  stopBouncing(preserveSquash = false): void {
     if (!this.active) return;
     this.bouncing = false;
     this.vx = 0;
     this.vy = 0;
     this.active = false;
+    if (!preserveSquash) {
+      this.squash = 0;
+      this._squashVel = 0;
+    }
     const settled = this._onSettled;
     this._onSettled = null;
     this._onBounce = null;
@@ -128,8 +153,29 @@ export class PinballPhysics {
     this.vx = 0;
     this.vy = 0;
     this.bounceCount = 0;
+    this.squash = 0;
+    this._squashVel = 0;
     this._onBounce = null;
     this._onSettled = null;
+  }
+
+  stepSquash(dtSec: number): void {
+    if (!this.squashActive) return;
+    const dt = Math.min(0.05, Math.max(0, Number.isFinite(dtSec) ? dtSec : 0));
+    if (dt === 0) return;
+    const steps = Math.max(1, Math.ceil(dt / PinballPhysics._SUBSTEP_DT));
+    const subDt = dt / steps;
+    const omega = 2 * Math.PI * PinballPhysics._SQUASH_HZ;
+    const zeta = PinballPhysics._SQUASH_ZETA;
+    for (let i = 0; i < steps; i++) {
+      this._squashVel += (-omega * omega * this.squash - 2 * zeta * omega * this._squashVel) * subDt;
+      this.squash += this._squashVel * subDt;
+      if (Math.abs(this.squash) < 0.002 && Math.abs(this._squashVel) < 0.02) {
+        this.squash = 0;
+        this._squashVel = 0;
+        break;
+      }
+    }
   }
 
   step(dtSec: number): void {
@@ -186,19 +232,29 @@ export class PinballPhysics {
           this.y = clamp(maxY - (this.y - maxY) * PinballPhysics.RESTITUTION_Y, minY, maxY);
           this.vy = -impact * PinballPhysics.RESTITUTION_Y;
           this.vx *= PinballPhysics.GROUND_HIT_FRICTION;
+          this._applyBottomSquash(impact);
           this._emitBounce('bottom', impact);
         } else {
+          if (impact >= 40) this._applyBottomSquash(impact);
           this.y = maxY;
           this.vy = 0;
         }
       }
     }
 
+    this.stepSquash(dt);
+
     const onFloor = maxY <= minY || this.y >= maxY - 0.5;
     if (onFloor && Math.abs(this.vy) < 1 && Math.abs(this.vx) < PinballPhysics.STOP_SPEED) {
       this.y = maxY;
-      this.stopBouncing();
+      this.stopBouncing(true);
     }
+  }
+
+  private _applyBottomSquash(impactSpeed: number): void {
+    const k = clamp(impactSpeed / PinballPhysics._SQUASH_REF_SPEED, 0.25, 1);
+    this.squash = Math.min(1.15, Math.max(this.squash, k));
+    this._squashVel = Math.max(0, this._squashVel);
   }
 
   private _emitBounce(wall: PinballWall, impactSpeed: number): void {
