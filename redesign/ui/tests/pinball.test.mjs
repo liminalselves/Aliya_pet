@@ -599,3 +599,247 @@ test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得�
   assert.equal(app._capturePinballCatch(), null);
   app._hidePinballCatchHud(true);
 });
+
+test('Android 悬浮窗: 弹球抓取优先走独立原生浮标不占用台词气泡，原生拖动期间忽略迟到的 pointercancel', () => {
+  const { PinballPhysics, computePinballCatchScore } = load('pinball');
+  const settingsMod = load('settings', {}, { localStorage: { getItem: () => null, setItem() {} } });
+  const huds = [];
+  const bubbleCalls = [];
+  const prefs = [];
+  const shell = {
+    getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+    setPref: (k, v) => prefs.push([k, v]),
+    setInteracting() {},
+    setPinballCatchHud: json => huds.push(json),
+    setDialogueBubble() {},
+  };
+  const canvasListeners = {};
+  const { PetApp } = load('pet-app', {
+    './pinball': { PinballPhysics, computePinballCatchScore },
+    './settings': { ...settingsMod, saveSettings() {} },
+    './platform': { platform: 'android', androidShell: () => shell, isAndroidOverlay: () => true },
+  }, {
+    window: { addEventListener() {}, matchMedia: () => ({ matches: false }) },
+    document: { body: { dataset: {}, classList: { remove() {}, add() {} } }, documentElement: {} },
+  });
+
+  const pb = new PinballPhysics();
+  pb.launch({ x: 200, y: 200, vx: 1000, vy: -300, bounds: { minX: 0, maxX: 400, minY: 0, maxY: 800 } });
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _wrapWindow: true,
+    _pinball: pb,
+    _dpr: 2,
+    _screenW: 400,
+    _screenH: 800,
+    _appliedRectW: 200,
+    _appliedRectH: 300,
+    _originCssX: 200,
+    _originCssY: 200,
+    _settings: { ...settingsMod.DEFAULT_SETTINGS, scale: settingsMod.percentToScale(55, ...Object.values(settingsMod.scaleRangeFor(400, 712))), pinballMode: true },
+    _model: {
+      isReady: () => true,
+      boundsH: 1.2,
+      getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+      getDynamicBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+    },
+    _canvas: {
+      style: {},
+      addEventListener: (name, fn) => { canvasListeners[name] = fn; },
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 300 }),
+      hasPointerCapture: () => false,
+    },
+    _shownSizeFactor: () => app._settings.scale,
+    _modelViewportTransform: () => ({ scale: 200, originX: 200, originY: 300 }),
+    _androidBubble: { hide() {}, close() {}, sync() {} },
+    _bubble: { play: arg => bubbleCalls.push(arg), cancel() {} },
+    _snapAnimToken: 0,
+    _snapAnimation: null,
+    _snapHintTimer: null,
+    _hitAreas: { mirrored: false },
+    _behavior: { clearLookTarget() {}, stop() {}, start() {}, refreshRandomSpeech() {} },
+    _coordination: { activity() {} },
+    _publishHitMask() {},
+  });
+
+  // 1. 抓取计分走 setPinballCatchHud 原生浮标，且百分比与 Android 设置页口径一致（55%），不占用 _bubble
+  const caught = app._capturePinballCatch();
+  assert.ok(caught && caught.score > 0);
+  assert.equal(caught.sizePercent, 55);
+  assert.equal(bubbleCalls.length, 0, '不得借用对话气泡显示抓取得分');
+  assert.equal(huds.length, 1);
+  const hudPayload = JSON.parse(huds[0]);
+  assert.equal(hudPayload.score, caught.score);
+  assert.equal(hudPayload.speedPxPerSec, caught.speedPxPerSec);
+  assert.equal(hudPayload.sizePercent, 55);
+  assert.equal(Math.round(hudPayload.centerX), 100);
+  assert.equal(Math.round(hudPayload.headY), 90);
+
+  // 2. 暂停时先持久化悬浮窗当前位置、取消弹球并清空原生浮标
+  pb.launch({ x: 180, y: 260, vx: 600, vy: 0, bounds: { minX: 0, maxX: 400, minY: 0, maxY: 800 } });
+  app._originCssX = 180;
+  app._originCssY = 260;
+  app.setPaused(true);
+  assert.equal(pb.active, false);
+  assert.equal(huds.at(-1), '');
+  assert.deepEqual(prefs.slice(-2), [['petX', '180'], ['petY', '260']]);
+
+  // 3. 原生拖动已接管时，迟到的 pointercancel / lostpointercapture 不得取消拎起状态
+  let cancels = 0;
+  app._interaction = { cancel() { cancels++; }, dragReaction: { cancel() {} } };
+  app._activePointerId = 1;
+  app._nativeDragging = true;
+  app._wirePointerEvents();
+  canvasListeners.pointercancel({ pointerId: 1 });
+  canvasListeners.lostpointercapture({ pointerId: 1 });
+  assert.equal(cancels, 0);
+
+  // 4. Android 关闭弹球模式设置立即停掉进行中的弹跳
+  pb.launch({ x: 180, y: 260, vx: 600, vy: 0, bounds: { minX: 0, maxX: 400, minY: 0, maxY: 800 } });
+  app._applyWindowSettingsAndroid = () => {};
+  app.applySettings({ ...app._settings, pinballMode: false }, false);
+  assert.equal(pb.bouncing, false);
+});
+
+test('PetApp: _kickImmediateFrame 取消低帧率定时器直连 rAF，touch 落底回弹期保持 _interactionBoost', () => {
+  const rafs = [];
+  const timers = new Map();
+  let nextTimerId = 1;
+  const { PetApp } = load('pet-app', {
+    './platform': { platform: 'android', androidShell: () => null, isAndroidOverlay: () => true },
+  }, {
+    requestAnimationFrame: fn => { rafs.push(fn); return rafs.length; },
+    setTimeout: fn => { const id = nextTimerId++; timers.set(id, fn); return id; },
+    clearTimeout: id => { timers.delete(id); },
+  });
+  const app = Object.create(PetApp.prototype);
+  app._running = true;
+  app._paused = false;
+  app._covered = false;
+  app._frameQueued = false;
+  app._frameTimerId = null;
+  app._fpsCap = 15;
+  app._lastFrameTime = performance.now() + 200;
+  app._settings = { batterySaver: false };
+  app._interactionBoost = () => false;
+
+  app._scheduleFrame();
+  assert.equal(timers.size, 1, '低帧率空转应排队等待定时器');
+  assert.equal(rafs.length, 0);
+
+  app._pinball = { bouncing: true };
+  app._kickImmediateFrame();
+  assert.equal(timers.size, 0, '_kickImmediateFrame 应取消排队中的定时器');
+  assert.equal(rafs.length, 1, '取消定时器后应立即排队下一帧 rAF');
+
+  // 验证着陆 squash 恢复期间维持 60fps 互动升帧（省电模式除外）
+  const appBoost = Object.create(PetApp.prototype);
+  appBoost._fpsCap = 30;
+  appBoost._boostUntil = 0;
+  appBoost._dragging = false;
+  appBoost._nativeDragging = false;
+  appBoost._leftDown = false;
+  appBoost._touchPetting = false;
+  appBoost._settings = { batterySaver: false };
+  appBoost._pinball = { active: false, squashActive: true };
+  assert.equal(PetApp.prototype._interactionBoost.call(appBoost, 1000), true);
+  appBoost._settings.batterySaver = true;
+  assert.equal(PetApp.prototype._interactionBoost.call(appBoost, 2000), false);
+});
+
+test('PetApp Android 悬浮窗: 弹球期间按 DPR 对齐物理像素并通过 syncPinballFrame 驱动高刷，停稳与中断均关闭高刷', () => {
+  const { PinballPhysics } = load('pinball');
+  const settingsMod = load('settings', {}, { localStorage: { getItem: () => null, setItem() {} } });
+  const syncCalls = [];
+  const saved = [];
+  const rafs = [];
+  const shell = {
+    getMode: () => 'overlay',
+    getMetrics: () => JSON.stringify({ density: 3, screenW: 400, screenH: 850, winX: 0, winY: 0, winW: 200, winH: 300 }),
+    setWindowRect: () => {},
+    animateWindowTo: () => {},
+    setPref: (k, v) => saved.push([k, v]),
+    getPref: () => '',
+    setInteracting: () => {},
+    syncPinballFrame: (active, x, y, w, h, vx, vy, minX, maxX, minY, maxY) => {
+      syncCalls.push({ active, x, y, w, h, vx, vy, minX, maxX, minY, maxY });
+    },
+  };
+  const { PetApp } = load('pet-app', {
+    './pinball': { PinballPhysics },
+    './settings': { ...settingsMod, saveSettings() {} },
+    './platform': { platform: 'android', androidShell: () => shell, isAndroidOverlay: () => true },
+  }, {
+    requestAnimationFrame: fn => { rafs.push(fn); return rafs.length; },
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    window: { matchMedia: () => ({ matches: false }) },
+    document: { body: { dataset: {}, classList: { remove() {}, add() {} } }, documentElement: {} },
+  });
+
+  const app = Object.create(PetApp.prototype);
+  app._running = true;
+  app._paused = false;
+  app._covered = false;
+  app._frameQueued = false;
+  app._frameTimerId = null;
+  app._wrapWindow = true;
+  app._nativeDragging = false;
+  app._dpr = 3;
+  app._screenW = 400;
+  app._screenH = 850;
+  app._originCssX = 180;
+  app._originCssY = 300;
+  app._contentScaleCss = 100;
+  app._scaleFactor = 1;
+  app._appliedRectX = 0;
+  app._appliedRectY = 0;
+  app._appliedRectW = 200;
+  app._appliedRectH = 300;
+  app._rectInited = true;
+  app._rectDirty = false;
+  app._boostUntil = 0;
+  app._fpsCap = 30;
+  app._pinball = new PinballPhysics();
+  app._pinballBoundsCss = null;
+  app._androidPinballActive = false;
+  app._coordination = { activity() {} };
+  app._expressForReaction = () => {};
+  app._settings = { pinballMode: true, snapEdges: true, scale: 0.5, batterySaver: false };
+  app._model = {
+    isReady: () => true,
+    boundsAspect: 512 / 768,
+    getStaticBounds: () => ({ minX: -0.5, maxX: 0.5, minY: -0.8, maxY: 0.6 }),
+  };
+
+  app._onDragFinishedAndroid(false, undefined, { vx: 1200, vy: -500 });
+  assert.equal(app._pinball.bouncing, true);
+  assert.equal(syncCalls.length, 1);
+  assert.equal(syncCalls[0].active, true, 'Launch 时应立即同步首帧并开启原生高刷');
+  assert.ok(syncCalls[0].vx > 1000 && syncCalls[0].maxX > syncCalls[0].minX);
+  assert.ok(rafs.length >= 1, 'Launch 时应立即触发 rAF 首帧');
+
+  // 子像素推进 1/3 CSS px (= 1 physical px @ dpr=3)，应更新 _appliedRectX 而不被整 CSS px 吃掉
+  const prevX = app._appliedRectX;
+  app._originCssX += 0.34;
+  app._pinball.x = app._originCssX;
+  app._rectDirty = true;
+  app._syncWrapWindow();
+  assert.notEqual(app._appliedRectX, prevX, '高 DPR 下应保留 1 物理像素步进');
+  assert.ok(Math.abs((app._appliedRectX - prevX) - 1 / 3) < 0.01);
+
+  // 途中取消：立即发送 active=false 关闭原生高刷循环
+  app._cancelPinball();
+  assert.equal(syncCalls.at(-1).active, false);
+  assert.equal(app._androidPinballActive, false);
+
+  // 重新 launch 并模拟自然落底停稳：_syncWrapWindow 收到停稳帧时发送 active=false
+  app._onDragFinishedAndroid(false, undefined, { vx: 600, vy: -200 });
+  assert.equal(syncCalls.at(-1).active, true);
+  for (let i = 0; i < 1200 && app._pinball.bouncing; i++) {
+    app._stepPinball(1 / 60);
+  }
+  assert.equal(app._pinball.bouncing, false);
+  app._syncWrapWindow();
+  assert.equal(syncCalls.at(-1).active, false, '自然停稳后应关闭原生高刷模式');
+  assert.ok(saved.some(([k]) => k === 'petX'));
+});

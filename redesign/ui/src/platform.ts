@@ -44,6 +44,22 @@ export interface AndroidShell {
   setHitMask(cols: number, rows: number, data: string): void;
   /** 独立台词气泡：JSON 含文本、窗口内锚点和适配视口；空文本隐藏，closing 淡出。 */
   setDialogueBubble?(json: string): void;
+  /** 弹球模式抓取计分浮标（独立原生浮层，不占用台词气泡）；空串隐藏。 */
+  setPinballCatchHud?(json: string): void;
+  /** 弹球帧同步（CSS px）：壳侧开启高刷模式并以 Choreographer 原生刷新率驱动窗口平滑位移。 */
+  syncPinballFrame?(
+    active: boolean,
+    xCss: number,
+    yCss: number,
+    wCss: number,
+    hCss: number,
+    vxCss: number,
+    vyCss: number,
+    minXCss: number,
+    maxXCss: number,
+    minYCss: number,
+    maxYCss: number,
+  ): void;
   /** 设置页全量设置变更（JSON）：壳转发给桌宠页实时生效。 */
   notifySettings(json: string): void;
   /** 设置页动作转发（play-action/express/set-state 等 tray-action 形状 JSON）给桌宠页。 */

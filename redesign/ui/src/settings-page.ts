@@ -936,6 +936,11 @@ function refreshStateHighlight(): void {
       title: '位置与贴边',
       desc: '控制悬浮窗拖动吸附与复位',
     });
+    const syncAndroidPinballBadge = () => {
+      if (settings.pinballMode) posCard.setBadge('弹球模式中', 'accent');
+      else posCard.setBadge('', 'neutral');
+    };
+    refs.syncPinballMode = syncAndroidPinballBadge;
     refs.snapEdges = createSwitchRow(
       posCard.body,
       '屏幕贴边',
@@ -948,8 +953,13 @@ function refreshStateHighlight(): void {
       '弹球模式',
       '拖动人物用力甩出后，会在屏幕四壁间按重力碰撞弹跳并落到底边停稳；随时可再抓起',
       () => settings.pinballMode,
-      (v) => update({ pinballMode: v })
+      (v) => {
+        update({ pinballMode: v });
+        syncAndroidPinballBadge();
+        showToast(v ? '已开启弹球模式' : '已关闭弹球模式');
+      }
     ).input;
+    syncAndroidPinballBadge();
     createWideAction(posCard.body, '位置重置（移回主屏幕中央）', () => {
       // 贴合模式：petX/petY 是角色原点（非窗口左上角），写屏中心，
       // 悬浮窗下次启动（或服务重建）时在屏幕中央出现

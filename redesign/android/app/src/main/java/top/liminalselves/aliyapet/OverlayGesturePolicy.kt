@@ -25,3 +25,154 @@ internal object OverlayGesturePolicy {
     fun isTap(phase: Phase, elapsedMs: Long, dist2: Float, slop: Int, longPressMs: Long): Boolean =
         phase == Phase.PENDING && elapsedMs < longPressMs && dist2 <= slop.toFloat() * slop
 }
+
+/**
+ * 悬浮窗拖动手势速度跟踪（EMA，时间常数 35ms，与前端 pet-app.ts 同口径）。
+ * 支持从 PENDING → ARMED 首帧即开始累计速度，避免快速短甩（仅 0~1 次后续 MOVE）丢速度。
+ */
+internal class OverlayDragVelocity {
+    var vxCss = 0f
+        private set
+    var vyCss = 0f
+        private set
+    var maxSpeedCss = 0f
+        private set
+    var lastRawX = 0f
+        private set
+    var lastRawY = 0f
+        private set
+    var lastTimeMs = 0L
+        private set
+
+    fun reset(rawX: Float, rawY: Float, eventTimeMs: Long) {
+        vxCss = 0f
+        vyCss = 0f
+        maxSpeedCss = 0f
+        lastRawX = rawX
+        lastRawY = rawY
+        lastTimeMs = eventTimeMs
+    }
+
+    fun trackAnchor(rawX: Float, rawY: Float, eventTimeMs: Long) {
+        lastRawX = rawX
+        lastRawY = rawY
+        lastTimeMs = eventTimeMs
+    }
+
+    fun addSample(rawX: Float, rawY: Float, eventTimeMs: Long, density: Float) {
+        if (eventTimeMs <= lastTimeMs) {
+            lastRawX = rawX
+            lastRawY = rawY
+            return
+        }
+        val elapsed = eventTimeMs - lastTimeMs
+        val dtSec = elapsed / 1000f
+        val d = density.coerceAtLeast(1f)
+        val instVx = (rawX - lastRawX) / d / dtSec
+        val instVy = (rawY - lastRawY) / d / dtSec
+        val alpha = 1f - kotlin.math.exp(-dtSec / 0.035f)
+        vxCss += (instVx - vxCss) * alpha
+        vyCss += (instVy - vyCss) * alpha
+        maxSpeedCss = maxOf(maxSpeedCss, kotlin.math.hypot(vxCss, vyCss))
+        lastRawX = rawX
+        lastRawY = rawY
+        lastTimeMs = eventTimeMs
+    }
+
+    fun releaseVelocity(eventTimeMs: Long, cancelled: Boolean): Pair<Float, Float> {
+        if (cancelled) return 0f to 0f
+        val staleMs = (eventTimeMs - lastTimeMs).coerceAtLeast(0L)
+        val decay = if (staleMs > 120L) 0f else kotlin.math.exp(-staleMs / 45f)
+        return (vxCss * decay) to (vyCss * decay)
+    }
+}
+
+/**
+ * 悬浮窗弹球原生 VSYNC 外推器（纯函数，便于 JVM 测试）。
+ *
+ * 与前端 PinballPhysics 同参数：当 WebView rAF 低于显示器刷新率时，
+ * Choreographer 在相邻 JS 快照之间做有界物理前推（最多 MAX_EXTRAPOLATE_SEC），
+ * 使悬浮窗位置严格以屏幕原生刷新率更新；每次 JS 新快照到达立即以权威状态重锚。
+ */
+internal object PinballMotionStepper {
+    const val GRAVITY = 1600f
+    const val AIR_DRAG = 0.15f
+    const val GROUND_DRAG = 2.2f
+    const val GROUND_HIT_FRICTION = 0.96f
+    const val RESTITUTION_X = 0.90f
+    const val RESTITUTION_Y = 0.88f
+    const val GROUND_BOUNCE_MIN_VY = 120f
+    const val MAX_EXTRAPOLATE_SEC = 0.032f
+    private const val SUBSTEP_SEC = 1f / 240f
+
+    data class State(
+        val x: Float,
+        val y: Float,
+        val vx: Float,
+        val vy: Float,
+    )
+
+    fun extrapolate(
+        x0: Float,
+        y0: Float,
+        vx0: Float,
+        vy0: Float,
+        minX: Float,
+        maxX: Float,
+        minY: Float,
+        maxY: Float,
+        elapsedSec: Float,
+    ): State {
+        val loX = minOf(minX, maxX)
+        val hiX = maxOf(minX, maxX)
+        val loY = minOf(minY, maxY)
+        val hiY = maxOf(minY, maxY)
+        var x = x0.coerceIn(loX, hiX)
+        var y = y0.coerceIn(loY, hiY)
+        var vx = vx0
+        var vy = vy0
+        var rem = elapsedSec.coerceIn(0f, MAX_EXTRAPOLATE_SEC)
+        if (rem <= 0f) return State(x, y, vx, vy)
+
+        while (rem > 1e-6f) {
+            val dt = minOf(rem, SUBSTEP_SEC)
+            rem -= dt
+            val grounded = y >= hiY - 0.5f && kotlin.math.abs(vy) < GROUND_BOUNCE_MIN_VY
+            if (grounded) {
+                y = hiY
+                vy = 0f
+                vx *= kotlin.math.exp(-GROUND_DRAG * dt)
+                x += vx * dt
+            } else {
+                vy += GRAVITY * dt
+                val air = kotlin.math.exp(-AIR_DRAG * dt)
+                vx *= air
+                vy *= air
+                x += vx * dt
+                y += vy * dt
+            }
+            if (x < loX) {
+                x = loX
+                if (vx < 0f) vx = -vx * RESTITUTION_X
+            } else if (x > hiX) {
+                x = hiX
+                if (vx > 0f) vx = -vx * RESTITUTION_X
+            }
+            if (y < loY) {
+                y = loY
+                if (vy < 0f) vy = -vy * RESTITUTION_Y
+            } else if (y > hiY) {
+                y = hiY
+                if (vy > 0f) {
+                    if (vy < GROUND_BOUNCE_MIN_VY) {
+                        vy = 0f
+                    } else {
+                        vy = -vy * RESTITUTION_Y
+                        vx *= GROUND_HIT_FRICTION
+                    }
+                }
+            }
+        }
+        return State(x, y, vx, vy)
+    }
+}

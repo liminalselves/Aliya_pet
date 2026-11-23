@@ -77,6 +77,7 @@ export class PetApp {
   /** 安卓主界面被辅助页整屏覆盖：渲染循环停摆（见 onShellEvent 'covered'）。 */
   private _covered = false;
   private _frameQueued = false;
+  private _frameTimerId: ReturnType<typeof setTimeout> | null = null;
   private _lastFrameTime = 0;
 
   // 逻辑层
@@ -217,6 +218,8 @@ export class PetApp {
   private _pinballSubmittedY = Number.NaN;
   private _pinballSimMs = 0;
   private _pinballLastBounceFeedbackMs = -Infinity;
+  private _androidPinballActive = false;
+  private _pinballBoundsCss: PinballBounds | null = null;
   private _lastPinballCatch: PinballCatchScore | null = null;
   private _pinballCatchHud: HTMLDivElement | null = null;
   private _pinballCatchHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -860,6 +863,11 @@ export class PetApp {
     }
 
     // 窗口层
+    if (!s.pinballMode && this._pinball?.bouncing) {
+      this._pinball.stopBouncing();
+      this._stopAndroidPinballSync();
+      this._rectDirty = true;
+    }
     if (platform === 'android') {
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
@@ -881,7 +889,6 @@ export class PetApp {
           void m.invoke('sync_pinball_menu', { checked: s.pinballMode === true }).catch(() => {});
         })
         .catch(() => {});
-      if (!s.pinballMode && this._pinball?.bouncing) this._pinball.stopBouncing();
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -1354,6 +1361,8 @@ export class PetApp {
       && (s.fullClickThrough === true || opacity === 0);
     if (full && !this._fullClickThrough) {
       this._fullClickThrough = true;
+      this._cancelPinball();
+      this._hidePinballCatchHud(true);
       this._cancelInteraction();
       this._resetDragState();
       if (platform === 'android') androidShell()?.setInteracting(false);
@@ -1834,8 +1843,23 @@ export class PetApp {
     this._chatLauncher.hidden = this._remoteChat.open || !this._settings.showChatButton;
   }
 
+  private _stopAndroidPinballSync(): void {
+    if (!this._androidPinballActive) return;
+    this._androidPinballActive = false;
+    const r = !this._nativeDragging && this._wrapWindow && this._rectInited
+      ? this._fixedWindowRect()
+      : null;
+    const x = r ? Math.round(r.x) : this._appliedRectX;
+    const y = r ? Math.round(r.y) : this._appliedRectY;
+    const w = this._nativeDragging ? 0 : (r ? Math.max(8, Math.round(r.w)) : Math.max(8, this._appliedRectW));
+    const h = this._nativeDragging ? 0 : (r ? Math.max(8, Math.round(r.h)) : Math.max(8, this._appliedRectH));
+    androidShell()?.syncPinballFrame?.(false, x, y, w, h, 0, 0, x, x, y, y);
+  }
+
   private _cancelPinball(): void {
     this._pinball?.cancel();
+    this._pinballBoundsCss = null;
+    this._stopAndroidPinballSync();
     this._pinballSyncing = false;
     this._pinballNeedsSync = false;
     this._pinballSubmittedX = Number.NaN;
@@ -1872,6 +1896,9 @@ export class PetApp {
   private _hidePinballCatchHud(immediate = false): void {
     if (this._pinballCatchHideTimer) { clearTimeout(this._pinballCatchHideTimer); this._pinballCatchHideTimer = null; }
     if (this._pinballCatchCloseTimer) { clearTimeout(this._pinballCatchCloseTimer); this._pinballCatchCloseTimer = null; }
+    if (immediate && this._wrapWindow && platform === 'android') {
+      androidShell()?.setPinballCatchHud?.('');
+    }
     const el = this._pinballCatchHud;
     if (!el) return;
     if (immediate) {
@@ -1891,6 +1918,27 @@ export class PetApp {
   }
 
   private _showPinballCatchHud(result: PinballCatchScore): void {
+    const shell = this._wrapWindow && platform === 'android' ? androidShell() : null;
+    if (shell?.setPinballCatchHud) {
+      const rect = this._canvas?.getBoundingClientRect?.();
+      const b = this._model?.isReady?.() ? this._model.getDynamicBounds?.() : null;
+      let centerX = (rect?.width ?? this._appliedRectW) / 2;
+      let headY = (rect?.height ?? this._appliedRectH) * 0.18;
+      if (rect && b) {
+        const t = this._modelViewportTransform();
+        const dpr = this._dpr || 1;
+        centerX = (t.originX + ((b.minX + b.maxX) / 2) * t.scale) / dpr;
+        headY = (t.originY - b.maxY * t.scale) / dpr;
+      }
+      shell.setPinballCatchHud(JSON.stringify({
+        score: result.score,
+        speedPxPerSec: result.speedPxPerSec,
+        sizePercent: result.sizePercent,
+        centerX,
+        headY,
+      }));
+      return;
+    }
     if (this._androidBubble) {
       const text = `抓到啦 +${result.score} 分\n速度 ${result.speedPxPerSec} px/s · 大小 ${result.sizePercent}%`;
       void this._bubble?.play({
@@ -2059,6 +2107,7 @@ export class PetApp {
       this._winPhysX = Math.round(this._pinball.x * sf);
       this._winPhysY = Math.round(this._pinball.y * sf);
       this._boostUntil = performance.now() + 400;
+      this._kickImmediateFrame();
     }
   }
 
@@ -2190,6 +2239,7 @@ export class PetApp {
         bounds,
         onBounce: (ev) => this._onPinballBounce(ev),
         onSettled: (sx, sy) => {
+          this._pinballBoundsCss = null;
           this._originCssX = sx;
           this._originCssY = sy;
           this._rectDirty = true;
@@ -2197,10 +2247,13 @@ export class PetApp {
         },
       });
       if (launched) {
+        this._pinballBoundsCss = bounds;
         this._originCssX = this._pinball.x;
         this._originCssY = this._pinball.y;
         this._rectDirty = true;
         this._boostUntil = performance.now() + 400;
+        this._syncWrapWindow();
+        this._kickImmediateFrame();
         return;
       }
     }
@@ -2589,6 +2642,8 @@ export class PetApp {
 
     canvas.addEventListener('pointercancel', (e) => {
       if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      // 原生壳已接管拖动：beginNativeDrag 补发的 ACTION_CANCEL 若晚于 onNativeDragStart 到达，不能冲掉拎起状态。
+      if (this._nativeDragging) return;
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2599,6 +2654,7 @@ export class PetApp {
     });
     canvas.addEventListener('lostpointercapture', (e) => {
       if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      if (this._nativeDragging) return;
       if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2848,7 +2904,13 @@ export class PetApp {
     else this._behavior?.start();
     this._syncBackgroundMotion();
     if (paused) {
+      if (this._frameTimerId != null) {
+        clearTimeout(this._frameTimerId);
+        this._frameTimerId = null;
+        this._frameQueued = false;
+      }
       this._chat?.stop();
+      if (this._wrapWindow && this._pinball?.active) this._persistWrapOrigin();
       this._cancelPinball();
       this._hidePinballCatchHud(true);
       this._cancelInteraction();
@@ -3079,8 +3141,24 @@ export class PetApp {
     const wait = interval > 0 ? this._lastFrameTime + interval - now - PetApp._frameWakeLeadMs : 0;
     // 弹球弹跳中直连 rAF 对齐原生刷新率，不经 setTimeout 避免定时器抖动掉帧。
     const due = interval <= 0 || wait > 1;
-    const run = () => requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t, due); });
-    if (interval > 0 && wait > 1) setTimeout(run, wait); else run();
+    const run = () => {
+      this._frameTimerId = null;
+      requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t, due); });
+    };
+    if (interval > 0 && wait > 1) this._frameTimerId = setTimeout(run, wait); else run();
+  }
+
+  /** 取消低帧率等待定时器，立刻切到下一帧 rAF（弹球起步零首帧延迟）。 */
+  private _kickImmediateFrame(): void {
+    if (!this._running || this._paused || this._covered) return;
+    if (this._frameTimerId != null) {
+      clearTimeout(this._frameTimerId);
+      this._frameTimerId = null;
+      this._frameQueued = false;
+      this._scheduleFrame();
+    } else if (!this._frameQueued) {
+      this._scheduleFrame();
+    }
   }
   /** 定时器提前醒来的余量（ms）：覆盖定时器抖动与一个高刷屏的 vsync 间隔。 */
   private static readonly _frameWakeLeadMs = 6;
@@ -3145,7 +3223,8 @@ export class PetApp {
     // 与画布帧率无关；拖动错位的真因已在别处修掉（见 _maybeSendHitMask、LiftPose 子步长）。
     if (this._settings?.batterySaver) return false;
     const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
-      (this._lift?.active ?? false) || (this._pinball?.active ?? false) || (this._interaction?.isBusy ?? false);
+      (this._lift?.active ?? false) || (this._pinball?.active ?? false) ||
+      (this._pinball?.squashActive ?? false) || (this._interaction?.isBusy ?? false);
     if (active) this._boostUntil = now + 400;
     return now < this._boostUntil;
   }
@@ -3507,14 +3586,49 @@ export class PetApp {
     if (this._nativeDragging) return; // 原生拖动期间窗口由壳独占
     const shell = androidShell();
     if (!shell) return;
-    if (this._rectInited && !this._rectDirty) return;
+    const bouncing = this._pinball?.bouncing === true;
+    const hadNativePinball = this._androidPinballActive;
+    if (this._rectInited && !this._rectDirty && bouncing === hadNativePinball) return;
     this._rectDirty = false;
 
     const r = this._fixedWindowRect();
-    const L = Math.round(r.x);
-    const T = Math.round(r.y);
+    const dpr = bouncing ? (this._dpr || 1) : 1;
+    const L = Math.round(r.x * dpr) / dpr;
+    const T = Math.round(r.y * dpr) / dpr;
     const W = Math.max(8, Math.round(r.w));
     const H = Math.max(8, Math.round(r.h));
+
+    if (typeof shell.syncPinballFrame === 'function') {
+      if (bouncing) {
+        this._androidPinballActive = true;
+        const pb = this._pinball!;
+        const b = this._pinballBoundsCss;
+        const offX = r.x - pb.x;
+        const offY = r.y - pb.y;
+        const minL = b ? b.minX + offX : L;
+        const maxL = b ? b.maxX + offX : L;
+        const minT = b ? b.minY + offY : T;
+        const maxT = b ? b.maxY + offY : T;
+        shell.syncPinballFrame(true, L, T, W, H, pb.vx, pb.vy, minL, maxL, minT, maxT);
+        this._appliedRectX = L;
+        this._appliedRectY = T;
+        this._appliedRectW = W;
+        this._appliedRectH = H;
+        this._rectInited = true;
+        return;
+      }
+      if (hadNativePinball) {
+        this._androidPinballActive = false;
+        shell.syncPinballFrame(false, L, T, W, H, 0, 0, L, L, T, T);
+        this._appliedRectX = L;
+        this._appliedRectY = T;
+        this._appliedRectW = W;
+        this._appliedRectH = H;
+        this._rectInited = true;
+        return;
+      }
+    }
+
     if (
       this._rectInited &&
       L === this._appliedRectX &&
@@ -3524,7 +3638,7 @@ export class PetApp {
     ) {
       return;
     }
-    shell.setWindowRect(L, T, W, H);
+    shell.setWindowRect?.(L, T, W, H);
     this._appliedRectX = L;
     this._appliedRectY = T;
     this._appliedRectW = W;
