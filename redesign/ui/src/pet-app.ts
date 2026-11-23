@@ -42,6 +42,7 @@ import {
   percentToScale,
   saveSettings,
   scaleRangeFor,
+  scaleToPercent,
 } from './settings';
 import {
   platform,
@@ -220,6 +221,7 @@ export class PetApp {
   private _pinballCatchHud: HTMLDivElement | null = null;
   private _pinballCatchHideTimer: ReturnType<typeof setTimeout> | null = null;
   private _pinballCatchCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  private _scaleRange: { minS: number; maxS: number } | null = null;
   private _tauriWindowMod: typeof import('@tauri-apps/api/window') | null = null;
   private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
@@ -596,6 +598,25 @@ export class PetApp {
     };
   }
 
+  private _updateDesktopScaleRange(
+    mon: import('@tauri-apps/api/window').Monitor | null | undefined,
+  ): void {
+    if (!mon) return;
+    const logW = mon.workArea.size.width / mon.scaleFactor;
+    const logH = mon.workArea.size.height / mon.scaleFactor;
+    if (logW > 0 && logH > 0 && typeof scaleRangeFor === 'function') {
+      this._scaleRange = scaleRangeFor(logW, logH);
+    }
+  }
+
+  private _currentScaleRange(): { minS: number; maxS: number } {
+    if (platform === 'android' && this._screenW > 0 && this._screenH > 88
+      && typeof scaleRangeFor === 'function') {
+      return scaleRangeFor(this._screenW, this._screenH - 88);
+    }
+    return this._scaleRange ?? { minS: 0.15, maxS: 2 };
+  }
+
   /**
    * 猫耳显隐：部件淡入淡出；隐藏时耳朵命中区让给头部、耳朵相关台词停用，
    * 正在进行的耳朵反应平滑收回。启动恢复一步落定，不播放淡变。
@@ -727,6 +748,7 @@ export class PetApp {
       } catch {
         mon = null;
       }
+      this._updateDesktopScaleRange(mon);
       const { baseW, baseH } = this._baseWindowSize();
       return (
         this._scaleLimitsFrom(mon, baseW, baseH) ?? { minS: 0.15, maxS: 2.0 }
@@ -759,6 +781,7 @@ export class PetApp {
         const m = await import('@tauri-apps/api/window');
         const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
         if (!mon) return null;
+        this._updateDesktopScaleRange(mon);
         screenW = mon.workArea.size.width / mon.scaleFactor;
         screenH = mon.workArea.size.height / mon.scaleFactor;
       } catch {
@@ -894,6 +917,7 @@ export class PetApp {
     } catch {
       mon = null;
     }
+    this._updateDesktopScaleRange(mon);
     // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
     //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
     const { baseW, baseH } = this._baseWindowSize();
@@ -1068,6 +1092,7 @@ export class PetApp {
       const m = await import('@tauri-apps/api/window');
       let mon: import('@tauri-apps/api/window').Monitor | null = null;
       try { mon = (await m.currentMonitor()) ?? (await m.primaryMonitor()); } catch { mon = null; }
+      this._updateDesktopScaleRange(mon);
       const { baseW, baseH } = this._baseWindowSize();
       const limits = this._scaleLimitsFrom(mon, baseW, baseH);
       if (!limits) return;
@@ -1701,6 +1726,7 @@ export class PetApp {
             win.outerSize(),
           ]);
           if (!current()) return;
+          this._updateDesktopScaleRange(mon);
           const sf = mon?.scaleFactor || this._scaleFactor || 1;
           const r = this._physPinballContentRect(size);
           const bounds: PinballBounds = mon
@@ -1818,11 +1844,26 @@ export class PetApp {
     this._pinballLastBounceFeedbackMs = -Infinity;
   }
 
+  private _pinballCatchSizeScale(): number {
+    const fallback = this._settings?.scale ?? 1;
+    if (!this._model?.isReady?.()) return fallback;
+    const shown = this._shownSizeFactor();
+    if (!this._deskScale && !this._scaleTween && Number.isFinite(this._settings?.scale)
+      && Math.abs(shown - this._settings.scale) < 0.003) {
+      return this._settings.scale;
+    }
+    return shown;
+  }
+
   private _capturePinballCatch(): PinballCatchScore | null {
     const pb = this._pinball;
     if (!pb?.bouncing) return null;
-    const sizeScale = this._model?.isReady?.() ? this._shownSizeFactor() : (this._settings?.scale ?? 1);
-    const result = computePinballCatchScore(pb.speed, sizeScale, pb.bounceCount);
+    const sizeScale = this._pinballCatchSizeScale();
+    const { minS, maxS } = this._currentScaleRange();
+    const displayPercent = typeof scaleToPercent === 'function'
+      ? scaleToPercent(sizeScale, minS, maxS)
+      : sizeScale * 100;
+    const result = computePinballCatchScore(pb.speed, sizeScale, pb.bounceCount, displayPercent);
     this._lastPinballCatch = result;
     this._showPinballCatchHud(result);
     return result;

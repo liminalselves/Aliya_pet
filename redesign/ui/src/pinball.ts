@@ -45,17 +45,21 @@ export function computePinballCatchScore(
   speedPxPerSec: number,
   sizeScale: number,
   bounces = 0,
+  displaySizePercent?: number,
 ): PinballCatchScore {
   const speed = Math.max(0, Number.isFinite(speedPxPerSec) ? speedPxPerSec : 0);
   const safeScale = clamp(Number.isFinite(sizeScale) ? sizeScale : 1, 0.1, 8);
   const speedScore = 20 + speed * 0.12;
   const sizeMultiplier = clamp(0.6 / safeScale, 0.25, 6);
   const score = Math.max(1, Math.round(speedScore * sizeMultiplier));
+  const sizePercent = Number.isFinite(displaySizePercent)
+    ? Math.round(displaySizePercent!)
+    : Math.round(safeScale * 100);
   return {
     score,
     speedPxPerSec: Math.round(speed),
     sizeScale: safeScale,
-    sizePercent: Math.round(safeScale * 100),
+    sizePercent,
     bounces: Math.max(0, Math.round(bounces)),
   };
 }

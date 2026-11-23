@@ -516,8 +516,9 @@ test('PinballPhysics 与 PetApp: 弹跳触底瞬间压扁并横舒且以脚底�
   assert.deepEqual({ ...pb.squashScale }, { sx: 1, sy: 1 });
 });
 
-test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得分越高，抓到后显示得分、速度与大小', () => {
+test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得分越高，抓到后显示得分、速度与设置页一致的缩放百分比', () => {
   const { PinballPhysics, computePinballCatchScore } = load('pinball');
+  const settingsMod = load('settings', {}, { localStorage: { getItem: () => null, setItem() {} } });
   const slowNormal = computePinballCatchScore(300, 0.5);
   const fastNormal = computePinballCatchScore(1400, 0.5);
   const fastSmall = computePinballCatchScore(1400, 0.25);
@@ -550,14 +551,18 @@ test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得�
   };
   const { PetApp } = load('pet-app', {
     './pinball': { PinballPhysics, computePinballCatchScore },
+    './settings': settingsMod,
     './platform': { platform: 'tauri', androidShell: () => null, isAndroidOverlay: () => false },
   }, {
     window: { innerWidth: 500, innerHeight: 500, matchMedia: () => ({ matches: false }) },
     document: { body: { dataset: {}, classList: { remove() {}, add() {} }, appendChild() {} }, createElement: makeEl },
   });
+  const monRange = settingsMod.scaleRangeFor(1920, 1040);
+  const scale44 = settingsMod.percentToScale(44, monRange.minS, monRange.maxS);
   const app = Object.assign(Object.create(PetApp.prototype), {
     _pinball: pb,
-    _settings: { scale: 0.3, mirror: false },
+    _settings: { scale: scale44, mirror: false },
+    _scaleRange: monRange,
     _dpr: 1,
     _model: {
       isReady: () => true,
@@ -565,20 +570,29 @@ test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得�
       getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
     },
     _canvas: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 300, height: 400 }) },
-    _shownSizeFactor: () => 0.3,
+    _shownSizeFactor: () => scale44 - 0.0005,
     _modelViewportTransform: () => ({ scale: 200, originX: 150, originY: 200 }),
     _snapAnimToken: 0,
     _snapAnimation: null,
     _snapHintTimer: null,
   });
 
+  const expectedPercent = Math.round(settingsMod.scaleToPercent(scale44, monRange.minS, monRange.maxS));
+  assert.equal(expectedPercent, 44);
   const caught = app._capturePinballCatch();
   assert.ok(caught && caught.score > 0);
-  assert.equal(caught.sizePercent, 30);
+  assert.equal(caught.sizePercent, expectedPercent, '抓取浮标显示的大小应与设置页缩放百分比一致');
   assert.equal(caught.speedPxPerSec, Math.round(pb.speed));
   assert.ok(created[0].children[0].textContent.includes(`${caught.score} 分`));
   assert.ok(created[0].children[1].textContent.includes(`${caught.speedPxPerSec} px/s`));
-  assert.ok(created[0].children[1].textContent.includes('30%'));
+  assert.ok(created[0].children[1].textContent.includes(`${expectedPercent}%`));
+
+  // 缩放补间进行中且显示比例尚未落定时，取实际显示比例换算百分比
+  app._deskScale = { shown: 0.25, target: 0.55, last: 0, input: 0 };
+  app._shownSizeFactor = () => 0.25;
+  const tweenExpected = Math.round(settingsMod.scaleToPercent(0.25, monRange.minS, monRange.maxS));
+  const tweenCaught = app._capturePinballCatch();
+  assert.equal(tweenCaught.sizePercent, tweenExpected);
 
   // 取消弹球后再次触发抓取得分应返回 null，避免重复计分
   app._cancelSnapAnimation();
