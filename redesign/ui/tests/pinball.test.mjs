@@ -515,3 +515,73 @@ test('PinballPhysics 与 PetApp: 弹跳触底瞬间压扁并横舒且以脚底�
   assert.equal(pb.squashActive, false);
   assert.deepEqual({ ...pb.squashScale }, { sx: 1, sy: 1 });
 });
+
+test('computePinballCatchScore 与抓取展示: 速度越快、人物越小得分越高，抓到后显示得分、速度与大小', () => {
+  const { PinballPhysics, computePinballCatchScore } = load('pinball');
+  const slowNormal = computePinballCatchScore(300, 0.5);
+  const fastNormal = computePinballCatchScore(1400, 0.5);
+  const fastSmall = computePinballCatchScore(1400, 0.25);
+  const fastLarge = computePinballCatchScore(1400, 1.0);
+  assert.ok(fastNormal.score > slowNormal.score, '速度越快得分应越高');
+  assert.ok(fastSmall.score > fastNormal.score, '人物越小得分应越高');
+  assert.ok(fastNormal.score > fastLarge.score, '人物越大得分应越低');
+  assert.equal(fastSmall.speedPxPerSec, 1400);
+  assert.equal(fastSmall.sizePercent, 25);
+
+  const pb = new PinballPhysics();
+  pb.launch({ x: 200, y: 200, vx: 900, vy: -200, bounds: { minX: 0, maxX: 800, minY: 0, maxY: 600 } });
+  const created = [];
+  const makeEl = () => {
+    const el = {
+      id: '',
+      className: '',
+      hidden: false,
+      textContent: '',
+      children: [],
+      offsetWidth: 160,
+      offsetHeight: 40,
+      style: {},
+      classList: { remove() {}, add() {} },
+      setAttribute() {},
+      appendChild(child) { this.children.push(child); },
+    };
+    created.push(el);
+    return el;
+  };
+  const { PetApp } = load('pet-app', {
+    './pinball': { PinballPhysics, computePinballCatchScore },
+    './platform': { platform: 'tauri', androidShell: () => null, isAndroidOverlay: () => false },
+  }, {
+    window: { innerWidth: 500, innerHeight: 500, matchMedia: () => ({ matches: false }) },
+    document: { body: { dataset: {}, classList: { remove() {}, add() {} }, appendChild() {} }, createElement: makeEl },
+  });
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _pinball: pb,
+    _settings: { scale: 0.3, mirror: false },
+    _dpr: 1,
+    _model: {
+      isReady: () => true,
+      boundsH: 1.2,
+      getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+    },
+    _canvas: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 300, height: 400 }) },
+    _shownSizeFactor: () => 0.3,
+    _modelViewportTransform: () => ({ scale: 200, originX: 150, originY: 200 }),
+    _snapAnimToken: 0,
+    _snapAnimation: null,
+    _snapHintTimer: null,
+  });
+
+  const caught = app._capturePinballCatch();
+  assert.ok(caught && caught.score > 0);
+  assert.equal(caught.sizePercent, 30);
+  assert.equal(caught.speedPxPerSec, Math.round(pb.speed));
+  assert.ok(created[0].children[0].textContent.includes(`${caught.score} 分`));
+  assert.ok(created[0].children[1].textContent.includes(`${caught.speedPxPerSec} px/s`));
+  assert.ok(created[0].children[1].textContent.includes('30%'));
+
+  // 取消弹球后再次触发抓取得分应返回 null，避免重复计分
+  app._cancelSnapAnimation();
+  assert.equal(app._capturePinballCatch(), null);
+  app._hidePinballCatchHud(true);
+});

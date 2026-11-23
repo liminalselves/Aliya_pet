@@ -30,7 +30,35 @@ export interface PinballLaunchOptions {
   onSettled?: (x: number, y: number) => void;
 }
 
+export interface PinballCatchScore {
+  score: number;
+  speedPxPerSec: number;
+  sizeScale: number;
+  sizePercent: number;
+  bounces: number;
+}
+
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+/** 根据抓取瞬间的弹跳速度与人物大小计算得分：速度越快、人物越小分越高。 */
+export function computePinballCatchScore(
+  speedPxPerSec: number,
+  sizeScale: number,
+  bounces = 0,
+): PinballCatchScore {
+  const speed = Math.max(0, Number.isFinite(speedPxPerSec) ? speedPxPerSec : 0);
+  const safeScale = clamp(Number.isFinite(sizeScale) ? sizeScale : 1, 0.1, 8);
+  const speedScore = 20 + speed * 0.12;
+  const sizeMultiplier = clamp(0.6 / safeScale, 0.25, 6);
+  const score = Math.max(1, Math.round(speedScore * sizeMultiplier));
+  return {
+    score,
+    speedPxPerSec: Math.round(speed),
+    sizeScale: safeScale,
+    sizePercent: Math.round(safeScale * 100),
+    bounces: Math.max(0, Math.round(bounces)),
+  };
+}
 
 export class PinballPhysics {
   static readonly MIN_LAUNCH_SPEED = 140;
@@ -64,6 +92,10 @@ export class PinballPhysics {
   private _bounds: PinballBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
   private _onBounce: ((event: PinballBounceEvent) => void) | null = null;
   private _onSettled: ((x: number, y: number) => void) | null = null;
+
+  get speed(): number {
+    return Math.hypot(this.vx, this.vy);
+  }
 
   get squashActive(): boolean {
     return Math.abs(this.squash) > 0.002 || Math.abs(this._squashVel) > 0.02;

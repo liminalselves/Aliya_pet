@@ -7,7 +7,13 @@ import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
 import { LiftPose, liftMatrix } from './lift-pose';
-import { PinballPhysics, type PinballBounceEvent, type PinballBounds } from './pinball';
+import {
+  PinballPhysics,
+  computePinballCatchScore,
+  type PinballBounceEvent,
+  type PinballBounds,
+  type PinballCatchScore,
+} from './pinball';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { timeScene, type ResolvedDialogue } from './dialogue/dialogue';
 import { ReactionLibrary } from './interaction/reactions';
@@ -210,6 +216,10 @@ export class PetApp {
   private _pinballSubmittedY = Number.NaN;
   private _pinballSimMs = 0;
   private _pinballLastBounceFeedbackMs = -Infinity;
+  private _lastPinballCatch: PinballCatchScore | null = null;
+  private _pinballCatchHud: HTMLDivElement | null = null;
+  private _pinballCatchHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private _pinballCatchCloseTimer: ReturnType<typeof setTimeout> | null = null;
   private _tauriWindowMod: typeof import('@tauri-apps/api/window') | null = null;
   private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
@@ -1808,6 +1818,108 @@ export class PetApp {
     this._pinballLastBounceFeedbackMs = -Infinity;
   }
 
+  private _capturePinballCatch(): PinballCatchScore | null {
+    const pb = this._pinball;
+    if (!pb?.bouncing) return null;
+    const sizeScale = this._model?.isReady?.() ? this._shownSizeFactor() : (this._settings?.scale ?? 1);
+    const result = computePinballCatchScore(pb.speed, sizeScale, pb.bounceCount);
+    this._lastPinballCatch = result;
+    this._showPinballCatchHud(result);
+    return result;
+  }
+
+  private _hidePinballCatchHud(immediate = false): void {
+    if (this._pinballCatchHideTimer) { clearTimeout(this._pinballCatchHideTimer); this._pinballCatchHideTimer = null; }
+    if (this._pinballCatchCloseTimer) { clearTimeout(this._pinballCatchCloseTimer); this._pinballCatchCloseTimer = null; }
+    const el = this._pinballCatchHud;
+    if (!el) return;
+    if (immediate) {
+      el.hidden = true;
+      el.classList?.remove?.('show', 'closing');
+      return;
+    }
+    el.classList?.remove?.('show');
+    el.classList?.add?.('closing');
+    this._pinballCatchCloseTimer = setTimeout(() => {
+      this._pinballCatchCloseTimer = null;
+      if (this._pinballCatchHud) {
+        this._pinballCatchHud.hidden = true;
+        this._pinballCatchHud.classList?.remove?.('closing');
+      }
+    }, 220);
+  }
+
+  private _showPinballCatchHud(result: PinballCatchScore): void {
+    if (this._androidBubble) {
+      const text = `抓到啦 +${result.score} 分\n速度 ${result.speedPxPerSec} px/s · 大小 ${result.sizePercent}%`;
+      void this._bubble?.play({
+        entryId: 'pinball.catch',
+        finalText: text,
+        pages: [{ index: 0, text }],
+      });
+      return;
+    }
+    if (typeof document === 'undefined' || !document.body || typeof document.createElement !== 'function') return;
+    if (this._pinballCatchHideTimer) { clearTimeout(this._pinballCatchHideTimer); this._pinballCatchHideTimer = null; }
+    if (this._pinballCatchCloseTimer) { clearTimeout(this._pinballCatchCloseTimer); this._pinballCatchCloseTimer = null; }
+
+    let el = this._pinballCatchHud;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'pinball-catch-hud';
+      el.className = 'pinball-catch-hud';
+      el.setAttribute?.('role', 'status');
+      el.setAttribute?.('aria-live', 'polite');
+      const scoreEl = document.createElement('div');
+      scoreEl.className = 'pinball-catch-score';
+      const metaEl = document.createElement('div');
+      metaEl.className = 'pinball-catch-meta';
+      el.appendChild(scoreEl);
+      el.appendChild(metaEl);
+      document.body.appendChild(el);
+      this._pinballCatchHud = el;
+    }
+    const scoreEl = el.children[0] as HTMLElement | undefined;
+    const metaEl = el.children[1] as HTMLElement | undefined;
+    if (scoreEl) scoreEl.textContent = `抓到啦 +${result.score} 分`;
+    if (metaEl) metaEl.textContent = `速度 ${result.speedPxPerSec} px/s · 大小 ${result.sizePercent}%`;
+
+    const vw = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 400;
+    const vh = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 400;
+    let anchorX = vw / 2;
+    let anchorY = Math.round(vh * 0.22);
+    const rect = this._canvas?.getBoundingClientRect?.();
+    const b = this._model?.isReady?.() ? this._model.getStaticBounds?.() : null;
+    if (rect && b) {
+      const t = this._modelViewportTransform();
+      const dpr = this._dpr || 1;
+      anchorX = rect.left + (t.originX + ((b.minX + b.maxX) / 2) * t.scale) / dpr;
+      anchorY = rect.top + (t.originY - b.maxY * t.scale) / dpr;
+    } else if (rect && rect.width > 0) {
+      anchorX = rect.left + rect.width / 2;
+      anchorY = rect.top + rect.height * 0.18;
+    }
+    el.style.visibility = 'hidden';
+    el.hidden = false;
+    el.classList?.remove?.('show', 'closing');
+    const w = el.offsetWidth || 180;
+    const h = el.offsetHeight || 44;
+    const left = Math.min(Math.max(8, Math.round(anchorX - w / 2)), Math.max(8, vw - w - 8));
+    const top = Math.min(Math.max(8, Math.round(anchorY - h - 10)), Math.max(8, vh - h - 8));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.visibility = '';
+    void el.offsetWidth;
+    el.classList?.add?.('show');
+
+    if (typeof setTimeout === 'function') {
+      this._pinballCatchHideTimer = setTimeout(() => {
+        this._pinballCatchHideTimer = null;
+        this._hidePinballCatchHud(false);
+      }, 2200);
+    }
+  }
+
   private _onPinballBounce(event: PinballBounceEvent): void {
     if (event.impactSpeed < 150) return;
     const now = this._pinballSimMs;
@@ -2278,6 +2390,7 @@ export class PetApp {
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
       if (!this._isOnCharacter(e)) return;
+      this._capturePinballCatch();
       this._cancelSnapAnimation();
       this._activePointerId = e.pointerId;
       // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
@@ -2696,6 +2809,7 @@ export class PetApp {
     if (paused) {
       this._chat?.stop();
       this._cancelPinball();
+      this._hidePinballCatchHud(true);
       this._cancelInteraction();
       this._resetDragState();
       this._bubble?.cancel();
@@ -2767,6 +2881,7 @@ export class PetApp {
     this._liftPivot = rect && Number.isFinite(downCssX) && Number.isFinite(downCssY)
       ? this._modelPointAt(rect.left + downCssX!, rect.top + downCssY!)
       : null;
+    this._capturePinballCatch();
     this._cancelSnapAnimation();
     this._leftDown = false;
     this._dragCandidate = false;
