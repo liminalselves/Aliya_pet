@@ -741,6 +741,14 @@ export class ProceduralReactionService {
     target.triggerPartImpulse?.('hair_bounce', -0.75);
   }
 
+  /** 弹球甩出时平滑退出拎起姿态，不叠加落地蹲顿动作。 */
+  releaseHoldSmooth(): void {
+    if (this._getTarget() == null || !this._holding || this._isPettingActive()) return;
+    this._holding = false;
+    this._start([phase(240, 1, 0, 0, 0, 0, 0, 0, 0, true)]);
+    this._eyeOverrideActive = false;
+  }
+
   private _holdDizzyPose(now: number): {
     env: number;
     headX: number; headY: number; headZ: number;

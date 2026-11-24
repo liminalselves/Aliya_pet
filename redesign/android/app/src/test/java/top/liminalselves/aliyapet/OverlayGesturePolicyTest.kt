@@ -70,6 +70,21 @@ object OverlayGesturePolicyTest {
         val floorSlide = PinballMotionStepper.extrapolate(100f, 700f, 300f, 20f, 0f, 400f, 0f, 700f, 0.016f)
         check(floorSlide.y == 700f && floorSlide.vy == 0f && floorSlide.x > 100f && floorSlide.vx < 300f)
 
+        // Upward post-bounce velocity (<120 px/s) must still lift off the floor instead of clamping grounded.
+        val smallBounce = PinballMotionStepper.extrapolate(100f, 700f, 200f, -100f, 0f, 400f, 0f, 700f, 0.016f)
+        check(smallBounce.y < 700f && smallBounce.vy < 0f)
+
+        // PinballSyncGate: blocks stale snapshots until matching drag-end ack, ignores stale epoch acks.
+        val gate = PinballSyncGate()
+        check(gate.allowsSnapshot())
+        val e1 = gate.onDragStart()
+        check(!gate.allowsSnapshot())
+        val e2 = gate.onDragStart()
+        gate.onDragEndAck(e1)
+        check(!gate.allowsSnapshot())
+        gate.onDragEndAck(e2)
+        check(gate.allowsSnapshot())
+
         val capped = PinballMotionStepper.extrapolate(100f, 200f, 1000f, 0f, 0f, 4000f, 0f, 700f, 5f)
         val atCap = PinballMotionStepper.extrapolate(100f, 200f, 1000f, 0f, 0f, 4000f, 0f, 700f, PinballMotionStepper.MAX_EXTRAPOLATE_SEC)
         check(capped == atCap)

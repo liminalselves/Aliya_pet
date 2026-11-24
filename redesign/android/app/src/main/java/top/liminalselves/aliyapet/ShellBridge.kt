@@ -82,6 +82,9 @@ class ShellBridge(private val host: Host) {
             maxYCss: Float,
         ) {}
 
+        /** 原生拖动结束通知已在 JS 队列执行前解封弹球同步门控。 */
+        fun ackNativeDragEnd(epoch: Long) {}
+
         /** 设置页全量设置 JSON：壳转发给桌宠 WebView 实时应用。 */
         fun notifySettings(json: String) {}
 
@@ -200,6 +203,11 @@ class ShellBridge(private val host: Host) {
             active, xCss, yCss, wCss, hCss,
             vxCss, vyCss, minXCss, maxXCss, minYCss, maxYCss,
         )
+    }
+
+    @JavascriptInterface
+    fun ackNativeDragEnd(epoch: Long) {
+        host.ackNativeDragEnd(epoch)
     }
 
     @JavascriptInterface

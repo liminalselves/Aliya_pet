@@ -191,11 +191,31 @@ export function clampPetOpacity(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(value / 5) * 5));
 }
 
+function canonicalHotkey(raw: string): string {
+  const parts = raw.split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  if (parts.length === 0) return '';
+  const key = parts[parts.length - 1];
+  const mods = new Set(
+    parts.slice(0, -1).map((m) =>
+      m === 'control' ? 'ctrl' : m === 'super' || m === 'meta' ? 'win' : m
+    )
+  );
+  return ['ctrl', 'alt', 'shift', 'win'].filter((m) => mods.has(m)).concat(key).join('+');
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<PetSettings>;
+    const gameModeHotkey = typeof parsed.gameModeHotkey === 'string'
+      ? parsed.gameModeHotkey : DEFAULT_SETTINGS.gameModeHotkey;
+    // 旧版用户若已把游戏模式热键设为新默认值 Ctrl+Alt+B，迁移时留空弹球热键以免冲突失效。
+    const pinballModeHotkey = typeof parsed.pinballModeHotkey === 'string'
+      ? parsed.pinballModeHotkey
+      : canonicalHotkey(gameModeHotkey) === canonicalHotkey(DEFAULT_SETTINGS.pinballModeHotkey)
+        ? ''
+        : DEFAULT_SETTINGS.pinballModeHotkey;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -205,10 +225,9 @@ export function loadSettings(): PetSettings {
       pendantEnabled: parsed.pendantEnabled === true,
       pendantScale: clampPendantScale(parsed.pendantScale ?? 1),
       pendantRopeLength: clampPendantRope(parsed.pendantRopeLength ?? DEFAULT_SETTINGS.pendantRopeLength),
-      gameModeHotkey: typeof parsed.gameModeHotkey === 'string' ? parsed.gameModeHotkey : DEFAULT_SETTINGS.gameModeHotkey,
+      gameModeHotkey,
       pinballMode: parsed.pinballMode === true,
-      pinballModeHotkey: typeof parsed.pinballModeHotkey === 'string'
-        ? parsed.pinballModeHotkey : DEFAULT_SETTINGS.pinballModeHotkey,
+      pinballModeHotkey,
       showCatEars: parsed.showCatEars !== false,
       showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,

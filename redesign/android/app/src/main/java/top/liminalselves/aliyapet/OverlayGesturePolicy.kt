@@ -137,7 +137,7 @@ internal object PinballMotionStepper {
         while (rem > 1e-6f) {
             val dt = minOf(rem, SUBSTEP_SEC)
             rem -= dt
-            val grounded = y >= hiY - 0.5f && kotlin.math.abs(vy) < GROUND_BOUNCE_MIN_VY
+            val grounded = y >= hiY - 0.5f && kotlin.math.abs(vy) < 1f
             if (grounded) {
                 y = hiY
                 vy = 0f
@@ -175,4 +175,31 @@ internal object PinballMotionStepper {
         }
         return State(x, y, vx, vy)
     }
+}
+
+/**
+ * 弹球快照与原生拖动的代际门控（纯状态机，便于 JVM 测试）：
+ * 原生接管拖动后屏蔽来自拖动前手势/旧 rAF 帧的迟到 syncPinballFrame，
+ * 直到 JS 队列执行到本轮 onNativeDragEnd 时才重新放行。
+ */
+internal class PinballSyncGate {
+    private var epoch = 0L
+    private var awaitingDragEnd = false
+
+    fun onDragStart(): Long {
+        epoch++
+        awaitingDragEnd = true
+        return epoch
+    }
+
+    fun onDragEndAck(ackEpoch: Long) {
+        if (ackEpoch == epoch) awaitingDragEnd = false
+    }
+
+    fun reset() {
+        epoch++
+        awaitingDragEnd = false
+    }
+
+    fun allowsSnapshot(): Boolean = !awaitingDragEnd
 }

@@ -310,13 +310,98 @@ fn set_pinball_mode_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<Stri
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HotkeySyncStep {
+    Game(String),
+    Pinball(String),
+}
+
+/// 规划双快捷键同步顺序：避免启动从默认键切换到已保存键（或互换快捷键）时被中间态冲突拦截。
+fn plan_hotkey_sync(
+    cur_game: &str,
+    cur_pinball: &str,
+    next_game: &str,
+    next_pinball: &str,
+) -> Result<Vec<HotkeySyncStep>, String> {
+    if !next_game.is_empty() && next_game == next_pinball {
+        return Err("快捷键与另一个模式冲突，请换一个组合".into());
+    }
+    if !next_game.is_empty() && next_game == cur_pinball {
+        if !next_pinball.is_empty() && next_pinball == cur_game {
+            return Ok(vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game(next_game.to_string()),
+                HotkeySyncStep::Pinball(next_pinball.to_string()),
+            ]);
+        }
+        return Ok(vec![
+            HotkeySyncStep::Pinball(next_pinball.to_string()),
+            HotkeySyncStep::Game(next_game.to_string()),
+        ]);
+    }
+    Ok(vec![
+        HotkeySyncStep::Game(next_game.to_string()),
+        HotkeySyncStep::Pinball(next_pinball.to_string()),
+    ])
+}
+
+/// 成对同步游戏模式与弹球模式快捷键（启动加载设置 / 批量设置变更用）。
+#[tauri::command]
+fn sync_mode_hotkeys(
+    app: tauri::AppHandle,
+    game_hotkey: String,
+    pinball_hotkey: String,
+) -> Result<(), String> {
+    let parse_opt = |raw: &str| -> Result<String, String> {
+        if raw.trim().is_empty() {
+            Ok(String::new())
+        } else {
+            parse_hotkey(raw).map(|p| p.2)
+        }
+    };
+    let next_g = parse_opt(&game_hotkey)?;
+    let next_b = parse_opt(&pinball_hotkey)?;
+    let cur_g = app
+        .state::<GameModeHotkey>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let cur_b = app
+        .state::<PinballModeHotkey>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let steps = plan_hotkey_sync(&cur_g, &cur_b, &next_g, &next_b)?;
+    let mut first_err: Option<String> = None;
+    for step in steps {
+        let res = match step {
+            HotkeySyncStep::Game(v) => set_game_mode_hotkey(app.clone(), v),
+            HotkeySyncStep::Pinball(v) => set_pinball_mode_hotkey(app.clone(), v),
+        };
+        if let Err(err) = res {
+            if first_err.is_none() {
+                first_err = Some(err);
+            }
+        }
+    }
+    match first_err {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
 fn hotkey_menu_text(title: &str, hotkey: &str) -> String {
     if hotkey.is_empty() { title.into() } else { format!("{title}（{hotkey}）") }
 }
 
 #[cfg(test)]
 mod hotkey_tests {
-    use super::{hotkey_menu_text, parse_hotkey, DEFAULT_GAME_MODE_HOTKEY, DEFAULT_PINBALL_MODE_HOTKEY};
+    use super::{
+        hotkey_menu_text, parse_hotkey, plan_hotkey_sync, HotkeySyncStep,
+        DEFAULT_GAME_MODE_HOTKEY, DEFAULT_PINBALL_MODE_HOTKEY,
+    };
 
     #[test]
     fn parses_and_normalizes_modifiers_and_keys() {
@@ -335,6 +420,34 @@ mod hotkey_tests {
         assert_ne!(g.2, b.2);
         assert_eq!(hotkey_menu_text("弹球模式", ""), "弹球模式");
         assert_eq!(hotkey_menu_text("弹球模式", &b.2), "弹球模式（Ctrl+Alt+B）");
+    }
+
+    #[test]
+    fn sync_plan_handles_migration_and_swap_without_intermediate_conflict() {
+        // 旧版用户已将游戏模式设为 Ctrl+Alt+B，启动从默认 (Ctrl+Alt+G, Ctrl+Alt+B) 迁移
+        let steps = plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+B", "")
+            .expect("migration plan");
+        assert_eq!(
+            steps,
+            vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game("Ctrl+Alt+B".into()),
+            ]
+        );
+
+        // 两个快捷键互换：先清一个再重绑
+        let swap = plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+B", "Ctrl+Alt+G")
+            .expect("swap plan");
+        assert_eq!(
+            swap,
+            vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game("Ctrl+Alt+B".into()),
+                HotkeySyncStep::Pinball("Ctrl+Alt+G".into()),
+            ]
+        );
+
+        assert!(plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+P", "Ctrl+Alt+P").is_err());
     }
 
     #[test]
@@ -1114,6 +1227,7 @@ fn main() {
             sync_pinball_menu,
             set_game_mode_hotkey,
             set_pinball_mode_hotkey,
+            sync_mode_hotkeys,
             get_game_mode,
             set_game_mode_enabled,
             show_records,

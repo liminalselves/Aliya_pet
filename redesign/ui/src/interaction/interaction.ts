@@ -189,7 +189,11 @@ export class InteractionService {
    * 普通单击（非抚摸接管，上层在单击确认后调用）。
    * 返回 true 表示点击已由互动处理。
    */
-  onClick(ctx: PointerContext, wasDrag: boolean): boolean {
+  onClick(
+    ctx: PointerContext,
+    wasDrag: boolean,
+    opts?: { pinballLaunch?: boolean; suppressSpeak?: boolean }
+  ): boolean {
     if (wasDrag) {
       const wasDragging = this.dragReaction.isDragging;
       const hadShake = this.dragReaction.hadShake || this.procedural.isHoldDizzyActive;
@@ -203,13 +207,19 @@ export class InteractionService {
         this.react('drag.fast', { fallback: 'eyes_widen' });
         this._onInteraction?.({ kind: 'drag', trigger: 'drag.fast' });
       } else if (wasDragging && this.procedural.isHolding) {
-        // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
-        this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
-        this._onInteraction?.({ kind: 'drag', trigger: 'drag.slow' });
+        if (opts?.pinballLaunch) {
+          // 弹球模式慢速起飞（140~160 px/s）：只平滑收回拎起姿态，不叠落地蹲顿与着陆台词。
+          this.procedural.releaseHoldSmooth?.();
+        } else {
+          // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
+          this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
+          this._onInteraction?.({ kind: 'drag', trigger: 'drag.slow' });
+        }
       }
       return false;
     }
 
+    const speak = opts?.suppressSpeak ? false : undefined;
     this.dragReaction.cancel();
     const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
     // 模型空间水平朝向：触点在角色哪一侧（镜像已还原），供蹭手、回头等朝向反应。
@@ -228,7 +238,7 @@ export class InteractionService {
       // 左右耳共用一次反馈时窗，避免连点反复启动单眼眨。
       this._earClickUntilMs = now + 420;
       const trigger = `click.${area}`;
-      this.react(trigger, { fallback: 'ear_blink', areaId, side });
+      this.react(trigger, { fallback: 'ear_blink', areaId, side, speak });
       this._onInteraction?.({ kind: 'click', trigger, areaId, side });
       return true;
     }
@@ -248,7 +258,7 @@ export class InteractionService {
     const trigger = !tier ? base
       : this._reactions.has(`${key}.${tier}`) ? `${key}.${tier}` : `click.${tier}`;
     this._triggerAreaImpulse(streakKey, side);
-    this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed' });
+    this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed', speak });
     this._onInteraction?.({ kind: 'click', trigger, areaId, side, tier: tier ?? undefined });
     return true;
   }

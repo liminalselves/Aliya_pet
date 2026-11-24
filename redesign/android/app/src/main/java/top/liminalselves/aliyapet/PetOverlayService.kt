@@ -109,6 +109,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     // ---------- 弹球模式原生高刷与 Choreographer 同步 ----------
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pinballLock = Any()
+    private val pinballSyncGate = PinballSyncGate()
+    private var pinballDragEpoch = 0L
     private var pinballSnapActive = false
     private var pinballSnapXCss = 0f
     private var pinballSnapYCss = 0f
@@ -322,6 +324,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     override fun onDestroy() {
         windowAttached = false
         mainHandler.removeCallbacks(pinballSyncRunnable)
+        synchronized(pinballLock) { pinballSyncGate.reset() }
         stopPinballLoop(resetRefreshRate = false, clearSnapshot = true)
         dialogueBubble?.destroy()
         dialogueBubble = null
@@ -566,7 +569,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         }
                         val (releaseVx, releaseVy) = dragVelocity.releaseVelocity(ev.eventTime, cancelled)
                         val maxSpeed = dragVelocity.maxSpeedCss
-                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $maxSpeed, $cancelled, $upXCss, $upYCss, $releaseVx, $releaseVy);")
+                        evalJs("window.AndroidShell?.ackNativeDragEnd?.($pinballDragEpoch); window.__pet?.onNativeDragEnd($dxCss, $dyCss, $maxSpeed, $cancelled, $upXCss, $upYCss, $releaseVx, $releaseVy);")
                         true
                     } else {
                         false
@@ -598,6 +601,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         web.dispatchTouchEvent(cancel)
         cancel.recycle()
         // 拖动从接管时的窗口与指针起算；归位途中被抓起则停在当前位置接着拖，不跳。
+        pinballDragEpoch = synchronized(pinballLock) { pinballSyncGate.onDragStart() }
         if (stopPinballLoop(resetRefreshRate = true, clearSnapshot = true) && windowAttached) {
             try {
                 updatePetWindow()
@@ -660,6 +664,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         val next = PetDisplaySettings.normalized(opacity, fullClickThrough)
         ShellPrefs.setPetDisplay(this, next)
         if (next.ignoresTouch && !displaySettings.ignoresTouch && windowAttached) {
+            synchronized(pinballLock) { pinballSyncGate.reset() }
             stopPinballLoop(resetRefreshRate = true, clearSnapshot = true)
             // Finish an existing WebView/native gesture before suppressing all further events.
             val now = android.os.SystemClock.uptimeMillis()
@@ -714,6 +719,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun getMode(): String = "overlay"
 
+    override fun ackNativeDragEnd(epoch: Long) {
+        synchronized(pinballLock) {
+            pinballSyncGate.onDragEndAck(epoch)
+        }
+    }
+
     override fun syncPinballFrame(
         active: Boolean,
         xCss: Float,
@@ -734,6 +745,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             return
         }
         synchronized(pinballLock) {
+            if (!pinballSyncGate.allowsSnapshot()) return
             pinballSnapActive = active
             pinballSnapXCss = xCss
             pinballSnapYCss = yCss
@@ -794,6 +806,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     }
 
     private fun applyPinballSnapshotOnMain() {
+        val allowsSnapshot: Boolean
         val snapActive: Boolean
         val xCss: Float
         val yCss: Float
@@ -801,16 +814,17 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         val hCss: Float
         synchronized(pinballLock) {
             pinballSyncPosted = false
-            snapActive = pinballSnapActive
+            allowsSnapshot = pinballSyncGate.allowsSnapshot()
+            snapActive = pinballSnapActive && allowsSnapshot
             xCss = pinballSnapXCss
             yCss = pinballSnapYCss
             wCss = pinballSnapWCss
             hCss = pinballSnapHCss
         }
         if (!windowAttached) return
-        if (!snapActive || screenOff || nativeDragging || displaySettings.ignoresTouch) {
-            val refreshChanged = stopPinballLoop(resetRefreshRate = true, clearSnapshot = false)
-            if (!snapActive && !nativeDragging && wCss > 0f && hCss > 0f) {
+        if (!allowsSnapshot || !snapActive || screenOff || nativeDragging || displaySettings.ignoresTouch) {
+            val refreshChanged = stopPinballLoop(resetRefreshRate = true, clearSnapshot = !allowsSnapshot)
+            if (allowsSnapshot && !snapActive && !nativeDragging && wCss > 0f && hCss > 0f) {
                 applyWindowRectPx(xCss, yCss, wCss, hCss, forceLayoutUpdate = refreshChanged)
             } else if (refreshChanged) {
                 try {

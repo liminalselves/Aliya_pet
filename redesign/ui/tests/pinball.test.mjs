@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { reactionHost, reactionStub } from './reaction-stub.mjs';
 
 const root = new URL('../', import.meta.url);
 const EMBED = { isEmbed: false, assetUrl: p => '/' + String(p).replace(/^\/+/, ''), postToHost() {} };
@@ -842,4 +843,162 @@ test('PetApp Android 悬浮窗: 弹球期间按 DPR 对齐物理像素并通过 
   app._syncWrapWindow();
   assert.equal(syncCalls.at(-1).active, false, '自然停稳后应关闭原生高刷模式');
   assert.ok(saved.some(([k]) => k === 'petX'));
+});
+
+test('loadSettings 迁移: 旧 gameModeHotkey 占用了 Ctrl+Alt+B 时留空默认弹球热键避免冲突', () => {
+  const store = new Map([
+    ['aliya_pet_settings_v1', JSON.stringify({ gameModeHotkey: 'alt+ctrl+b' })],
+  ]);
+  const localStorage = {
+    getItem: k => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, String(v)),
+  };
+  const { loadSettings } = load('settings', {}, { localStorage });
+  const loaded = loadSettings();
+  assert.equal(loaded.gameModeHotkey, 'alt+ctrl+b');
+  assert.equal(loaded.pinballModeHotkey, '');
+});
+
+test('弹球慢速起飞与轻点抓球: 140~160px/s 起飞不触发 landing 蹲顿，轻点抓球抑制点击气泡避免与计分浮标重叠', () => {
+  const recognizer = load('interaction/petting-recognizer');
+  const petting = load('interaction/petting-controller', { './petting-recognizer': recognizer });
+  const procedural = load('interaction/procedural');
+  const { InteractionService } = load('interaction/interaction', {
+    './petting-controller': petting,
+    './procedural': procedural,
+  });
+  const lines = [];
+  const impulses = [];
+  let offsets = [0, 0, 0, 0];
+  const target = {
+    getInteractionParamInfo: () => ({
+      angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
+      angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
+      eyeLMin: 0, eyeLMax: 1, eyeRMin: 0, eyeRMax: 1, hasEyes: true,
+    }),
+    setInteractionOffsets(...v) { offsets = v; },
+    setBodyTilt() {},
+    setEyeOverride() {},
+    setPettingLookAtReduction() {},
+    setEarInteraction() {},
+    setFaceCheek() {},
+    setArmInteraction() {},
+    setFaceMicroInteraction() {},
+    triggerPartImpulse(part, str) { impulses.push([part, str]); },
+  };
+  const service = new InteractionService({
+    hitAreas: { hitAreaAt: () => 'head', isInHeadPetZone: () => true, mirrored: false },
+    getTarget: () => target,
+    reactions: reactionStub({ actionFor: k => (k === 'drag.slow' ? 'landing' : undefined) }),
+    host: reactionHost({ speak: line => lines.push(line.entryId) }),
+    pettingHost: { isDialogueActive: () => false },
+    random: () => 0,
+  });
+
+  // 1. 慢速起飞（145 px/s >= 140 且 < 160）：平滑退出 hold，不触发 landing 蹲顿或 drag.slow 台词
+  service.dragReaction.beginDrag();
+  service.dragReaction.onDragMove(145);
+  service.beginHold();
+  service.tick(16);
+  assert.equal(service.procedural.isHolding, true);
+  service.onClick({ normX: 0.5, normY: 0.3, pxX: 100, pxY: 100, dtSeconds: 0.016, leftPressed: false, isSecondary: false }, true, { pinballLaunch: true });
+  assert.equal(service.procedural.isHolding, false);
+  assert.equal(lines.includes('drag.slow'), false, '弹球起飞不得说落地台词');
+  assert.equal(impulses.some(([p]) => p === 'hair_bounce'), true);
+  impulses.length = 0;
+
+  // 2. PetApp 轻点抓球：显示计分浮标并抑制同次点击台词，随后普通单击仍正常说话
+  const { PinballPhysics, computePinballCatchScore } = load('pinball');
+  const settingsMod = load('settings', {}, { localStorage: { getItem: () => null, setItem() {} } });
+  const listeners = {};
+  const huds = [];
+  const { PetApp } = load('pet-app', {
+    './pinball': { PinballPhysics, computePinballCatchScore },
+    './settings': settingsMod,
+    './platform': {
+      platform: 'android',
+      androidShell: () => ({
+        setInteracting() {},
+        setPinballCatchHud: json => huds.push(json),
+        syncPinballFrame() {},
+        getMetrics: () => JSON.stringify({ screenW: 400, screenH: 800 }),
+      }),
+      isAndroidOverlay: () => true,
+    },
+  }, {
+    window: { addEventListener() {}, matchMedia: () => ({ matches: false }) },
+    document: { body: { dataset: {}, classList: { remove() {}, add() {} } }, documentElement: {} },
+  });
+
+  const pb = new PinballPhysics();
+  pb.launch({ x: 200, y: 200, vx: 900, vy: -200, bounds: { minX: 0, maxX: 400, minY: 0, maxY: 800 } });
+  const app = Object.assign(Object.create(PetApp.prototype), {
+    _wrapWindow: true,
+    _pinball: pb,
+    _interaction: service,
+    _hitAreas: service.hitAreas,
+    _coordination: { activity() {} },
+    _behavior: { updateLookTarget() {}, clearLookTarget() {} },
+    _model: {
+      isReady: () => true,
+      boundsW: 1,
+      boundsH: 1.2,
+      boundsAspect: 0.64,
+      getStaticBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+      getDynamicBounds: () => ({ minX: -0.4, maxX: 0.4, minY: -0.6, maxY: 0.6 }),
+    },
+    _canvas: {
+      width: 200,
+      height: 300,
+      style: {},
+      addEventListener: (name, fn) => { listeners[name] = fn; },
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 300 }),
+      setPointerCapture() {},
+      releasePointerCapture() {},
+      hasPointerCapture: () => false,
+    },
+    _dpr: 1,
+    _contentScaleCss: 200,
+    _originCssX: 200,
+    _originCssY: 200,
+    _appliedRectX: 100,
+    _appliedRectY: 50,
+    _appliedRectW: 200,
+    _appliedRectH: 300,
+    _settings: { ...settingsMod.DEFAULT_SETTINGS, pinballMode: true },
+    _scaleRange: { minS: 0.15, maxS: 2 },
+    _shownSizeFactor: () => 0.5,
+    _modelViewportTransform: () => ({ scale: 200, originX: 100, originY: 150 }),
+    _isOnCharacter: () => true,
+    _publishHitMask() {},
+    _syncWindowMetrics() {},
+    _snapAnimToken: 0,
+    _snapAnimation: null,
+    _snapHintTimer: null,
+  });
+  app._wirePointerEvents();
+
+  const ev = (overrides = {}) => ({
+    isPrimary: true,
+    pointerId: 7,
+    button: 0,
+    buttons: 1,
+    pointerType: 'mouse',
+    clientX: 100,
+    clientY: 100,
+    screenX: 100,
+    screenY: 100,
+    ...overrides,
+  });
+  listeners.pointerdown(ev());
+  listeners.pointerup(ev({ buttons: 0 }));
+  assert.equal(huds.length, 1, '抓球应显示计分浮标');
+  assert.equal(lines.length, 0, '抓球同次轻点不得弹出普通台词气泡');
+  assert.equal(impulses.some(([p]) => p === 'hair_bounce'), true, '抓球点击仍保留部位物理脉冲反馈');
+
+  // 后续正常轻点恢复台词
+  listeners.pointerdown(ev({ pointerId: 8 }));
+  listeners.pointerup(ev({ pointerId: 8, buttons: 0 }));
+  assert.equal(lines.length, 1);
+  assert.ok(Array.isArray(offsets));
 });
