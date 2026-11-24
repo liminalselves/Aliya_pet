@@ -11,23 +11,24 @@ AI / 业务（petAI + 事件总线）
 状态引擎（state.ts：默认表情 + 待机动作池；手动优先，自动按时段）
 动作（motion3.json，瞬时行为） ⊕ 表情（exp3.json，持续的脸）
 视线（gaze.ts GazeController：唯一所有者——指针跟随 × 动作交挖权重
-      × 表情注视偏移 → 眼球总钳制）+ 覆盖通道（overlay.ts：抬手/猫耳/
-      眨眼覆盖/互动偏移，物理后写入）
+      × 表情注视偏移 → 眼球总钳制）+ 互动通道（overlay.ts：物理前写入头身偏移，
+      物理后写入抬手/猫耳/猫耳拖拽弹簧/脸红/眨眼覆盖/四腕/微表情/局部弹簧脉冲/情绪符号）
 物理 · 呼吸 · 眨眼（SDK 调度器，常驻）
 ```
 
 每帧流水线（pet-model.update，五阶段）：
 
 ```
-loadParameters → 动作 → saveParameters → 调度器(眨眼→表情→呼吸→物理)
-→ GazeController → OverlayLayer → model.update
+loadParameters → 动作 → saveParameters → 调度器(眨眼→表情→呼吸)
+→ GazeController → 互动头身偏移(物理前) → 物理/EarDragPhysics → OverlayLayer(物理后)
+→ 特殊眼型与替换嘴 → model.update
 ```
 
 关键规则：**眼球的写入者只有 GazeController 与动作曲线**。任何动作播放期间
 （待机、互动、AI 指令、设置试放；状态只设默认表情，不算动作）头部与眼球都完全交给
 动作曲线，指针跟随与表情注视偏移让位，播完约 0.2s 时间常数淡回跟随；表情不直写眼球——
 注视偏移（垂眼/回避/斜眼）声明在 `gaze.ts EXPRESSION_GAZE`，与指针跟随合成后统一平滑
-与钳制（±20 安全行程）。程序化效果（猫耳/抬手）走 `overlay.ts` 通道，晚于物理求值。
+与钳制（±20 安全行程）。互动与程序化效果走 `overlay.ts` 通道：头身偏移先于物理以带动头发和配饰，其余效果晚于物理求值。
 
 ## API 一览
 

@@ -28,15 +28,15 @@ Android 主界面承载完整互动，悬浮窗只承载基础互动，约束见
 - **Framework**（TypeScript）+ **Core** 6.0.1（wasm，内嵌于
   `live2dcubismcore.js`），取自 `third_party/cubism-web-sdk/`。
 - Vite 别名 `@framework/*` 指向 `third_party/cubism-web-sdk/Framework/src`。
-- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调）；拖动、抚摸、点击反应期间及结束后 400ms
-  临时 60fps（省电模式不升），实测单帧 update≈1ms、render≈0.07ms（Chromium，132 网格），
-  Windows `preserveDrawingBuffer: true` 消除窗口缩放闪烁（Android 关闭，见 `ANDROID.md`）。
+- WebGL2 画布，30fps 帧率上限（URL 参数 `?fps=N` 可调）；非省电模式下拖动、抚摸、点击反应期间及结束后 400ms
+  临时 60fps；省电模式保持 15fps（`LiftPose` 拆分子步且拖动跳过 GPU 回读，保证画面与位置对齐）。弹球模式弹跳期间
+  帧间隔设为 0，直连 rAF 对齐屏幕原生刷新率；Windows `preserveDrawingBuffer: true` 消除窗口缩放闪烁（Android 关闭，见 `ANDROID.md`）。
 - 帧调度（`PetApp._scheduleFrame`）：帧率上限低于屏幕刷新率时先 `setTimeout` 睡到下一帧前
   6ms，再用 rAF 对齐垂直同步，醒来的首个 vsync 直接渲染。不能只靠 rAF 空转判间隔：144Hz 屏
   每秒会唤醒 144 次而只渲染 30 次，rAF 时间戳又比当前时刻早几毫秒，按它判间隔会再多空转一帧。
-- Windows 穿透掩码要把画布读回 CPU：互动中 120ms 采样一次，静置 250ms；几何变化立即重采。
+- Windows 穿透掩码要把画布读回 CPU：互动中 120ms 采样一次，静置 250ms（拖动期间跳过回读）；几何变化立即重采。
   Rust 光标轮询线程（16ms）缓存窗口句柄、直接调 Win32 `IsWindowVisible`/`GetWindowRect`，
-  不走 tauri 的 `is_visible()`/`hwnd()`（每次都要投递到主线程再等结果）。chat 窗隐藏时掩码轮询暂停。
+  不走 tauri 的 `is_visible()`/`hwnd()`（每次都要投递到主线程再等结果）；向 `pet` 广播全局光标位置节流到 ~30Hz（32ms，静止每秒补发）。chat 窗掩码改由 `ResizeObserver` 与窗口原生事件驱动（保留 3000ms 兜底轮询），隐藏时暂停。
 - 渲染暂停：后台/熄屏时停止渲染循环（`PetApp.setPaused`）。
 
 ## 布局与适配（与旧版对齐的两个关键算法）
@@ -96,8 +96,7 @@ Android 桥（Kotlin `ShellBridge`）以 `addJavascriptInterface` 注入
 - `update`（420×520）承载更新提示：pet 窗口透明穿透不能画 UI，检查结果经 Rust
   `show_update` 转交（事件 + 暂存兜底）。非强制时关闭即隐藏；强制更新关闭 =
   退出应用（`mandatory` 标记由壳保存，见 main.rs `UpdateWindowState`）。
-- **游戏模式与全局快捷键**：`GAME_MODE` 开启时强制桌宠窗口穿透并收起 `chat`（释放键盘焦点），
-  由托盘勾选项或 Windows 全局快捷键（`RegisterHotKey`，默认 `Ctrl+Alt+G`，设置页可配置）切换。
+- **游戏模式与弹球模式全局快捷键**：`GAME_MODE` 开启时强制桌宠窗口穿透并收起 `chat`（释放键盘焦点）；`pinballMode` 开启后拖动甩出桌宠按重力碰撞弹跳。二者共由同一快捷键线程注册（`RegisterHotKey`，默认分别为 `Ctrl+Alt+G` 与 `Ctrl+Alt+B`），设置页可自定义并通过 `sync_mode_hotkeys` 成对防冲突同步，托盘菜单实时展示当前组合与勾选状态。
 
 ## 鼠标吊坠（仅 Windows）
 

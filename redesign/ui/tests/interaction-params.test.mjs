@@ -201,7 +201,8 @@ test('猫耳通道遵守解剖侧映射与显隐开关，特殊眼型下微笑�
     assert.ok(leftSideAmp > 0.2 && leftSideAmp > rightSideAmp * 1.5,
       `点击画面左耳应主要驱动解剖右耳 Param12=${leftSideAmp} > Param8=${rightSideAmp}`);
 
-    // 隐藏猫耳后猫耳通道和猫耳脉冲都保持静默（先让前面点击的头身反应与物理彻底回稳）
+    // 隐藏猫耳后猫耳通道和猫耳脉冲都保持静默（屏蔽随机自然眨眼，让前面点击的头身反应与物理彻底回稳）
+    h.petModel._eyeBlink.setParameterIds([]);
     h.petModel.setCatEarsVisible(false, true);
     for (let i = 0; i < 90; i++) h.step(16);
     const baseP8 = paramOf(h.petModel, 'Param8');

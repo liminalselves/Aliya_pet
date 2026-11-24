@@ -4,7 +4,7 @@
 
 <!-- Badge Row 1: Core Info -->
 [![GitHub](https://img.shields.io/badge/GitHub-liminalselves%2FAliya__pet-181717?logo=github&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
-[![Version](https://img.shields.io/badge/version-0.4.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-orange)](https://github.com/liminalselves/Aliya_pet/blob/master/CHANGELOG.md)
 
 <!-- Badge Row 2: Platform -->
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows&logoColor=white)](https://github.com/liminalselves/Aliya_pet)
@@ -49,18 +49,19 @@ Aliya Pet 是一只基于官方 **Live2D Cubism Web SDK** 渲染的桌面宠物�
 
 ## 功能特点
 
-- **抚摸互动**：手势识别（水平往返、速度、方向反转），配合抚摸台词与闭眼反馈。
-- **点击互动**：按区域反应（头 / 脸 / 耳朵），连续点击触发疑惑，快速拖动触发反应。
+- **抚摸互动**：手势识别（水平与上下往返划动、速度、方向反转），靠近头部边缘时头与上半身贴手，配合抚摸台词、闭眼、猫耳轻抖、双臂微收与笑眼微表情联动。
+- **点击互动**：按区域反应（头 / 脸 / 耳朵等），特定部位叠加局部阻尼弹簧物理回弹，连续点击触发疑惑，拖动拎起含钟摆与纵向弹性反馈，连续摇晃触发流泪转晕反应，松手支持轻度惯性滑行。
+- **弹球模式**：开启后拖动甩出可按重力在屏幕工作区四壁间碰撞弹跳与触底压扁回弹，随时可抓停并显示得分、速度与人物大小（默认全局快捷键 `Ctrl+Alt+B`）。
 - **对话系统**：分页气泡、按时间段的问候、洗牌袋抽取与随机台词。
 - **渲染质量**：纹理使用线性 Mipmap 过滤与边缘钳制，Cubism 裁剪遮罩缓冲区提升至 512，改善缩放时发丝、眼睛和衣物轮廓的锯齿；不通过提高 DPR 或开启无验证收益的高精度遮罩来换取 GPU 开销。
-- **自然表现**：视线跟随、独立的约 5 秒静止释放、久静回神（`notice`）、张望 / 发呆动作、自动随机动作与每日互动状态。
+- **自然表现**：视线跟随（身体跟着轻幅俯仰与侧转）、独立的约 5 秒静止释放、久静回神（`notice`）、张望 / 发呆动作、自动随机动作与每日互动状态。
 - **触摸与互动**：Android 短触摸按下即产生视线反馈，抬起后保留最后触点并平滑释放；持续移动、抚摸、点击、拖动和双击仍按原优先级仲裁。
 - **表情、动作、状态**：状态决定默认表情与待机动作（手动选择或按时段自动），表情和动作是临时表演，经 `window.petAI` 暴露给 AI / 自动化（见[动作库与资源](#动作库与资源)）。
 - **聊天（Misskey 智能体）**：GAL 式分页回复、表演指令驱动表情动作、会话记录 / 新建 / 切换与八面板托管配置——Windows 为独立窗口，Android 在主界面及辅助页；支持 Windows 截图预览、图片上传、粘贴与拖放附件。
 - **显示与穿透**：设置页支持人物透明度 0–100%、5% 步进和实时预览；独立的“人物完全穿透”开关仅作用于人物悬浮窗，不影响聊天、设置和独立台词气泡。0% 会安全降级为完全穿透，保留原始 Alpha 命中掩码。
-- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启、游戏模式与可配置全局快捷键（默认 `Ctrl+Alt+G`，开启后不拦截点击并收起聊天窗）；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
+- **Windows 桌面集成**：透明无边框置顶窗口、托盘菜单、贴边吸附、镜像、开机自启、游戏模式（默认 `Ctrl+Alt+G`，开启后不拦截点击并收起聊天窗）与弹球模式（默认 `Ctrl+Alt+B`）全局快捷键；透明区域鼠标穿透，只有角色不透明像素才拦截鼠标；完全穿透和透明度使用 pet 专属原生命中策略，截图会校验窗口排除状态并恢复原始 Display Affinity。
 - **鼠标吊坠（仅 Windows）**：缩小的人物用绳子挂在鼠标指针上，随移动甩动，惯性力同时带动头发与裙摆；独立穿透窗口，不拦截点击，与主桌宠同时存在，默认关闭，设置页可调开关、大小和绳长。
-- **Android 桌面集成**：App 内全屏互动，抚摸时提供触觉震动反馈；退后台自动转为悬浮窗（仅基础互动，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
+- **Android 桌面集成**：App 内全屏互动，抚摸时提供触觉震动反馈；退后台自动转为悬浮窗（仅基础互动、惯性滑行与高刷弹球，双击返回主界面）；省电模式、开机自启；透明区域触摸穿透，支持贴边半出屏停靠。主 Activity 保持可交互，完全穿透仅作用于人物悬浮窗，并遵守 Android 12+ 的 Window alpha 安全限制。
 - **设置持久化**：缩放、位置、镜像、贴边、置顶、自启、人物透明度和完全穿透状态等在双端一致保存。
 
 ## 快速开始
@@ -129,13 +130,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ```powershell
 cd redesign/ui
-npm test                 # 前端回归（包含 Android 触摸事件集成测试）
+npm test                 # 前端回归（包含 Android 触摸事件与弹球集成测试）
 npm run build            # TypeScript 检查与生产构建
 npm run test:bounds      # Live2D 动作 / 表情 / 渲染余量边界测试
 
+cd ../src-tauri
+cargo test               # Windows 壳单元测试（窗口几何 / 热键 / 命中掩码 / 截屏 / MiAuth）
+
 cd ../android
 .\gradlew.bat testPetDisplayPolicy      # 本地 JVM 显示与触摸安全策略检查
-.\gradlew.bat testOverlayGesturePolicy  # 本地 JVM 悬浮窗手势仲裁检查
+.\gradlew.bat testOverlayGesturePolicy  # 本地 JVM 悬浮窗手势与弹球同步检查
 ```
 
 > Android 真机、Windows Tauri/WebView2 GUI、多屏/DPI/HDR 和不同 OEM 的透明区触摸策略仍需在目标设备上单独验收。悬浮窗窗外触摸受 Android `ACTION_OUTSIDE` 能力限制，不能承诺持续跟随其他 App 内的手指轨迹。
@@ -261,18 +265,19 @@ The official rendering pipeline (maintained by Live2D) replaces the old self-bui
 
 ### Features
 
-- **Petting**: gesture recognition (horizontal back-and-forth, speed, direction reversal) with petting lines and eye-closing feedback.
-- **Click interactions**: region-based reactions (head / face / ears); repeated clicks trigger doubt, fast drags trigger reactions.
+- **Petting**: gesture recognition (horizontal and vertical back-and-forth strokes, speed, direction reversal), edge-hugging head/torso lean toward your hand, plus petting lines, eye-closing, ear twitches, subtle arm tucking and smiling micro-expressions.
+- **Click & drag interactions**: region-based reactions (head / face / ears, etc.) with localized damped-spring physics impulses on hit parts; repeated clicks trigger doubt; dragging lifts Aliya with pendulum sway, vertical elastic stretch and ear drag inertia; rapid back-and-forth shaking triggers tearful dizzy wobbling; normal drag release adds gentle inertia glide.
+- **Pinball mode**: when enabled, flinging Aliya launches her under gravity with elastic wall bounces and subtle bottom squash-and-rebound; catching her mid-air stops the bounce and displays catch score, speed and current size (configurable global hotkey, default `Ctrl+Alt+B`).
 - **Dialogue system**: paged bubbles, time-of-day greetings, shuffle-bag drawing and random lines.
 - **Rendering quality**: linear Mipmap filtering with edge clamping and a 512×512 Cubism clipping-mask buffer reduce scaled edge aliasing around hair, eyes and clothing; the project does not trade GPU cost for unverified higher DPR or high-precision masks.
-- **Natural behavior**: gaze following, an independent ~5-second idle release, long-idle wake-up (`notice`), look-around / daydream motions, automatic random motions and daily interaction state.
+- **Natural behavior**: gaze following (with subtle body pitch and turn), an independent ~5-second idle release, long-idle wake-up (`notice`), look-around / daydream motions, automatic random motions and daily interaction state.
 - **Touch & interaction**: Android touch-down produces immediate gaze feedback; the last touch point is retained after release and fades back through the existing timer. Continuous movement, petting, clicks, dragging and double-tap arbitration remain intact.
 - **Expressions, motions, states**: a state sets the default expression and idle motions (chosen manually or automatically by time of day); expressions and motions are temporary performances, exposed to AI/automation via `window.petAI` (see [Motion Library & Assets](#motion-library--assets)).
 - **Chat (Misskey agent)**: GAL-style paged replies, performance-cue-driven expressions and motions, session log / creation / switching and eight-panel managed config — a separate window on Windows, in-app pages on Android; Windows screen-capture preview and image attachments support paste and drag-and-drop.
 - **Display & click-through**: the settings page provides 0–100% character opacity in 5% steps with live preview, plus a separate full click-through switch that only affects the character overlay, not chat, settings or the standalone dialogue bubble. At 0%, the character safely falls back to full click-through while preserving the original alpha hit mask.
-- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start, Game Mode with a configurable global hotkey (default `Ctrl+Alt+G`, makes the pet click-through and hides chat); click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
+- **Windows desktop integration**: transparent borderless always-on-top window, tray menu, edge snapping, mirroring, auto-start, Game Mode (default `Ctrl+Alt+G`, makes the pet click-through and hides chat) and Pinball Mode (default `Ctrl+Alt+B`) global hotkeys; click-through over transparent areas — only opaque character pixels capture the mouse; opacity and full click-through use a pet-specific native hit-test policy, and screen capture verifies and restores the original window Display Affinity.
 - **Mouse pendant (Windows only)**: a shrunken character hangs from the mouse cursor on a rope and swings with the motion, with the inertia also driving hair and skirt physics; it lives in its own click-through window, never intercepts clicks, coexists with the main pet, is off by default, and the settings page adjusts the switch, size and rope length.
-- **Android desktop integration**: full-screen interaction inside the app with haptic vibration feedback during petting; when backgrounded it becomes an overlay with basic interactions (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
+- **Android desktop integration**: full-screen interaction inside the app with haptic vibration feedback during petting; when backgrounded it becomes an overlay with basic interactions, inertia glide and high-refresh pinball mode with a native catch-score HUD (double-tap returns to the main screen); power-save mode, auto-start; touch-through over transparent areas and edge docking that may hang partly off-screen. The main Activity remains interactive, while full click-through applies only to the character overlay and follows Android 12+ Window alpha safety limits.
 - **Persistent settings**: scale, position, mirroring, snapping, always-on-top, auto-start, character opacity and full click-through are stored consistently on both platforms.
 
 ### Quick Start
@@ -340,13 +345,16 @@ In **Bash (Linux / macOS / Git Bash)**, the frontend build and installation comm
 
 ```powershell
 cd redesign/ui
-npm test                 # Frontend regression suite, including Android touch integration tests
+npm test                 # Frontend regression suite, including Android touch and pinball integration tests
 npm run build            # TypeScript check and production build
 npm run test:bounds      # Live2D motion / expression / render-margin boundary checks
 
+cd ../src-tauri
+cargo test               # Windows shell unit tests (window geometry / hotkeys / hit mask / screen capture / MiAuth)
+
 cd ../android
 .\gradlew.bat testPetDisplayPolicy      # Local JVM display and touch-safety policy checks
-.\gradlew.bat testOverlayGesturePolicy  # Local JVM overlay gesture arbitration checks
+.\gradlew.bat testOverlayGesturePolicy  # Local JVM overlay gesture and pinball sync checks
 ```
 
 > Android hardware, Windows Tauri/WebView2 GUI, multi-monitor/DPI/HDR and OEM-specific transparent-touch behavior still require target-device smoke testing. Overlay `ACTION_OUTSIDE` events are platform-limited and cannot provide continuous tracking of fingers inside other apps.

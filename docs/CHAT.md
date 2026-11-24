@@ -94,8 +94,8 @@ MskMessageRenderer（rendering/：完整 MSK 消息渲染与展示分段）
   PerformanceCue 对象，全局）、`chat-window-state {open}`（仅 pet）。
 - 穿透掩码按窗口标签区分（`HitMaskState` 为 label→HitMask 表，点击穿透
   轮询同时服务 pet 与 chat）：pet 上报动态角色剪影（1.5s 无更新回退
-  可交互）；chat 由 `chat/window.ts` 每 500ms 上报面板+输入框的静态矩形
-  （sticky，不做陈旧回退），透明死区点击穿透到下层窗口。
+  可交互）；chat 由 `chat/window.ts` 经 ResizeObserver 与窗口原生事件（移动/缩放/DPI）驱动上报面板+输入框的静态矩形
+  （并保留 3000ms 兜底轮询，sticky，不做陈旧回退），透明死区点击穿透到下层窗口。
 - pet 显隐与 chat 联动：托盘隐藏 pet 时 chat 随之隐藏并记住开关
   （`on_pet_hidden`/`on_pet_shown`），pet 恢复时带回之前开着的 chat。
 - 开关状态跨重启记忆：pet 前端在 `chat-state` 监听里把 open 写入
@@ -288,7 +288,7 @@ Aliya_web 相同。
 ## 验证
 
 `redesign/ui` 下 `npm test`（回归、渲染与托管协议）与 `npm run build`；
-`redesign/src-tauri` 下 `cargo test`（窗口几何/MiAuth 共 26 项）。
+`redesign/src-tauri` 下 `cargo test`（窗口几何 / MiAuth / 热键 / 截屏共 50 项）。
 Windows 已实机验收：chat 窗口预创建、贴 pet 右侧底对齐、授权全链路
 （错误 session/favicon 404 且监听存活、正确 session 200、未授权时
 界面显示错误）、× 收起窗口、边缘避让（pet 贴近右缘时 chat 翻到左侧、

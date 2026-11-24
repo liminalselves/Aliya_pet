@@ -186,4 +186,4 @@ powershell -File tools/measure-cpu.ps1
 可视化调试页在 `redesign/ui/tests/`（`npm run dev` 后直接访问）：
 `visual-regression.html`（关键交互逐帧对照）、
 `face-probe.html?transition=1`（表情切换逐帧）、
-`face-probe.html?expressions=1`（12 种表情对照）。
+`face-probe.html?expressions=1`（14 种表情对照）。
