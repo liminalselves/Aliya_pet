@@ -14,9 +14,14 @@ import android.graphics.Canvas
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Region
+import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
+import android.view.Choreographer
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ViewConfiguration
@@ -68,6 +73,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private lateinit var web: WebView
     private lateinit var params: WindowManager.LayoutParams
     private var dialogueBubble: DialogueBubbleWindow? = null
+    private var pinballCatchHud: PinballCatchHudWindow? = null
     private var screenOff = false
     private val wm: WindowManager
         get() = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -92,18 +98,90 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
     private var lastTapX = 0f
     private var lastTapY = 0f
     private var openingMain = false
-    private var dragLastAt = 0L
-    private var dragLastRawX = 0f
-    private var dragLastRawY = 0f
-    private var dragEmaVx = 0f
-    private var dragEmaVy = 0f
+    private val dragVelocity = OverlayDragVelocity()
     private var dragLastVelocityEmitMs = 0L
-    private var dragMaxSpeed = 0f
     private var gesturePhase = OverlayGesturePolicy.Phase.VOID
     private var gestureDownTime = 0L
     private var windowAttached = false
     /** 贴边归位动画（原生驱动，与 tokens.css --al-ease 同一条曲线）。 */
     private var snapAnimator: ValueAnimator? = null
+
+    // ---------- 弹球模式原生高刷与 Choreographer 同步 ----------
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pinballLock = Any()
+    private val pinballSyncGate = PinballSyncGate()
+    private var pinballDragEpoch = 0L
+    private var pinballSnapActive = false
+    private var pinballSnapXCss = 0f
+    private var pinballSnapYCss = 0f
+    private var pinballSnapWCss = 0f
+    private var pinballSnapHCss = 0f
+    private var pinballSnapVxCss = 0f
+    private var pinballSnapVyCss = 0f
+    private var pinballMinXCss = 0f
+    private var pinballMaxXCss = 0f
+    private var pinballMinYCss = 0f
+    private var pinballMaxYCss = 0f
+    private var pinballSnapTimeNs = 0L
+    private var pinballSyncPosted = false
+    private var pinballLoopRunning = false
+    private var highRefreshActive = false
+
+    private val pinballFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!pinballLoopRunning || !windowAttached || screenOff || nativeDragging || displaySettings.ignoresTouch) {
+                pinballLoopRunning = false
+                return
+            }
+            val snapActive: Boolean
+            val x0: Float
+            val y0: Float
+            val vx: Float
+            val vy: Float
+            val minX: Float
+            val maxX: Float
+            val minY: Float
+            val maxY: Float
+            val snapNs: Long
+            synchronized(pinballLock) {
+                snapActive = pinballSnapActive
+                x0 = pinballSnapXCss
+                y0 = pinballSnapYCss
+                vx = pinballSnapVxCss
+                vy = pinballSnapVyCss
+                minX = pinballMinXCss
+                maxX = pinballMaxXCss
+                minY = pinballMinYCss
+                maxY = pinballMaxYCss
+                snapNs = pinballSnapTimeNs
+            }
+            if (!snapActive) {
+                pinballLoopRunning = false
+                return
+            }
+            val elapsedSec = ((frameTimeNanos - snapNs) / 1_000_000_000f)
+                .coerceIn(0f, PinballMotionStepper.MAX_EXTRAPOLATE_SEC)
+            val next = PinballMotionStepper.extrapolate(
+                x0, y0, vx, vy, minX, maxX, minY, maxY, elapsedSec,
+            )
+            val d = density
+            val nextX = (next.x * d).roundToInt()
+            val nextY = (next.y * d).roundToInt()
+            if (nextX != params.x || nextY != params.y) {
+                params.x = nextX
+                params.y = nextY
+                try {
+                    updatePetWindow()
+                } catch (_: Exception) {
+                }
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    private val pinballSyncRunnable = Runnable {
+        applyPinballSnapshotOnMain()
+    }
 
     // ---------- 像素掩码穿透 ----------
     private data class HitMask(val cols: Int, val rows: Int, val data: ByteArray)
@@ -125,7 +203,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOff = true
+                    if (stopPinballLoop(resetRefreshRate = true, clearSnapshot = true) && windowAttached) {
+                        try {
+                            updatePetWindow()
+                        } catch (_: Exception) {
+                        }
+                    }
                     dialogueBubble?.hide()
+                    pinballCatchHud?.hide()
                     web.onPause() // 暂停 WebView 渲染与 JS 定时器
                     evalShellEvent("screen-off")
                 }
@@ -186,6 +271,9 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
+        if (Build.VERSION.SDK_INT >= 28) {
+            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         val saved = ShellPrefs.getPetPos(this)
         if (saved != null) {
             // petX/petY 是角色原点（非窗口左上角）：按原点居中估算初始矩形，
@@ -235,8 +323,13 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun onDestroy() {
         windowAttached = false
+        mainHandler.removeCallbacks(pinballSyncRunnable)
+        synchronized(pinballLock) { pinballSyncGate.reset() }
+        stopPinballLoop(resetRefreshRate = false, clearSnapshot = true)
         dialogueBubble?.destroy()
         dialogueBubble = null
+        pinballCatchHud?.destroy()
+        pinballCatchHud = null
         snapAnimator?.cancel()
         snapAnimator = null
         try {
@@ -327,6 +420,15 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         bubble.update(json, params.x, params.y)
     }
 
+    override fun setPinballCatchHud(json: String) {
+        if (!windowAttached || screenOff || json.isBlank()) {
+            pinballCatchHud?.hide()
+            return
+        }
+        val hud = pinballCatchHud ?: PinballCatchHudWindow(this, wm).also { pinballCatchHud = it }
+        hud.show(json, params.x, params.y)
+    }
+
     /** 同一次原生移动同步两个窗口；不需要额外 WebView、JS 逐帧 IPC 或计时器。 */
     private fun updatePetWindow() {
         wm.updateViewLayout(web, params)
@@ -368,13 +470,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                     dragStartParamX = params.x
                     dragStartParamY = params.y
                     nativeDragging = false
-                    dragLastAt = ev.eventTime
-                    dragLastRawX = ev.rawX
-                    dragLastRawY = ev.rawY
-                    dragEmaVx = 0f
-                    dragEmaVy = 0f
+                    dragVelocity.reset(ev.rawX, ev.rawY, ev.eventTime)
                     dragLastVelocityEmitMs = 0L
-                    dragMaxSpeed = 0f
                     false
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -392,29 +489,29 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                             lastTapAt = 0L
                         }
                         // 移出 slop 即接管：从上一采样点起算，不把 slop 那段位移一次性跳过去。
-                        val wasDragging = nativeDragging
                         if (wasPending && gesturePhase == OverlayGesturePolicy.Phase.ARMED) beginNativeDrag(ev.eventTime)
-                        if (wasDragging) {
-                            val elapsed = (ev.eventTime - dragLastAt).coerceAtLeast(1)
-                            val dtSec = elapsed / 1000f
+                        if (nativeDragging) {
                             val d = density.coerceAtLeast(1f)
-                            val vxCss = (ev.rawX - dragLastRawX) / d / dtSec
-                            val vyCss = (ev.rawY - dragLastRawY) / d / dtSec
-                            val alpha = 1f - kotlin.math.exp(-dtSec / 0.035f)
-                            dragEmaVx += (vxCss - dragEmaVx) * alpha
-                            dragEmaVy += (vyCss - dragEmaVy) * alpha
-                            dragMaxSpeed = maxOf(dragMaxSpeed, kotlin.math.hypot(dragEmaVx, dragEmaVy))
+                            val rawOffsetX = ev.rawX - ev.x
+                            val rawOffsetY = ev.rawY - ev.y
+                            for (i in 0 until ev.historySize) {
+                                val histTime = ev.getHistoricalEventTime(i)
+                                if (histTime > dragVelocity.lastTimeMs) {
+                                    dragVelocity.addSample(
+                                        ev.getHistoricalX(i) + rawOffsetX,
+                                        ev.getHistoricalY(i) + rawOffsetY,
+                                        histTime,
+                                        d,
+                                    )
+                                }
+                            }
+                            dragVelocity.addSample(ev.rawX, ev.rawY, ev.eventTime, d)
                             val emitDtMs = ev.eventTime - dragLastVelocityEmitMs
                             if (emitDtMs >= 32L) {
                                 val emitDtSec = (emitDtMs / 1000f).coerceAtMost(0.1f)
                                 dragLastVelocityEmitMs = ev.eventTime
-                                evalJs("window.__pet?.onNativeDragMove?.($dragEmaVx, $dragEmaVy, $emitDtSec);")
+                                evalJs("window.__pet?.onNativeDragMove?.(${dragVelocity.vxCss}, ${dragVelocity.vyCss}, $emitDtSec);")
                             }
-                        }
-                        dragLastAt = ev.eventTime
-                        dragLastRawX = ev.rawX
-                        dragLastRawY = ev.rawY
-                        if (nativeDragging) {
                             // 全域停靠：窗口可整个拖出屏幕（用户明确要求）；
                             // 钳到「完全出屏」域仅防 WM 参数溢出，找回走设置页重置位置
                             val (sw, sh) = screenPhysical()
@@ -425,6 +522,7 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                             updatePetWindow()
                             true
                         } else {
+                            dragVelocity.trackAnchor(ev.rawX, ev.rawY, ev.eventTime)
                             false
                         }
                     }
@@ -464,7 +562,14 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
                         val upXCss = ev.x / d
                         val upYCss = ev.y / d
                         val cancelled = ev.actionMasked == MotionEvent.ACTION_CANCEL
-                        evalJs("window.__pet?.onNativeDragEnd($dxCss, $dyCss, $dragMaxSpeed, $cancelled, $upXCss, $upYCss);")
+                        if (!cancelled && ev.eventTime > dragVelocity.lastTimeMs &&
+                            (ev.rawX != dragVelocity.lastRawX || ev.rawY != dragVelocity.lastRawY)
+                        ) {
+                            dragVelocity.addSample(ev.rawX, ev.rawY, ev.eventTime, d)
+                        }
+                        val (releaseVx, releaseVy) = dragVelocity.releaseVelocity(ev.eventTime, cancelled)
+                        val maxSpeed = dragVelocity.maxSpeedCss
+                        evalJs("window.AndroidShell?.ackNativeDragEnd?.($pinballDragEpoch); window.__pet?.onNativeDragEnd($dxCss, $dyCss, $maxSpeed, $cancelled, $upXCss, $upYCss, $releaseVx, $releaseVy);")
                         true
                     } else {
                         false
@@ -496,12 +601,18 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         web.dispatchTouchEvent(cancel)
         cancel.recycle()
         // 拖动从接管时的窗口与指针起算；归位途中被抓起则停在当前位置接着拖，不跳。
+        pinballDragEpoch = synchronized(pinballLock) { pinballSyncGate.onDragStart() }
+        if (stopPinballLoop(resetRefreshRate = true, clearSnapshot = true) && windowAttached) {
+            try {
+                updatePetWindow()
+            } catch (_: Exception) {
+            }
+        }
         if (snapAnimator != null) cancelSnapAnimation(notify = true)
         dragStartParamX = params.x
         dragStartParamY = params.y
-        dragStartRawX = dragLastRawX
-        dragStartRawY = dragLastRawY
-        dragLastAt = eventTime
+        dragStartRawX = dragVelocity.lastRawX
+        dragStartRawY = dragVelocity.lastRawY
         dragLastVelocityEmitMs = eventTime
         nativeDragging = true
         val downXCss = dragDownLocalX / density.coerceAtLeast(1f)
@@ -553,6 +664,8 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
         val next = PetDisplaySettings.normalized(opacity, fullClickThrough)
         ShellPrefs.setPetDisplay(this, next)
         if (next.ignoresTouch && !displaySettings.ignoresTouch && windowAttached) {
+            synchronized(pinballLock) { pinballSyncGate.reset() }
+            stopPinballLoop(resetRefreshRate = true, clearSnapshot = true)
             // Finish an existing WebView/native gesture before suppressing all further events.
             val now = android.os.SystemClock.uptimeMillis()
             val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
@@ -606,30 +719,200 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun getMode(): String = "overlay"
 
-    override fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {
-        if (!windowAttached || nativeDragging) return
+    override fun ackNativeDragEnd(epoch: Long) {
+        synchronized(pinballLock) {
+            pinballSyncGate.onDragEndAck(epoch)
+        }
+    }
+
+    override fun syncPinballFrame(
+        active: Boolean,
+        xCss: Float,
+        yCss: Float,
+        wCss: Float,
+        hCss: Float,
+        vxCss: Float,
+        vyCss: Float,
+        minXCss: Float,
+        maxXCss: Float,
+        minYCss: Float,
+        maxYCss: Float,
+    ) {
+        if (!xCss.isFinite() || !yCss.isFinite() || !wCss.isFinite() || !hCss.isFinite() ||
+            !vxCss.isFinite() || !vyCss.isFinite() ||
+            !minXCss.isFinite() || !maxXCss.isFinite() || !minYCss.isFinite() || !maxYCss.isFinite()
+        ) {
+            return
+        }
+        synchronized(pinballLock) {
+            if (!pinballSyncGate.allowsSnapshot()) return
+            pinballSnapActive = active
+            pinballSnapXCss = xCss
+            pinballSnapYCss = yCss
+            pinballSnapWCss = wCss
+            pinballSnapHCss = hCss
+            pinballSnapVxCss = vxCss
+            pinballSnapVyCss = vyCss
+            pinballMinXCss = minXCss
+            pinballMaxXCss = maxXCss
+            pinballMinYCss = minYCss
+            pinballMaxYCss = maxYCss
+            pinballSnapTimeNs = System.nanoTime()
+            if (!pinballSyncPosted) {
+                pinballSyncPosted = true
+                mainHandler.post(pinballSyncRunnable)
+            }
+        }
+    }
+
+    private fun applyHighRefreshRate(enabled: Boolean): Boolean {
+        if (!::params.isInitialized) return false
+        var nextModeId = 0
+        var nextRate = 0f
+        if (enabled) {
+            val dm = getSystemService(DisplayManager::class.java)
+            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+            val current = display?.mode
+            val best = if (display != null && current != null) {
+                display.supportedModes
+                    .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+                    .maxByOrNull { it.refreshRate }
+            } else {
+                null
+            }
+            if (best != null) {
+                nextModeId = best.modeId
+                nextRate = best.refreshRate
+            } else {
+                nextRate = 120f
+            }
+        }
+        highRefreshActive = enabled
+        val changed = params.preferredDisplayModeId != nextModeId || params.preferredRefreshRate != nextRate
+        params.preferredDisplayModeId = nextModeId
+        params.preferredRefreshRate = nextRate
+        return changed
+    }
+
+    private fun stopPinballLoop(resetRefreshRate: Boolean, clearSnapshot: Boolean): Boolean {
+        pinballLoopRunning = false
+        Choreographer.getInstance().removeFrameCallback(pinballFrameCallback)
+        if (clearSnapshot) {
+            synchronized(pinballLock) {
+                pinballSnapActive = false
+            }
+        }
+        return if (resetRefreshRate) applyHighRefreshRate(false) else false
+    }
+
+    private fun applyPinballSnapshotOnMain() {
+        val allowsSnapshot: Boolean
+        val snapActive: Boolean
+        val xCss: Float
+        val yCss: Float
+        val wCss: Float
+        val hCss: Float
+        synchronized(pinballLock) {
+            pinballSyncPosted = false
+            allowsSnapshot = pinballSyncGate.allowsSnapshot()
+            snapActive = pinballSnapActive && allowsSnapshot
+            xCss = pinballSnapXCss
+            yCss = pinballSnapYCss
+            wCss = pinballSnapWCss
+            hCss = pinballSnapHCss
+        }
+        if (!windowAttached) return
+        if (!allowsSnapshot || !snapActive || screenOff || nativeDragging || displaySettings.ignoresTouch) {
+            val refreshChanged = stopPinballLoop(resetRefreshRate = true, clearSnapshot = !allowsSnapshot)
+            if (allowsSnapshot && !snapActive && !nativeDragging && wCss > 0f && hCss > 0f) {
+                applyWindowRectPx(xCss, yCss, wCss, hCss, forceLayoutUpdate = refreshChanged)
+            } else if (refreshChanged) {
+                try {
+                    updatePetWindow()
+                } catch (_: Exception) {
+                }
+            }
+            return
+        }
         cancelSnapAnimation(notify = false)
+        var needUpdate = applyHighRefreshRate(true)
+        val d = density
+        val w = (wCss * d).roundToInt().coerceAtLeast(8)
+        val h = (hCss * d).roundToInt().coerceAtLeast(8)
+        val sizeChanged = w != params.width || h != params.height
+        if (sizeChanged) {
+            params.width = w
+            params.height = h
+            needUpdate = true
+        }
+        if (!pinballLoopRunning) {
+            val x = (xCss * d).roundToInt()
+            val y = (yCss * d).roundToInt()
+            if (x != params.x || y != params.y) {
+                params.x = x
+                params.y = y
+                needUpdate = true
+            }
+            pinballLoopRunning = true
+            Choreographer.getInstance().removeFrameCallback(pinballFrameCallback)
+            Choreographer.getInstance().postFrameCallback(pinballFrameCallback)
+        }
+        if (needUpdate) {
+            try {
+                updatePetWindow()
+            } catch (_: Exception) {
+            }
+        }
+        if (sizeChanged) web.post { applyTouchableRegion() }
+    }
+
+    private fun applyWindowRectPx(
+        xCss: Float,
+        yCss: Float,
+        wCss: Float,
+        hCss: Float,
+        forceLayoutUpdate: Boolean = false,
+    ) {
+        val x = (xCss * density).roundToInt()
+        val y = (yCss * density).roundToInt()
         val w = (wCss * density).roundToInt().coerceAtLeast(8)
         val h = (hCss * density).roundToInt().coerceAtLeast(8)
+        val rectChanged = x != params.x || y != params.y || w != params.width || h != params.height
+        if (!rectChanged && !forceLayoutUpdate) return
+        val sizeChanged = w != params.width || h != params.height
         // 固定窗口架构：矩形由前端按静态包围盒一次算定，壳不再钳制——
         // 窗口可随拖动整个出屏（NO_LIMITS），吸附归位由前端缓动驱动
-        params.x = (xCss * density).roundToInt()
-        params.y = (yCss * density).roundToInt()
+        params.x = x
+        params.y = y
         params.width = w
         params.height = h
         updatePetWindow()
-        web.post { applyTouchableRegion() }
+        if (sizeChanged) web.post { applyTouchableRegion() }
         // 位置持久化在前端（petX/petY 现在指角色原点而非窗口左上角）
+    }
+
+    override fun setWindowRect(xCss: Float, yCss: Float, wCss: Float, hCss: Float) {
+        if (!windowAttached || nativeDragging) return
+        cancelSnapAnimation(notify = false)
+        val refreshChanged = stopPinballLoop(resetRefreshRate = true, clearSnapshot = true)
+        applyWindowRectPx(xCss, yCss, wCss, hCss, forceLayoutUpdate = refreshChanged)
     }
 
     override fun animateWindowTo(xCss: Float, yCss: Float, durationMs: Int) {
         if (!windowAttached || nativeDragging) return
         cancelSnapAnimation(notify = false)
+        val refreshChanged = stopPinballLoop(resetRefreshRate = true, clearSnapshot = true)
         val fromX = params.x
         val fromY = params.y
         val toX = (xCss * density).roundToInt()
         val toY = (yCss * density).roundToInt()
         if (fromX == toX && fromY == toY) {
+            if (refreshChanged) {
+                try {
+                    updatePetWindow()
+                } catch (_: Exception) {
+                }
+            }
             evalJs("window.__pet && window.__pet.onNativeSnapEnd && window.__pet.onNativeSnapEnd(true);")
             return
         }
@@ -743,6 +1026,12 @@ class PetOverlayService : android.app.Service(), ShellBridge.Host {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (windowAttached && highRefreshActive && applyHighRefreshRate(true)) {
+            try {
+                updatePetWindow()
+            } catch (_: Exception) {
+            }
+        }
         if (::web.isInitialized) evalShellEvent("display-changed")
     }
 

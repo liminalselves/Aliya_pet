@@ -47,6 +47,10 @@ export interface PetSettings {
   pendantRopeLength: number;
   /** 游戏模式全局快捷键（仅 Windows），如 "Ctrl+Alt+G"；空串 = 不使用快捷键。 */
   gameModeHotkey: string;
+  /** 弹球模式：拖动甩出后像弹球一样在屏幕边缘弹性碰撞弹跳。 */
+  pinballMode: boolean;
+  /** 弹球模式全局快捷键（仅 Windows），如 "Ctrl+Alt+B"；空串 = 不使用快捷键。 */
+  pinballModeHotkey: string;
 }
 
 export const PENDANT_SCALE_MIN = 0.4;
@@ -99,6 +103,8 @@ export const DEFAULT_SETTINGS: PetSettings = {
   pendantScale: 1,
   pendantRopeLength: 80,
   gameModeHotkey: 'Ctrl+Alt+G',
+  pinballMode: false,
+  pinballModeHotkey: 'Ctrl+Alt+B',
 };
 
 /** 绝对缩放范围（对应 Flutter ScalePolicy.clampAbsolute）。 */
@@ -185,11 +191,31 @@ export function clampPetOpacity(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(value / 5) * 5));
 }
 
+function canonicalHotkey(raw: string): string {
+  const parts = raw.split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  if (parts.length === 0) return '';
+  const key = parts[parts.length - 1];
+  const mods = new Set(
+    parts.slice(0, -1).map((m) =>
+      m === 'control' ? 'ctrl' : m === 'super' || m === 'meta' ? 'win' : m
+    )
+  );
+  return ['ctrl', 'alt', 'shift', 'win'].filter((m) => mods.has(m)).concat(key).join('+');
+}
+
 export function loadSettings(): PetSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<PetSettings>;
+    const gameModeHotkey = typeof parsed.gameModeHotkey === 'string'
+      ? parsed.gameModeHotkey : DEFAULT_SETTINGS.gameModeHotkey;
+    // 旧版用户若已把游戏模式热键设为新默认值 Ctrl+Alt+B，迁移时留空弹球热键以免冲突失效。
+    const pinballModeHotkey = typeof parsed.pinballModeHotkey === 'string'
+      ? parsed.pinballModeHotkey
+      : canonicalHotkey(gameModeHotkey) === canonicalHotkey(DEFAULT_SETTINGS.pinballModeHotkey)
+        ? ''
+        : DEFAULT_SETTINGS.pinballModeHotkey;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -199,7 +225,9 @@ export function loadSettings(): PetSettings {
       pendantEnabled: parsed.pendantEnabled === true,
       pendantScale: clampPendantScale(parsed.pendantScale ?? 1),
       pendantRopeLength: clampPendantRope(parsed.pendantRopeLength ?? DEFAULT_SETTINGS.pendantRopeLength),
-      gameModeHotkey: typeof parsed.gameModeHotkey === 'string' ? parsed.gameModeHotkey : DEFAULT_SETTINGS.gameModeHotkey,
+      gameModeHotkey,
+      pinballMode: parsed.pinballMode === true,
+      pinballModeHotkey,
       showCatEars: parsed.showCatEars !== false,
       showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
@@ -220,6 +248,19 @@ export function saveSettings(s: PetSettings): void {
   } catch {
     // 存储不可用时设置仅本次会话有效
   }
+}
+
+/** KeyboardEvent → 快捷键文本（与壳侧 parse_hotkey 同格式）；纯修饰键或不支持的键返回 null。 */
+export function hotkeyFromEvent(e: KeyboardEvent): string | null {
+  const m = /^(?:Key([A-Z])|Digit([0-9])|(F(?:[1-9]|1[0-9]|2[0-4])))$/.exec(e.code);
+  if (!m) return null;
+  const mods = [
+    e.ctrlKey && 'Ctrl',
+    e.altKey && 'Alt',
+    e.shiftKey && 'Shift',
+    e.metaKey && 'Win',
+  ].filter(Boolean);
+  return [...mods, m[1] ?? m[2] ?? m[3]].join('+');
 }
 
 /** 本地是否已有存档（首次启动为 false，据此换算默认缩放）。 */

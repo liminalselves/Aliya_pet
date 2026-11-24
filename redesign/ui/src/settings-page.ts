@@ -393,6 +393,7 @@ const refs: {
   showChatButton?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
   snapEdges?: HTMLInputElement;
+  pinballMode?: HTMLInputElement;
   autoStart?: HTMLInputElement;
   batterySaver?: HTMLInputElement;
   overlayOnExit?: HTMLInputElement;
@@ -403,7 +404,9 @@ const refs: {
   pendantRope?: SliderRowHandle;
   syncPendantRows?: () => void;
   gameModeHotkeyShow?: () => void;
+  pinballModeHotkeyShow?: () => void;
   syncGameMode?: (enabled: boolean) => void;
+  syncPinballMode?: () => void;
   scaleControl?: SliderRowHandle;
   chatBgDim?: SliderRowHandle;
   chatBgSync?: () => void;
@@ -444,7 +447,10 @@ function refreshControls(): void {
   if (refs.showChatButton) refs.showChatButton.checked = settings.showChatButton;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   refs.gameModeHotkeyShow?.();
+  refs.pinballModeHotkeyShow?.();
   if (refs.snapEdges) refs.snapEdges.checked = settings.snapEdges;
+  if (refs.pinballMode) refs.pinballMode.checked = settings.pinballMode;
+  refs.syncPinballMode?.();
   refs.scaleControl?.setDisplay(scalePercent(settings.scale));
   if (refs.batterySaver) refs.batterySaver.checked = settings.batterySaver === true;
   refs.chatBgDim?.setDisplay(Math.round(settings.chatBackgroundDim * 100));
@@ -461,18 +467,25 @@ function applyGameModeState(enabled: boolean): void {
 
 let hotkeyRecordingActive = false;
 
-/** 游戏模式快捷键录制行：点按钮后按下组合键；Esc 取消，Backspace/Delete 清除。
- *  先经壳注册，成功才保存，被占用时保留原快捷键并提示。 */
-function gameModeHotkeyRow(parent: HTMLElement): void {
+/** 全局快捷键录制行：点按钮后按下组合键；Esc 取消，Backspace/Delete 清除。
+ *  先经壳注册，成功才保存，被占用或冲突时保留原快捷键并提示。 */
+function createHotkeyRow(
+  parent: HTMLElement,
+  opts: {
+    title: string;
+    desc: string;
+    command: 'set_game_mode_hotkey' | 'set_pinball_mode_hotkey';
+    settingKey: 'gameModeHotkey' | 'pinballModeHotkey';
+  },
+): () => void {
   const row = document.createElement('div');
   row.className = 'row';
   const lab = document.createElement('div');
   lab.className = 'label';
-  lab.textContent = '游戏模式快捷键';
+  lab.textContent = opts.title;
   const sub = document.createElement('span');
   sub.className = 'sub';
-  sub.textContent =
-    '游戏模式下桌宠和聊天窗口完全不接收鼠标，不会抢走游戏的键盘焦点。也可从托盘切换。字母和数字需搭配 Ctrl / Alt / Shift / Win。';
+  sub.textContent = opts.desc;
   lab.appendChild(sub);
 
   const btn = document.createElement('button');
@@ -481,7 +494,7 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
   let recording = false;
   const show = () => {
     btn.classList.toggle('recording', recording);
-    btn.textContent = recording ? '请按下快捷键…' : settings.gameModeHotkey || '未设置';
+    btn.textContent = recording ? '请按下快捷键…' : settings[opts.settingKey] || '未设置';
   };
   const stop = () => {
     recording = false;
@@ -492,9 +505,9 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
   const commit = async (hotkey: string) => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const label = await invoke<string>('set_game_mode_hotkey', { hotkey });
-      update({ gameModeHotkey: label });
-      showToast(label ? `游戏模式快捷键已设为 ${label}` : '已清除游戏模式快捷键', {
+      const label = await invoke<string>(opts.command, { hotkey });
+      update({ [opts.settingKey]: label } as Partial<PetSettings>);
+      showToast(label ? `${opts.title}已设为 ${label}` : `已清除${opts.title}`, {
         kind: 'success',
       });
     } catch (error) {
@@ -538,10 +551,28 @@ function gameModeHotkeyRow(parent: HTMLElement): void {
   btn.addEventListener('blur', () => {
     if (recording) stop();
   });
-  refs.gameModeHotkeyShow = show;
   show();
   row.append(lab, btn);
   parent.appendChild(row);
+  return show;
+}
+
+function gameModeHotkeyRow(parent: HTMLElement): void {
+  refs.gameModeHotkeyShow = createHotkeyRow(parent, {
+    title: '游戏模式快捷键',
+    desc: '游戏模式下桌宠和聊天窗口完全不接收鼠标，不会抢走游戏的键盘焦点。也可从托盘切换。字母和数字需搭配 Ctrl / Alt / Shift / Win。',
+    command: 'set_game_mode_hotkey',
+    settingKey: 'gameModeHotkey',
+  });
+}
+
+function pinballModeHotkeyRow(parent: HTMLElement): void {
+  refs.pinballModeHotkeyShow = createHotkeyRow(parent, {
+    title: '弹球模式快捷键',
+    desc: '随时全局开启/关闭弹球模式（也可从托盘切换）。字母和数字需搭配 Ctrl / Alt / Shift / Win。',
+    command: 'set_pinball_mode_hotkey',
+    settingKey: 'pinballModeHotkey',
+  });
 }
 
 // 省电模式（所有平台；移动端收益最大）
@@ -905,6 +936,11 @@ function refreshStateHighlight(): void {
       title: '位置与贴边',
       desc: '控制悬浮窗拖动吸附与复位',
     });
+    const syncAndroidPinballBadge = () => {
+      if (settings.pinballMode) posCard.setBadge('弹球模式中', 'accent');
+      else posCard.setBadge('', 'neutral');
+    };
+    refs.syncPinballMode = syncAndroidPinballBadge;
     refs.snapEdges = createSwitchRow(
       posCard.body,
       '屏幕贴边',
@@ -912,6 +948,18 @@ function refreshStateHighlight(): void {
       () => settings.snapEdges,
       (v) => update({ snapEdges: v })
     ).input;
+    refs.pinballMode = createSwitchRow(
+      posCard.body,
+      '弹球模式',
+      '拖动人物用力甩出后，会在屏幕四壁间按重力碰撞弹跳并落到底边停稳；随时可再抓起',
+      () => settings.pinballMode,
+      (v) => {
+        update({ pinballMode: v });
+        syncAndroidPinballBadge();
+        showToast(v ? '已开启弹球模式' : '已关闭弹球模式');
+      }
+    ).input;
+    syncAndroidPinballBadge();
     createWideAction(posCard.body, '位置重置（移回主屏幕中央）', () => {
       // 贴合模式：petX/petY 是角色原点（非窗口左上角），写屏中心，
       // 悬浮窗下次启动（或服务重建）时在屏幕中央出现
@@ -1054,11 +1102,17 @@ function refreshStateHighlight(): void {
     });
     let gameModeInput: HTMLInputElement | null = null;
     if (platform === 'tauri') {
+      const syncSysBadge = () => {
+        if (gameModeEnabled) sysCard.setBadge('游戏模式中', 'warning');
+        else if (settings.pinballMode) sysCard.setBadge('弹球模式中', 'accent');
+        else sysCard.setBadge('', 'neutral');
+      };
       const syncGameModeCard = (enabled: boolean) => {
         if (gameModeInput) gameModeInput.checked = enabled;
-        sysCard.setBadge(enabled ? '游戏模式中' : '', enabled ? 'warning' : 'neutral');
+        syncSysBadge();
       };
       refs.syncGameMode = syncGameModeCard;
+      refs.syncPinballMode = syncSysBadge;
       gameModeInput = createSwitchRow(
         sysCard.body,
         '游戏模式',
@@ -1090,6 +1144,19 @@ function refreshStateHighlight(): void {
         })
         .catch(() => {});
       gameModeHotkeyRow(sysCard.body);
+      refs.pinballMode = createSwitchRow(
+        sysCard.body,
+        '弹球模式',
+        '开启后拖动人物用力甩出时，会在屏幕四壁间像弹球一样碰撞弹跳；保持原大小直立，随时可抓起或按快捷键切换',
+        () => settings.pinballMode,
+        (v) => {
+          update({ pinballMode: v });
+          syncSysBadge();
+          showToast(v ? '已开启弹球模式' : '已关闭弹球模式');
+        }
+      ).input;
+      pinballModeHotkeyRow(sysCard.body);
+      syncSysBadge();
     }
     refs.autoStart = createSwitchRow(
       sysCard.body,

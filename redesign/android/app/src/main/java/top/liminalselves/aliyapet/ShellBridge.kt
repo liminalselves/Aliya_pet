@@ -61,6 +61,30 @@ class ShellBridge(private val host: Host) {
         /** 独立原生气泡：文本、人物窗口内锚点及 CSS 样式；空文本隐藏。 */
         fun setDialogueBubble(json: String) {}
 
+        /** 弹球模式抓取计分浮标（独立原生浮层，不占用台词气泡）；空串隐藏。 */
+        fun setPinballCatchHud(json: String) {}
+
+        /**
+         * 同步弹球帧状态与边界（CSS px）：壳侧开启高刷并在 Choreographer VSYNC 驱动窗口位移。
+         * 实现直接写入并发状态，避免每帧 post 闭包产生 GC。
+         */
+        fun syncPinballFrame(
+            active: Boolean,
+            xCss: Float,
+            yCss: Float,
+            wCss: Float,
+            hCss: Float,
+            vxCss: Float,
+            vyCss: Float,
+            minXCss: Float,
+            maxXCss: Float,
+            minYCss: Float,
+            maxYCss: Float,
+        ) {}
+
+        /** 原生拖动结束通知已在 JS 队列执行前解封弹球同步门控。 */
+        fun ackNativeDragEnd(epoch: Long) {}
+
         /** 设置页全量设置 JSON：壳转发给桌宠 WebView 实时应用。 */
         fun notifySettings(json: String) {}
 
@@ -154,6 +178,36 @@ class ShellBridge(private val host: Host) {
     @JavascriptInterface
     fun setDialogueBubble(json: String) {
         main.post { host.setDialogueBubble(json) }
+    }
+
+    @JavascriptInterface
+    fun setPinballCatchHud(json: String) {
+        main.post { host.setPinballCatchHud(json) }
+    }
+
+    @JavascriptInterface
+    fun syncPinballFrame(
+        active: Boolean,
+        xCss: Float,
+        yCss: Float,
+        wCss: Float,
+        hCss: Float,
+        vxCss: Float,
+        vyCss: Float,
+        minXCss: Float,
+        maxXCss: Float,
+        minYCss: Float,
+        maxYCss: Float,
+    ) {
+        host.syncPinballFrame(
+            active, xCss, yCss, wCss, hCss,
+            vxCss, vyCss, minXCss, maxXCss, minYCss, maxYCss,
+        )
+    }
+
+    @JavascriptInterface
+    fun ackNativeDragEnd(epoch: Long) {
+        host.ackNativeDragEnd(epoch)
     }
 
     @JavascriptInterface

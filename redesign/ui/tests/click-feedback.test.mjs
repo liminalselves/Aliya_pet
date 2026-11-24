@@ -25,12 +25,13 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
   const { InteractionService } = load('interaction/interaction', {
     './petting-controller': petting, './procedural': procedural,
   }, globals);
-  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], displayCalls = [], actions = [];
+  const writes = {}, trace = [], lines = [], captures = [], masks = [], androidMasks = [], shellCalls = [], displayCalls = [], actions = [], expressions = [];
   const target = {
     getInteractionParamInfo: () => ({ angleXMin: -30, angleXMax: 30, angleYMin: -30, angleYMax: 30,
       angleZMin: -30, angleZMax: 30, bodyXMin: -10, bodyXMax: 10,
       eyeLMin: 0, eyeLMax: 1, eyeRMin: 0, eyeRMax: 1, hasEyes: true }),
     setInteractionOffsets(...v) { writes.offsets = v; trace.push(['offsets', ...v]); },
+    setBodyTilt(...v) { writes.tilt = v; trace.push(['tilt', ...v]); },
     setEyeOverride(...v) { writes.eyes = v; trace.push(['eyes', ...v]); },
     setPettingLookAtReduction(v) { writes.reduced = v; },
     setEarInteraction(...v) { writes.ears = v; }, setFaceCheek(...v) { writes.cheek = v; },
@@ -38,7 +39,7 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
   const hitAreas = { hitAreaAt: () => area, isInHeadPetZone: () => area === 'head' };
   let app = null;
   const service = new InteractionService({ hitAreas, getTarget: () => target, reactions: reactionStub(),
-    host: reactionHost({ actions,
+    host: reactionHost({ actions, expressions,
       canSpeak: urgent => urgent ? app._canForceReactionSpeech() : (!app._chatHoldsSpeech() && app._coordination.canSpeak('interaction')),
       speak: (line, opts) => app._speak(line, 'interaction', opts?.urgent) }),
     pettingHost: { isDialogueActive: () => speaking } });
@@ -74,7 +75,7 @@ function harness({ platform = 'browser', touchDevice = false, invoke = async () 
   const ctx = (x = 400, secondary = true) => ({ normX: .5, normY: .2, pxX: x, pxY: 200,
     dtSeconds: 1 / 60, leftPressed: !secondary, isSecondary: secondary });
   const advance = ms => { now += ms; service.tick(ms); };
-  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, displayCalls, actions, canvasEvents, windowEvents, event, ctx, advance,
+  return { app, service, writes, trace, lines, captures, masks, androidMasks, shellCalls, displayCalls, actions, expressions, canvasEvents, windowEvents, event, ctx, advance,
     area: value => { area = value; }, speaking: value => { speaking = value; }, setTime: value => { now = value; },
     click(overrides = {}) { canvasEvents.pointerdown(event(overrides)); canvasEvents.pointerup(event({ ...overrides, buttons: 0 })); },
     stroke() { for (let i = 1; i <= 90; i++) { now += 1000 / 60;
@@ -446,7 +447,7 @@ test('Android身体触摸：手指轻微滚动仍算点击且不触发前端拖�
   }
 });
 
-test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时，渐进红晕激活且不额外拨耳', () => {
+test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时，渐进红晕与柔和猫耳放松同步激活', () => {
   const h = harness();
   h.service.hitAreas.mirrored = true;
   h.area('head');
@@ -460,7 +461,8 @@ test('镜像抚摸跟随画面手势方向，静止微抖不延长移动计时�
   }
   assert.ok(h.writes.offsets[0] < -1, `镜像右滑应转负角: ${h.writes.offsets[0]}`);
   assert.ok(Math.abs(h.writes.offsets[3]) > 0.2, '抚摸期间应带动轻微身体偏转');
-  assert.deepEqual(h.writes.ears, [false, 0, 0], '抚摸应还原原版不额外写入耳动');
+  assert.equal(h.writes.ears[0], true, '抚摸期间应柔和放平猫耳');
+  assert.ok(h.writes.ears[1] > 0.2 && h.writes.ears[1] <= 0.8 && h.writes.ears[2] > 0.2 && h.writes.ears[2] <= 0.8);
   assert.equal(h.writes.cheek[0], true, '持续抚摸应产生渐进红晕');
   // 静止微抖（<1.5px）不应刷新 _lastInputMs：0.5s 后回到放松/中性，且不计入活跃耗时
   const elapsedBefore = h.service.petting._sessionElapsedMs;
@@ -511,8 +513,9 @@ test('DPR归一化CSS像素、高频鼠标防尖峰、快速摇晃触发晕眩�
   h.canvasEvents.pointerup(h.event({ buttons: 0, clientX: 140, screenX: 140 }));
   assert.equal(h.lines.at(-1), 'drag.fast', '高 DPI 下的轻快拖动（200 CSS px/s）应触发 drag.fast');
 
-  // 模拟高 DPI 下轻快往返摇晃（~15px 幅度）：拖动中触发晕眩提示且保持 holding 姿态
+  // 模拟高 DPI 下轻快往返摇晃（~15px 幅度）：拖动中触发流泪表情、身体摇晃且保持 holding 姿态
   h.lines.length = 0;
+  h.expressions.length = 0;
   h.setTime(3500);
   h.canvasEvents.pointerdown(h.event({ clientX: 200, screenX: 200 }));
   h.canvasEvents.pointermove(h.event({ clientX: 210, screenX: 210 }));
@@ -524,13 +527,94 @@ test('DPR归一化CSS像素、高频鼠标防尖峰、快速摇晃触发晕眩�
     h.canvasEvents.pointermove(h.event({ clientX: x, screenX: x }));
   }
   assert.ok(h.lines.includes('drag.fast'), '高 DPI 下小幅度快速往返摇晃应在拖动中触发晕眩台词');
+  assert.equal(h.expressions.at(-1), 'sad', '拖动中快速往返摇晃应切换为流泪表情 sad');
   assert.equal(h.service.procedural.isHolding, true, '触发摇晃反应时必须保持被拎起姿态');
+  let maxBodyZ = 0, minBodyZ = 0, maxBodyX = 0, minBodyX = 0;
+  for (let i = 0; i < 40; i++) {
+    now += 20;
+    h.setTime(now);
+    h.service.tick(20);
+    const bodyX = h.writes.offsets[3];
+    const bodyZ = h.writes.tilt[1];
+    maxBodyX = Math.max(maxBodyX, bodyX);
+    minBodyX = Math.min(minBodyX, bodyX);
+    maxBodyZ = Math.max(maxBodyZ, bodyZ);
+    minBodyZ = Math.min(minBodyZ, bodyZ);
+  }
+  assert.ok(maxBodyZ > 2 && minBodyZ < -2, `被转晕期间身体应有明显左右摇晃: ${minBodyZ}..${maxBodyZ}`);
+  assert.ok(maxBodyX > 2 && minBodyX < -2, `被转晕期间身体应有往复扭转摇晃: ${minBodyX}..${maxBodyX}`);
+  // 松手前再推进至摇晃自然收尾，确认回归标准拎起姿态
+  now += 1500;
+  h.setTime(now);
+  h.service.tick(20);
+  assert.ok(Math.abs(h.writes.tilt[1]) < 0.05, '晕眩摇晃结束后身体侧倾应回正');
   h.canvasEvents.pointerup(h.event({ buttons: 0, clientX: 210, screenX: 210 }));
   h.app._lift.setHolding(true);
   h.app._lift.setVelocity(1000);
   h.app._lift.update(1 / 60);
   h.app._lift.setHolding(false);
   assert.equal(h.app._interactionBoost(now + 1000), true, 'LiftPose 回荡收尾期间仍保持 60fps 升帧');
+});
+
+test('拖动中摇晃转晕在途松手不被drag.fast/slow覆盖，保持流泪表情与身体摇晃并平滑收尾', () => {
+  const h = harness({ platform: 'tauri' });
+  h.setTime(1000);
+  h.service.dragReaction.beginDrag();
+  h.service.dragReaction.onDragMove(500);
+  h.service.beginHold();
+  h.advance(240);
+  h.service.onDragShake();
+  assert.deepEqual(h.expressions, ['sad']);
+  // 在峰值附近松手，验证不触发 drag.fast 覆盖表情，且转晕身体摇晃延续到自然收尾
+  h.advance(110);
+  const beforeOffsets = [...h.writes.offsets];
+  const beforeTilt = [...h.writes.tilt];
+  h.service.onClick(h.ctx(400, false), true);
+  h.service.tick(0);
+  assert.equal(h.service.procedural.isHolding, false);
+  assert.equal(h.service.procedural.isHoldDizzyActive, true, '松手后应延续转晕摇晃');
+  assert.equal(h.service.isBusy, true, '转晕摇晃未结束前保持忙碌，防止聊天表情提前覆盖');
+  assert.deepEqual(h.expressions, ['sad'], '松手后不应被 drag.fast/drag.slow 表情覆盖');
+  h.writes.offsets.forEach((v, i) => assert.ok(Math.abs(v - beforeOffsets[i]) < 0.01, `松手交接 offsets[${i}] 不跳变`));
+  h.writes.tilt.forEach((v, i) => assert.ok(Math.abs(v - beforeTilt[i]) < 0.01, `松手交接 tilt[${i}] 不跳变`));
+
+  let maxBodyZ = 0, minBodyZ = 0;
+  for (let i = 0; i < 40; i++) {
+    h.advance(20);
+    maxBodyZ = Math.max(maxBodyZ, h.writes.tilt[1]);
+    minBodyZ = Math.min(minBodyZ, h.writes.tilt[1]);
+  }
+  assert.ok(maxBodyZ > 1 && minBodyZ < -1, `松手后仍应继续完成转晕身体摇晃: ${minBodyZ}..${maxBodyZ}`);
+  for (let i = 0; i < 60; i++) h.advance(20);
+  assert.equal(h.service.procedural.isHoldDizzyActive, false);
+  assert.equal(h.service.isBusy, false);
+  assert.deepEqual(h.writes.offsets, [0, 0, 0, 0]);
+  assert.ok(Math.abs(h.writes.tilt[1]) < 0.01);
+});
+
+test('聊天表情保持期间开始拖动摇晃，同帧内立即让位给流泪表情', () => {
+  const h = harness({ platform: 'tauri' });
+  const { ChatPerformance } = load('chat/performance');
+  let expr = null;
+  const model = { isReady: () => true, startExpression: name => { expr = name; return true; }, getCurrentExpression: () => expr };
+  const perf = new ChatPerformance({
+    expressions: () => ['happy', 'sad'], actions: () => [],
+    expression: () => expr,
+    express: name => { expr = name; },
+    clearExpression: () => { expr = null; },
+    play() {},
+    busy: () => h.app._dragging || h.app._leftDown || h.service.isBusy,
+  }, () => 0);
+  Object.assign(h.app, { _model: model, _chatPerformance: perf, _stateEngine: { definition: { expression: null } }, _reactionExpressionTimer: null });
+  perf.cue({ expression: 'happy' });
+  assert.equal(expr, 'happy');
+  assert.equal(perf.applied, true);
+
+  h.app._leftDown = true;
+  h.app._dragging = true;
+  h.app._expressForReaction('sad', null);
+  assert.equal(expr, 'sad', '同帧触发摇晃时聊天表情必须先让位，不能拦截流泪表情');
+  assert.equal(perf.applied, false);
 });
 
 test('同部位独立连点升级、生气抢占旧气泡、桌面悬停光标与轻抖不占用忙碌态', () => {

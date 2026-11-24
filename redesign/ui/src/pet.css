@@ -167,6 +167,7 @@ body.bubble-window #dialogue-bubble { max-height: none; overflow: visible; displ
   #dialogue-bubble.turn { animation: bubble-ink var(--al-t-med) ease; }
   #dialogue-bubble.closing { scale: none; }
   body.snap-confirm #stage::after { animation: none; opacity: 0; }
+  .pinball-catch-hud.show, .pinball-catch-hud.closing { animation: none; transition: opacity var(--al-t-fast) ease; }
 }
 
 body.android-main { background:var(--al-bg-0); }
@@ -186,3 +187,42 @@ body.pet-ready #chat-ui { animation:al-fade-in var(--al-t-med) var(--al-ease); }
 body.with-chat-bg { background:var(--al-bg-0); }
 body.android-main #stage,
 body.with-chat-bg #stage { z-index:1; }
+
+/* 弹球模式抓取瞬间的得分与速度/大小浮标（不遮挡或抢占台词气泡）。 */
+.pinball-catch-hud {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+  border-radius: var(--al-r-pill, 999px);
+  border: 1px solid var(--al-line-strong);
+  background: var(--al-surface-card-strong);
+  box-shadow: var(--al-shadow-2);
+  pointer-events: none;
+  user-select: none;
+  text-align: center;
+}
+.pinball-catch-hud[hidden] { display: none; }
+.pinball-catch-hud.show { animation: pinball-catch-in .22s var(--al-ease) both; }
+.pinball-catch-hud.closing {
+  opacity: 0;
+  transform: translateY(-4px) scale(.96);
+  transition: opacity .22s ease, transform .22s ease;
+}
+.pinball-catch-score {
+  color: var(--al-accent);
+  font: 700 14px/1.2 var(--al-font);
+  white-space: nowrap;
+}
+.pinball-catch-meta {
+  color: var(--al-text-2);
+  font: 500 11px/1.25 var(--al-font);
+  white-space: nowrap;
+}
+@keyframes pinball-catch-in {
+  0% { opacity: 0; transform: translateY(6px) scale(.9); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}

@@ -109,6 +109,11 @@ fn set_game_mode_enabled(app: tauri::AppHandle, enabled: bool) {
 
 /// 默认游戏模式快捷键；设置页可改（前端 `gameModeHotkey` 与此同值）。
 const DEFAULT_GAME_MODE_HOTKEY: &str = "Ctrl+Alt+G";
+/// 默认弹球模式快捷键；设置页可改（前端 `pinballModeHotkey` 与此同值）。
+const DEFAULT_PINBALL_MODE_HOTKEY: &str = "Ctrl+Alt+B";
+
+const HOTKEY_GAME_MODE: i32 = 1;
+const HOTKEY_PINBALL_MODE: i32 = 2;
 
 /// 解析快捷键文本（如 "Ctrl+Shift+F9"）为 RegisterHotKey 的 (修饰键, 虚拟键码)。
 /// 主键支持 A–Z、0–9、F1–F24；字母和数字必须带修饰键，避免吞掉游戏里的普通按键。
@@ -154,43 +159,46 @@ fn parse_hotkey(text: &str) -> Result<(u32, u32, String), String> {
 #[cfg(windows)]
 struct HotkeyThread {
     thread_id: u32,
-    requests: std::sync::mpsc::Sender<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>,
+    requests: std::sync::mpsc::Sender<(i32, Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>,
 }
 
 #[cfg(windows)]
 const WM_HOTKEY_REQUEST: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
-/// 全局快捷键线程：持有唯一的热键注册，收到 WM_HOTKEY 在主线程切换游戏模式；
-/// 收到 WM_HOTKEY_REQUEST 时先注销旧键再注册新键，结果经回执通道返回。
+/// 全局快捷键线程：持有应用全局热键注册，收到 WM_HOTKEY 在主线程或向前端派发切换；
+/// 收到 WM_HOTKEY_REQUEST 时按 id 先注销旧键再注册新键，结果经回执通道返回。
 #[cfg(windows)]
-fn spawn_game_mode_hotkey(app: tauri::AppHandle) -> Result<HotkeyThread, String> {
+fn spawn_hotkey_thread(app: tauri::AppHandle) -> Result<HotkeyThread, String> {
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetMessageW, PeekMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_USER};
-    const HOTKEY_ID: i32 = 1;
-    let (req_tx, req_rx) = std::sync::mpsc::channel::<(Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>();
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<(i32, Option<(u32, u32)>, std::sync::mpsc::Sender<Result<(), String>>)>();
     let (id_tx, id_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut msg: MSG = unsafe { std::mem::zeroed() };
         // 先建消息队列，PostThreadMessageW 才不会因队列不存在而失败。
         unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), WM_USER, WM_USER, PM_NOREMOVE) };
         let _ = id_tx.send(unsafe { GetCurrentThreadId() });
-        let mut registered = false;
+        let mut registered = std::collections::HashSet::<i32>::new();
         while unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) } > 0 {
-            if msg.message == WM_HOTKEY && msg.wParam == HOTKEY_ID as usize {
+            if msg.message == WM_HOTKEY {
+                let id = msg.wParam as i32;
                 let handle = app.clone();
-                let _ = app.run_on_main_thread(move || set_game_mode(&handle, !game_mode()));
+                if id == HOTKEY_GAME_MODE {
+                    let _ = app.run_on_main_thread(move || set_game_mode(&handle, !game_mode()));
+                } else if id == HOTKEY_PINBALL_MODE {
+                    let _ = app.emit_to("pet", "tray-action", json!({ "action": "toggle-pinball-mode" }));
+                }
             } else if msg.message == WM_HOTKEY_REQUEST {
-                while let Ok((key, reply)) = req_rx.try_recv() {
-                    if registered {
-                        unsafe { UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID) };
-                        registered = false;
+                while let Ok((id, key, reply)) = req_rx.try_recv() {
+                    if registered.remove(&id) {
+                        unsafe { UnregisterHotKey(std::ptr::null_mut(), id) };
                     }
                     let result = match key {
                         None => Ok(()),
                         Some((mods, vk)) => {
-                            if unsafe { RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, mods | MOD_NOREPEAT, vk) } != 0 {
-                                registered = true;
+                            if unsafe { RegisterHotKey(std::ptr::null_mut(), id, mods | MOD_NOREPEAT, vk) } != 0 {
+                                registered.insert(id);
                                 Ok(())
                             } else {
                                 Err(format!("快捷键已被其他程序占用（{}）", std::io::Error::last_os_error()))
@@ -206,63 +214,240 @@ fn spawn_game_mode_hotkey(app: tauri::AppHandle) -> Result<HotkeyThread, String>
     Ok(HotkeyThread { thread_id, requests: req_tx })
 }
 
-/// 在热键线程上替换注册；None 表示只注销。
+/// 在热键线程上替换指定 ID 的注册；None 表示只注销。
 #[cfg(windows)]
-fn register_game_mode_hotkey(thread: &HotkeyThread, key: Option<(u32, u32)>) -> Result<(), String> {
+fn register_hotkey(thread: &HotkeyThread, id: i32, key: Option<(u32, u32)>) -> Result<(), String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
     let (tx, rx) = std::sync::mpsc::channel();
-    thread.requests.send((key, tx)).map_err(|_| "快捷键线程已退出".to_string())?;
+    thread.requests.send((id, key, tx)).map_err(|_| "快捷键线程已退出".to_string())?;
     if unsafe { PostThreadMessageW(thread.thread_id, WM_HOTKEY_REQUEST, 0, 0) } == 0 {
         return Err(std::io::Error::last_os_error().to_string());
     }
     rx.recv_timeout(std::time::Duration::from_secs(2)).map_err(|_| "快捷键线程无响应".to_string())?
 }
 
-/// 当前生效的快捷键文本（规范化）；空串 = 未设置。
+/// 当前生效的游戏模式快捷键文本（规范化）；空串 = 未设置。
 #[derive(Default)]
 struct GameModeHotkey(Mutex<String>);
+/// 当前生效的弹球模式快捷键文本（规范化）；空串 = 未设置。
+#[derive(Default)]
+struct PinballModeHotkey(Mutex<String>);
+/// 托盘「弹球模式」勾选项。
+struct PinballModeMenuItem(tauri::menu::CheckMenuItem<tauri::Wry>);
+
+fn apply_hotkey_setting(
+    app: &tauri::AppHandle,
+    hotkey_id: i32,
+    slot: &Mutex<String>,
+    other_slot: Option<&Mutex<String>>,
+    hotkey: String,
+    on_label: impl FnOnce(&str),
+) -> Result<String, String> {
+    let parsed = if hotkey.trim().is_empty() { None } else { Some(parse_hotkey(&hotkey)?) };
+    let label = parsed.as_ref().map(|p| p.2.clone()).unwrap_or_default();
+    if !label.is_empty() {
+        if let Some(other) = other_slot {
+            if let Ok(other_guard) = other.lock() {
+                if *other_guard == label {
+                    return Err("快捷键与另一个模式冲突，请换一个组合".into());
+                }
+            }
+        }
+    }
+    let mut current = slot.lock().map_err(|e| e.to_string())?;
+    if *current == label { return Ok(label); }
+    #[cfg(windows)]
+    {
+        let thread = app.try_state::<HotkeyThread>().ok_or("快捷键线程未启动")?;
+        if let Err(error) = register_hotkey(&thread, hotkey_id, parsed.as_ref().map(|p| (p.0, p.1))) {
+            // 恢复原快捷键，失败的改动不让旧键也失效。
+            let old = (!current.is_empty()).then(|| parse_hotkey(&current).ok()).flatten();
+            let _ = register_hotkey(&thread, hotkey_id, old.map(|p| (p.0, p.1)));
+            return Err(error);
+        }
+    }
+    *current = label.clone();
+    on_label(&label);
+    Ok(label)
+}
 
 /// 设置游戏模式快捷键（空串 = 不使用快捷键）。注册失败时保留原快捷键并返回错误；
 /// 成功返回规范化文本，同步托盘菜单文字。值未变时不重复注册。
 #[tauri::command]
 fn set_game_mode_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<String, String> {
-    let parsed = if hotkey.trim().is_empty() { None } else { Some(parse_hotkey(&hotkey)?) };
-    let label = parsed.as_ref().map(|p| p.2.clone()).unwrap_or_default();
-    let current = app.state::<GameModeHotkey>();
-    let mut current = current.0.lock().map_err(|e| e.to_string())?;
-    if *current == label { return Ok(label); }
-    #[cfg(windows)]
-    {
-        let thread = app.try_state::<HotkeyThread>().ok_or("快捷键线程未启动")?;
-        if let Err(error) = register_game_mode_hotkey(&thread, parsed.as_ref().map(|p| (p.0, p.1))) {
-            // 恢复原快捷键，失败的改动不让旧键也失效。
-            let old = (!current.is_empty()).then(|| parse_hotkey(&current).ok()).flatten();
-            let _ = register_game_mode_hotkey(&thread, old.map(|p| (p.0, p.1)));
-            return Err(error);
-        }
-    }
-    *current = label.clone();
-    if let Some(item) = app.try_state::<GameModeMenuItem>() {
-        let _ = item.0.set_text(game_mode_menu_text(&label));
-    }
-    Ok(label)
+    let slot = app.state::<GameModeHotkey>();
+    let other = app.try_state::<PinballModeHotkey>();
+    apply_hotkey_setting(
+        &app,
+        HOTKEY_GAME_MODE,
+        &slot.0,
+        other.as_ref().map(|s| &s.0),
+        hotkey,
+        |label| {
+            if let Some(item) = app.try_state::<GameModeMenuItem>() {
+                let _ = item.0.set_text(hotkey_menu_text("游戏模式", label));
+            }
+        },
+    )
 }
 
-fn game_mode_menu_text(hotkey: &str) -> String {
-    if hotkey.is_empty() { "游戏模式".into() } else { format!("游戏模式（{hotkey}）") }
+/// 设置弹球模式快捷键（空串 = 不使用快捷键）。
+#[tauri::command]
+fn set_pinball_mode_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<String, String> {
+    let slot = app.state::<PinballModeHotkey>();
+    let other = app.try_state::<GameModeHotkey>();
+    apply_hotkey_setting(
+        &app,
+        HOTKEY_PINBALL_MODE,
+        &slot.0,
+        other.as_ref().map(|s| &s.0),
+        hotkey,
+        |label| {
+            if let Some(item) = app.try_state::<PinballModeMenuItem>() {
+                let _ = item.0.set_text(hotkey_menu_text("弹球模式", label));
+            }
+        },
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HotkeySyncStep {
+    Game(String),
+    Pinball(String),
+}
+
+/// 规划双快捷键同步顺序：避免启动从默认键切换到已保存键（或互换快捷键）时被中间态冲突拦截。
+fn plan_hotkey_sync(
+    cur_game: &str,
+    cur_pinball: &str,
+    next_game: &str,
+    next_pinball: &str,
+) -> Result<Vec<HotkeySyncStep>, String> {
+    if !next_game.is_empty() && next_game == next_pinball {
+        return Err("快捷键与另一个模式冲突，请换一个组合".into());
+    }
+    if !next_game.is_empty() && next_game == cur_pinball {
+        if !next_pinball.is_empty() && next_pinball == cur_game {
+            return Ok(vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game(next_game.to_string()),
+                HotkeySyncStep::Pinball(next_pinball.to_string()),
+            ]);
+        }
+        return Ok(vec![
+            HotkeySyncStep::Pinball(next_pinball.to_string()),
+            HotkeySyncStep::Game(next_game.to_string()),
+        ]);
+    }
+    Ok(vec![
+        HotkeySyncStep::Game(next_game.to_string()),
+        HotkeySyncStep::Pinball(next_pinball.to_string()),
+    ])
+}
+
+/// 成对同步游戏模式与弹球模式快捷键（启动加载设置 / 批量设置变更用）。
+#[tauri::command]
+fn sync_mode_hotkeys(
+    app: tauri::AppHandle,
+    game_hotkey: String,
+    pinball_hotkey: String,
+) -> Result<(), String> {
+    let parse_opt = |raw: &str| -> Result<String, String> {
+        if raw.trim().is_empty() {
+            Ok(String::new())
+        } else {
+            parse_hotkey(raw).map(|p| p.2)
+        }
+    };
+    let next_g = parse_opt(&game_hotkey)?;
+    let next_b = parse_opt(&pinball_hotkey)?;
+    let cur_g = app
+        .state::<GameModeHotkey>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let cur_b = app
+        .state::<PinballModeHotkey>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let steps = plan_hotkey_sync(&cur_g, &cur_b, &next_g, &next_b)?;
+    let mut first_err: Option<String> = None;
+    for step in steps {
+        let res = match step {
+            HotkeySyncStep::Game(v) => set_game_mode_hotkey(app.clone(), v),
+            HotkeySyncStep::Pinball(v) => set_pinball_mode_hotkey(app.clone(), v),
+        };
+        if let Err(err) = res {
+            if first_err.is_none() {
+                first_err = Some(err);
+            }
+        }
+    }
+    match first_err {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+fn hotkey_menu_text(title: &str, hotkey: &str) -> String {
+    if hotkey.is_empty() { title.into() } else { format!("{title}（{hotkey}）") }
 }
 
 #[cfg(test)]
 mod hotkey_tests {
-    use super::parse_hotkey;
+    use super::{
+        hotkey_menu_text, parse_hotkey, plan_hotkey_sync, HotkeySyncStep,
+        DEFAULT_GAME_MODE_HOTKEY, DEFAULT_PINBALL_MODE_HOTKEY,
+    };
 
     #[test]
     fn parses_and_normalizes_modifiers_and_keys() {
         assert_eq!(parse_hotkey("ctrl+alt+g"), Ok((0x3, b'G' as u32, "Ctrl+Alt+G".into())));
+        assert_eq!(parse_hotkey("ctrl+alt+b"), Ok((0x3, b'B' as u32, "Ctrl+Alt+B".into())));
         assert_eq!(parse_hotkey("Shift + Win + 5"), Ok((0xC, b'5' as u32, "Shift+Win+5".into())));
         assert_eq!(parse_hotkey("Alt+Ctrl+F12"), Ok((0x3, 0x7B, "Ctrl+Alt+F12".into())));
         assert_eq!(parse_hotkey("F9"), Ok((0, 0x78, "F9".into())));
         assert_eq!(parse_hotkey("f24").map(|p| p.1), Ok(0x87));
+    }
+
+    #[test]
+    fn default_hotkeys_are_distinct_and_valid() {
+        let g = parse_hotkey(DEFAULT_GAME_MODE_HOTKEY).expect("default game mode hotkey");
+        let b = parse_hotkey(DEFAULT_PINBALL_MODE_HOTKEY).expect("default pinball mode hotkey");
+        assert_ne!(g.2, b.2);
+        assert_eq!(hotkey_menu_text("弹球模式", ""), "弹球模式");
+        assert_eq!(hotkey_menu_text("弹球模式", &b.2), "弹球模式（Ctrl+Alt+B）");
+    }
+
+    #[test]
+    fn sync_plan_handles_migration_and_swap_without_intermediate_conflict() {
+        // 旧版用户已将游戏模式设为 Ctrl+Alt+B，启动从默认 (Ctrl+Alt+G, Ctrl+Alt+B) 迁移
+        let steps = plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+B", "")
+            .expect("migration plan");
+        assert_eq!(
+            steps,
+            vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game("Ctrl+Alt+B".into()),
+            ]
+        );
+
+        // 两个快捷键互换：先清一个再重绑
+        let swap = plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+B", "Ctrl+Alt+G")
+            .expect("swap plan");
+        assert_eq!(
+            swap,
+            vec![
+                HotkeySyncStep::Pinball(String::new()),
+                HotkeySyncStep::Game("Ctrl+Alt+B".into()),
+                HotkeySyncStep::Pinball("Ctrl+Alt+G".into()),
+            ]
+        );
+
+        assert!(plan_hotkey_sync("Ctrl+Alt+G", "Ctrl+Alt+B", "Ctrl+Alt+P", "Ctrl+Alt+P").is_err());
     }
 
     #[test]
@@ -875,6 +1060,14 @@ fn sync_click_through_menu(
 }
 
 #[tauri::command]
+fn sync_pinball_menu(app: tauri::AppHandle, checked: bool) -> Result<(), String> {
+    if let Some(item) = app.try_state::<PinballModeMenuItem>() {
+        item.0.set_checked(checked).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("records")
@@ -1031,7 +1224,10 @@ fn main() {
             show_settings,
             sync_click_through_menu,
             sync_top_menu,
+            sync_pinball_menu,
             set_game_mode_hotkey,
+            set_pinball_mode_hotkey,
+            sync_mode_hotkeys,
             get_game_mode,
             set_game_mode_enabled,
             show_records,
@@ -1103,7 +1299,10 @@ fn main() {
             let click_through =
                 CheckMenuItem::with_id(app, "click_through", "人物完全穿透", true, false, None::<&str>)?;
             let game = CheckMenuItem::with_id(
-                app, "game_mode", game_mode_menu_text(""), true, false, None::<&str>,
+                app, "game_mode", hotkey_menu_text("游戏模式", ""), true, false, None::<&str>,
+            )?;
+            let pinball = CheckMenuItem::with_id(
+                app, "pinball_mode", hotkey_menu_text("弹球模式", ""), true, false, None::<&str>,
             )?;
             let reset_opacity =
                 MenuItem::with_id(app, "reset_opacity", "恢复人物不透明度", true, None::<&str>)?;
@@ -1114,24 +1313,30 @@ fn main() {
                 app,
                 &[
                     &menu_main, &show, &chat, &sep1, &cycle, &top, &reset, &click_through,
-                    &game, &reset_opacity, &sep2, &about, &quit,
+                    &game, &pinball, &reset_opacity, &sep2, &about, &quit,
                 ],
             )?;
             app.manage(click_through.clone());
             app.manage(TopMenuItem(top.clone()));
             app.manage(GameModeMenuItem(game.clone()));
+            app.manage(PinballModeMenuItem(pinball.clone()));
             app.manage(GameModeHotkey::default());
+            app.manage(PinballModeHotkey::default());
             // 先注册默认键；pet 前端加载设置后按用户保存的快捷键替换。
             #[cfg(windows)]
-            match spawn_game_mode_hotkey(app.handle().clone()) {
+            match spawn_hotkey_thread(app.handle().clone()) {
                 Ok(thread) => {
                     app.manage(thread);
                     if let Err(error) = set_game_mode_hotkey(app.handle().clone(), DEFAULT_GAME_MODE_HOTKEY.into()) {
                         eprintln!("[game-mode] register default hotkey failed: {error}");
-                        let _ = game.set_text(game_mode_menu_text(""));
+                        let _ = game.set_text(hotkey_menu_text("游戏模式", ""));
+                    }
+                    if let Err(error) = set_pinball_mode_hotkey(app.handle().clone(), DEFAULT_PINBALL_MODE_HOTKEY.into()) {
+                        eprintln!("[pinball-mode] register default hotkey failed: {error}");
+                        let _ = pinball.set_text(hotkey_menu_text("弹球模式", ""));
                     }
                 }
-                Err(error) => eprintln!("[game-mode] hotkey thread failed: {error}"),
+                Err(error) => eprintln!("[hotkey] thread failed: {error}"),
             }
 
             let icon = app
@@ -1196,6 +1401,14 @@ fn main() {
                         // muda 已先切换勾选；按勾选值设置，不能再次反转。
                         let on = app.state::<GameModeMenuItem>().0.is_checked().unwrap_or(false);
                         set_game_mode(app, on);
+                    }
+                    "pinball_mode" => {
+                        let on = app.state::<PinballModeMenuItem>().0.is_checked().unwrap_or(false);
+                        let _ = app.emit_to(
+                            "pet",
+                            "tray-action",
+                            json!({ "action": "pinball-mode", "value": on }),
+                        );
                     }
                     "reset_opacity" => {
                         let _ = app.emit_to(

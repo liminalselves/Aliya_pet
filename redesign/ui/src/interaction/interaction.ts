@@ -70,6 +70,7 @@ export class InteractionService {
   readonly procedural: ProceduralReactionService;
   private readonly _reactions: ReactionLibrary;
   private readonly _host: ReactionHost;
+  private readonly _getTarget: () => InteractionTarget | null;
   private readonly _random: () => number;
   private readonly _onInteraction?: (event: PetInteractionEvent) => void;
   private _earClickUntilMs = 0;
@@ -103,6 +104,7 @@ export class InteractionService {
     this.hitAreas = deps.hitAreas;
     this._reactions = deps.reactions;
     this._host = deps.host;
+    this._getTarget = deps.getTarget;
     this._onInteraction = deps.onInteraction;
     this._random = deps.random ?? Math.random;
     this.petting = new PettingController({
@@ -187,20 +189,37 @@ export class InteractionService {
    * 普通单击（非抚摸接管，上层在单击确认后调用）。
    * 返回 true 表示点击已由互动处理。
    */
-  onClick(ctx: PointerContext, wasDrag: boolean): boolean {
+  onClick(
+    ctx: PointerContext,
+    wasDrag: boolean,
+    opts?: { pinballLaunch?: boolean; suppressSpeak?: boolean }
+  ): boolean {
     if (wasDrag) {
       const wasDragging = this.dragReaction.isDragging;
-      if (this.dragReaction.endDrag()) {
+      const hadShake = this.dragReaction.hadShake || this.procedural.isHoldDizzyActive;
+      const fastDrag = this.dragReaction.endDrag();
+      if (hadShake) {
+        // 本轮已触发过摇晃转晕：松手只做落地回中，不再用 drag.fast/drag.slow 覆盖流泪表情与转晕摇晃。
+        if (wasDragging && this.procedural.isHolding) {
+          this.procedural.releaseHoldAfterShake?.();
+        }
+      } else if (fastDrag) {
         this.react('drag.fast', { fallback: 'eyes_widen' });
         this._onInteraction?.({ kind: 'drag', trigger: 'drag.fast' });
       } else if (wasDragging && this.procedural.isHolding) {
-        // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
-        this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
-        this._onInteraction?.({ kind: 'drag', trigger: 'drag.slow' });
+        if (opts?.pinballLaunch) {
+          // 弹球模式慢速起飞（140~160 px/s）：只平滑收回拎起姿态，不叠落地蹲顿与着陆台词。
+          this.procedural.releaseHoldSmooth?.();
+        } else {
+          // 慢慢放下：落地轻顿一下，从拎起姿态平滑回中。
+          this.react('drag.slow', { fallback: 'landing', speak: this._random() < DRAG_SLOW_LINE_CHANCE });
+          this._onInteraction?.({ kind: 'drag', trigger: 'drag.slow' });
+        }
       }
       return false;
     }
 
+    const speak = opts?.suppressSpeak ? false : undefined;
     this.dragReaction.cancel();
     const area = this.hitAreas.hitAreaAt(ctx.normX, ctx.normY);
     // 模型空间水平朝向：触点在角色哪一侧（镜像已还原），供蹭手、回头等朝向反应。
@@ -219,7 +238,7 @@ export class InteractionService {
       // 左右耳共用一次反馈时窗，避免连点反复启动单眼眨。
       this._earClickUntilMs = now + 420;
       const trigger = `click.${area}`;
-      this.react(trigger, { fallback: 'ear_blink', areaId, side });
+      this.react(trigger, { fallback: 'ear_blink', areaId, side, speak });
       this._onInteraction?.({ kind: 'click', trigger, areaId, side });
       return true;
     }
@@ -238,17 +257,61 @@ export class InteractionService {
     const tier = result === ClickResult.doubt ? 'repeat' : result === ClickResult.comment ? 'annoyed' : null;
     const trigger = !tier ? base
       : this._reactions.has(`${key}.${tier}`) ? `${key}.${tier}` : `click.${tier}`;
-    this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed' });
+    this._triggerAreaImpulse(streakKey, side);
+    this.react(trigger, { fallback: 'acknowledge', areaId, side, urgent: tier === 'annoyed', speak });
     this._onInteraction?.({ kind: 'click', trigger, areaId, side, tier: tier ?? undefined });
     return true;
   }
 
-  /** 拖动中快速往返摇晃：保持拎起姿态，补充晕眩表情与台词。 */
+  /** 对被点击部位施加一次局部阻尼弹簧脉冲，使领带/刘海/侧发/马尾/双手链有即时物理回弹。 */
+  private _triggerAreaImpulse(area: string, side: number): void {
+    const target = this._getTarget();
+    const trigger = target?.triggerPartImpulse;
+    if (!trigger) return;
+    switch (area) {
+      case 'tie':
+        trigger.call(target, 'tie', side * 0.7);
+        break;
+      case 'bangs':
+        trigger.call(target, 'bangs', side * 0.65);
+        break;
+      case 'crown':
+      case 'head':
+        trigger.call(target, 'hair_bounce', -0.5);
+        trigger.call(target, 'bangs', side * 0.25);
+        break;
+      case 'side_hair_left':
+        trigger.call(target, 'side_hair_left', -0.9);
+        break;
+      case 'side_hair_right':
+        trigger.call(target, 'side_hair_right', 0.9);
+        break;
+      case 'ponytail':
+      case 'ponytail_upper':
+        trigger.call(target, 'ponytail', side * 0.9);
+        break;
+      case 'hand':
+        trigger.call(target, 'hand_right', -0.85);
+        break;
+      case 'tablet':
+        trigger.call(target, 'hand_left', 0.85);
+        break;
+      case 'shoulder_left':
+        trigger.call(target, 'hand_right', -0.45);
+        break;
+      case 'shoulder_right':
+        trigger.call(target, 'hand_left', 0.45);
+        break;
+    }
+  }
+
+  /** 拖动中快速往返摇晃：保持拎起姿态，切换流泪表情、触发被转晕摇晃动作与台词。 */
   onDragShake(): void {
     if (!this.dragReaction.isDragging || !this.procedural.isHolding) return;
     const withLine = this._host.canSpeak(true);
     const pick = this._reactions.pick('drag.fast', { withLine });
-    if (pick?.group.expression) this._host.express(pick.group.expression, pick.line ?? null);
+    this._host.express('sad', pick?.line ?? null);
+    this.procedural.triggerHoldDizzy?.();
     if (pick?.line) this._host.speak(pick.line, { urgent: true });
     this._onInteraction?.({ kind: 'drag', trigger: 'drag.shake' });
   }
@@ -258,9 +321,12 @@ export class InteractionService {
     this.procedural.hold();
   }
 
-  /** 拖动中按画面水平速度做惯性摆头；mirrored 时换算到模型空间。 */
-  updateHoldVelocity(screenVxPxPerSec: number): void {
-    this.procedural.setHoldSway(this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec);
+  /** 拖动中按画面水平/垂直速度做惯性摆头与俯仰；mirrored 时水平速度换算到模型空间。 */
+  updateHoldVelocity(screenVxPxPerSec: number, screenVyPxPerSec = 0): void {
+    this.procedural.setHoldSway(
+      this.hitAreas.mirrored ? -screenVxPxPerSec : screenVxPxPerSec,
+      screenVyPxPerSec
+    );
   }
 
   /** 互动动作在保护期内不重启；可以打断待机或聊天动作（触碰优先）。 */

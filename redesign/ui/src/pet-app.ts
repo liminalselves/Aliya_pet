@@ -7,6 +7,13 @@ import { CubismFramework } from '@framework/live2dcubismframework';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { PetModel } from './pet-model';
 import { LiftPose, liftMatrix } from './lift-pose';
+import {
+  PinballPhysics,
+  computePinballCatchScore,
+  type PinballBounceEvent,
+  type PinballBounds,
+  type PinballCatchScore,
+} from './pinball';
 import { InteractionCoordinator, type SpeechSource } from './interaction/coordination';
 import { timeScene, type ResolvedDialogue } from './dialogue/dialogue';
 import { ReactionLibrary } from './interaction/reactions';
@@ -29,11 +36,13 @@ import {
   clampPetOpacity,
   clampScale,
   hasSavedSettings,
+  hotkeyFromEvent,
   loadSettings,
   nextSizePreset,
   percentToScale,
   saveSettings,
   scaleRangeFor,
+  scaleToPercent,
 } from './settings';
 import {
   platform,
@@ -68,6 +77,7 @@ export class PetApp {
   /** 安卓主界面被辅助页整屏覆盖：渲染循环停摆（见 onShellEvent 'covered'）。 */
   private _covered = false;
   private _frameQueued = false;
+  private _frameTimerId: ReturnType<typeof setTimeout> | null = null;
   private _lastFrameTime = 0;
 
   // 逻辑层
@@ -196,6 +206,27 @@ export class PetApp {
   private readonly _lift: LiftPose | undefined = new LiftPose();
   /** 悬挂支点（模型单位）：抓取点；原生拖动没有坐标时取上半身。 */
   private _liftPivot: { x: number; y: number } | null = null;
+  private _dragWindX = 0;
+  private _dragWindY = 0;
+  private _dragWindActive = false;
+  /** 弹球模式物理（松手后保持原本大小与直立姿态，按重力抛物线弹性反弹）。 */
+  private readonly _pinball: PinballPhysics | undefined = new PinballPhysics();
+  private _pinballScaleFactor = 1;
+  private _pinballSyncing = false;
+  private _pinballNeedsSync = false;
+  private _pinballSubmittedX = Number.NaN;
+  private _pinballSubmittedY = Number.NaN;
+  private _pinballSimMs = 0;
+  private _pinballLastBounceFeedbackMs = -Infinity;
+  private _androidPinballActive = false;
+  private _pinballBoundsCss: PinballBounds | null = null;
+  private _pinballCaughtPointerId: number | null = null;
+  private _lastPinballCatch: PinballCatchScore | null = null;
+  private _pinballCatchHud: HTMLDivElement | null = null;
+  private _pinballCatchHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private _pinballCatchCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  private _scaleRange: { minS: number; maxS: number } | null = null;
+  private _tauriWindowMod: typeof import('@tauri-apps/api/window') | null = null;
   private _reduceMotionQuery: MediaQueryList | null = null;
   /** WebGL 上下文已丢失（回前台后整页重建恢复）。 */
   private _glContextLost = false;
@@ -246,6 +277,9 @@ export class PetApp {
   private _dragVelX = 0;
   private _dragVelY = 0;
   private _dragLastMoveMs = 0;
+  private _nativeDragVelX = 0;
+  private _nativeDragVelY = 0;
+  private _nativeDragMoveMs = 0;
   private _hoverCursor = '';
 
   /** 渲染暂停（屏幕熄灭/后台，由壳或 visibilitychange 触发）。 */
@@ -253,6 +287,12 @@ export class PetApp {
 
   /** 拖动判定阈值（CSS px）。 */
   private static readonly _dragThresholdPx = 5;
+  /** 松手惯性滑行参数（CSS px/s、滑行时间常数、上限距离、停顿衰减）。 */
+  private static readonly _inertiaMinSpeedPxPerSec = 120;
+  private static readonly _inertiaTimeSec = 0.07;
+  private static readonly _inertiaMaxDistCss = 64;
+  private static readonly _inertiaStaleLimitMs = 120;
+  private static readonly _inertiaStaleTauMs = 45;
   /** 触屏轻点容差（CSS px）：快速点按时手指滚动/抬手偏移常超过 5px，仍应算点击。 */
   private static readonly _touchTapTolerancePx = 16;
   private static readonly _interactiveCursorAreas = new Set([
@@ -380,7 +420,7 @@ export class PetApp {
         // 启动即暖窗口位置缓存：否则首次拖动的前几帧会把窗口拉向 (0,0)
         this._syncWindowMetrics();
         this._tauriWindow.onMoved(() => {
-          if (!this._dragging && !this._windowMoveTask) this._syncWindowMetrics();
+          if (!this._dragging && !this._windowMoveTask && !this._pinball?.active) this._syncWindowMetrics();
         }).catch(() => {});
         this._tauriWindow.onScaleChanged(({ payload }) => {
           this._scaleFactor = payload.scaleFactor;
@@ -478,7 +518,7 @@ export class PetApp {
     this._behavior = new BehaviorService(() =>
       this._model?.isReady() ? this._model : null
     );
-    this._behavior.canIdle = () => this._coordination.canIdle();
+    this._behavior.canIdle = () => !this._pinball?.active && this._coordination.canIdle();
     this._behavior.onRandomSpeech = () => this._playRandom();
     this._behavior.start();
     if (this._paused) this._behavior.stop();
@@ -560,6 +600,25 @@ export class PetApp {
       minS: Math.max(56 / baseW, 72 / baseH),
       maxS: Math.min(logW / baseW, logH / baseH),
     };
+  }
+
+  private _updateDesktopScaleRange(
+    mon: import('@tauri-apps/api/window').Monitor | null | undefined,
+  ): void {
+    if (!mon) return;
+    const logW = mon.workArea.size.width / mon.scaleFactor;
+    const logH = mon.workArea.size.height / mon.scaleFactor;
+    if (logW > 0 && logH > 0 && typeof scaleRangeFor === 'function') {
+      this._scaleRange = scaleRangeFor(logW, logH);
+    }
+  }
+
+  private _currentScaleRange(): { minS: number; maxS: number } {
+    if (platform === 'android' && this._screenW > 0 && this._screenH > 88
+      && typeof scaleRangeFor === 'function') {
+      return scaleRangeFor(this._screenW, this._screenH - 88);
+    }
+    return this._scaleRange ?? { minS: 0.15, maxS: 2 };
   }
 
   /**
@@ -693,6 +752,7 @@ export class PetApp {
       } catch {
         mon = null;
       }
+      this._updateDesktopScaleRange(mon);
       const { baseW, baseH } = this._baseWindowSize();
       return (
         this._scaleLimitsFrom(mon, baseW, baseH) ?? { minS: 0.15, maxS: 2.0 }
@@ -725,6 +785,7 @@ export class PetApp {
         const m = await import('@tauri-apps/api/window');
         const mon = (await m.currentMonitor()) ?? (await m.primaryMonitor());
         if (!mon) return null;
+        this._updateDesktopScaleRange(mon);
         screenW = mon.workArea.size.width / mon.scaleFactor;
         screenH = mon.workArea.size.height / mon.scaleFactor;
       } catch {
@@ -803,6 +864,11 @@ export class PetApp {
     }
 
     // 窗口层
+    if (!s.pinballMode && this._pinball?.bouncing) {
+      this._pinball.stopBouncing();
+      this._stopAndroidPinballSync();
+      this._rectDirty = true;
+    }
     if (platform === 'android') {
       this._applyWindowSettingsAndroid(s, restoreWindow);
       return;
@@ -814,10 +880,16 @@ export class PetApp {
       void import('@tauri-apps/api/core')
         .then(m => m.invoke('sync_top_menu', { checked: s.alwaysOnTop }))
         .catch(() => {});
-      // 游戏模式快捷键随设置注册；壳侧值未变不重复注册，失败时保留原快捷键。
+      // 游戏模式 / 弹球模式快捷键与托盘勾选同步（成对同步避免迁移或互换时中间态冲突）。
       void import('@tauri-apps/api/core')
-        .then(m => m.invoke('set_game_mode_hotkey', { hotkey: s.gameModeHotkey }))
-        .catch(e => console.warn('Failed to register game mode hotkey', e));
+        .then(m => {
+          void m.invoke('sync_mode_hotkeys', {
+            gameHotkey: s.gameModeHotkey,
+            pinballHotkey: s.pinballModeHotkey,
+          }).catch(e => console.warn('Failed to register mode hotkeys', e));
+          void m.invoke('sync_pinball_menu', { checked: s.pinballMode === true }).catch(() => {});
+        })
+        .catch(() => {});
       if (restoreWindow || !this._deskCapacityReady) {
         this._deskScale = null;
         this._queueWindowGeometry(() => this._withHiddenPage(async () => {
@@ -853,6 +925,7 @@ export class PetApp {
     } catch {
       mon = null;
     }
+    this._updateDesktopScaleRange(mon);
     // 窗口基准尺寸与 native ComputeTargetPixelSize 一致：
     //   高 = 675 × 1.18，宽 = 高 × 包围盒宽高比（模型加载完成后才有真实值）
     const { baseW, baseH } = this._baseWindowSize();
@@ -1027,6 +1100,7 @@ export class PetApp {
       const m = await import('@tauri-apps/api/window');
       let mon: import('@tauri-apps/api/window').Monitor | null = null;
       try { mon = (await m.currentMonitor()) ?? (await m.primaryMonitor()); } catch { mon = null; }
+      this._updateDesktopScaleRange(mon);
       const { baseW, baseH } = this._baseWindowSize();
       const limits = this._scaleLimitsFrom(mon, baseW, baseH);
       if (!limits) return;
@@ -1288,6 +1362,8 @@ export class PetApp {
       && (s.fullClickThrough === true || opacity === 0);
     if (full && !this._fullClickThrough) {
       this._fullClickThrough = true;
+      this._cancelPinball();
+      this._hidePinballCatchHud(true);
       this._cancelInteraction();
       this._resetDragState();
       if (platform === 'android') androidShell()?.setInteracting(false);
@@ -1358,6 +1434,12 @@ export class PetApp {
         case 'reset-opacity':
           this.applySettings({ ...this._settings, petOpacity: 100 }, false);
           this._broadcastSettings();
+          break;
+        case 'pinball-mode':
+          this._setPinballMode(p.value ?? !this._settings.pinballMode);
+          break;
+        case 'toggle-pinball-mode':
+          this._setPinballMode(!this._settings.pinballMode);
           break;
         case 'play-action':
           if (p.name) this._ai?.play(p.name);
@@ -1432,6 +1514,7 @@ export class PetApp {
    * busy 让位期间允许展示互动表情。
    */
   private _expressForReaction(name: string, line: ResolvedDialogue | null): void {
+    this._chatPerformance?.tick?.();
     if (this._chatPerformance?.applied) return;
     if (!this._model?.startExpression(name)) return;
     this._ai?.cancelExpressionTimer?.();
@@ -1551,10 +1634,87 @@ export class PetApp {
     return { v: pos, edge: null };
   }
 
-  /** 松手后才贴边；Windows 由系统选择所在显示器，完全出屏时选择最近显示器。 */
-  private _onDragFinished(): void {
+  private _isReduceMotion(): boolean {
+    return typeof window !== 'undefined'
+      && (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false);
+  }
+
+  private _setPinballMode(enabled: boolean): void {
+    const next = Boolean(enabled);
+    const changed = this._settings.pinballMode !== next;
+    this._settings = { ...this._settings, pinballMode: next };
+    saveSettings(this._settings);
+    this._broadcastSettings();
+    if (platform === 'tauri') {
+      void import('@tauri-apps/api/core')
+        .then(m => m.invoke('sync_pinball_menu', { checked: next }))
+        .catch(() => {});
+    }
+    if (!next && this._pinball?.bouncing) {
+      this._pinball.stopBouncing();
+      this._stopAndroidPinballSync();
+      this._rectDirty = true;
+    } else if (changed && !this._dragging && !this._nativeDragging && !this._isReduceMotion()) {
+      // 模式切换给予轻量动作提示，不改变人物大小与旋转。
+      if (this._model?.isReady() && !this._interaction?.petting.isPettingSessionActive && !this._chatPerformance?.applied) {
+        this._expressForReaction(next ? 'surprised' : 'happy', null);
+      }
+    }
+  }
+
+  private _sampleReleaseVelocity(
+    vxCss: number,
+    vyCss: number,
+    lastMoveMs: number,
+    now = performance.now(),
+  ): { vx: number; vy: number; speed: number } {
+    if (!Number.isFinite(vxCss) || !Number.isFinite(vyCss) || this._isReduceMotion()) {
+      return { vx: 0, vy: 0, speed: 0 };
+    }
+    let decay = 1;
+    if (lastMoveMs > 0) {
+      const staleMs = Math.max(0, now - lastMoveMs);
+      if (staleMs > PetApp._inertiaStaleLimitMs) return { vx: 0, vy: 0, speed: 0 };
+      decay = Math.exp(-staleMs / PetApp._inertiaStaleTauMs);
+    }
+    const vx = vxCss * decay;
+    const vy = vyCss * decay;
+    return { vx, vy, speed: Math.hypot(vx, vy) };
+  }
+
+  private _computeReleaseInertia(
+    vxCss: number,
+    vyCss: number,
+    lastMoveMs: number,
+    now = performance.now(),
+  ): { dxCss: number; dyCss: number; durMs: number } {
+    const { vx, vy, speed } = this._sampleReleaseVelocity(vxCss, vyCss, lastMoveMs, now);
+    if (speed < PetApp._inertiaMinSpeedPxPerSec) return { dxCss: 0, dyCss: 0, durMs: 220 };
+    const dist = Math.min(PetApp._inertiaMaxDistCss, speed * PetApp._inertiaTimeSec);
+    const scale = dist / speed;
+    const durMs = Math.round(160 + Math.min(1, dist / PetApp._inertiaMaxDistCss) * 100);
+    return { dxCss: vx * scale, dyCss: vy * scale, durMs };
+  }
+
+  private _willLaunchPinball(vxCss: number, vyCss: number): boolean {
+    return !!(this._settings?.pinballMode && !this._isReduceMotion() && this._pinball?.canLaunch(vxCss, vyCss));
+  }
+
+  /** 松手后执行弹球发射或惯性滑行与贴边；Windows 由系统选择所在显示器，完全出屏时选择最近显示器。 */
+  private _onDragFinished(
+    allowInertia = false,
+    presetInertia?: { dxCss: number; dyCss: number; durMs: number },
+    presetVel?: { vx: number; vy: number },
+  ): void {
+    const vel = allowInertia
+      ? (presetVel ?? this._sampleReleaseVelocity(this._dragVelX, this._dragVelY, this._dragLastMoveMs))
+      : { vx: 0, vy: 0, speed: 0 };
+    const wantsPinball = allowInertia && this._willLaunchPinball(vel.vx, vel.vy);
+    const inertia = presetInertia ?? (allowInertia && !wantsPinball
+      ? this._computeReleaseInertia(this._dragVelX, this._dragVelY, this._dragLastMoveMs)
+      : { dxCss: 0, dyCss: 0, durMs: 220 });
     if (platform === 'android') {
-      this._onDragFinishedAndroid();
+      this._onDragFinishedAndroid(false, inertia, wantsPinball ? vel : undefined);
       return;
     }
     const win = this._tauriWindow;
@@ -1575,29 +1735,69 @@ export class PetApp {
         if (!current()) return;
         this._winPhysX = pos.x;
         this._winPhysY = pos.y;
+        if (wantsPinball && this._pinball) {
+          const [mon, size] = await Promise.all([
+            m.currentMonitor().then(r => r ?? m.primaryMonitor()),
+            win.outerSize(),
+          ]);
+          if (!current()) return;
+          this._updateDesktopScaleRange(mon);
+          const sf = mon?.scaleFactor || this._scaleFactor || 1;
+          const r = this._physPinballContentRect(size);
+          const bounds: PinballBounds = mon
+            ? {
+                minX: (mon.workArea.position.x - Math.round(r.left)) / sf,
+                maxX: (mon.workArea.position.x + mon.workArea.size.width - Math.round(r.left + r.width)) / sf,
+                minY: (mon.workArea.position.y - Math.round(r.top)) / sf,
+                maxY: (mon.workArea.position.y + mon.workArea.size.height - Math.round(r.top + r.height)) / sf,
+              }
+            : {
+                minX: pos.x / sf - 600,
+                maxX: pos.x / sf + 600,
+                minY: pos.y / sf - 400,
+                maxY: pos.y / sf + 400,
+              };
+          this._startPinballDesktop(pos.x / sf, pos.y / sf, vel.vx, vel.vy, sf, bounds);
+          return;
+        }
+        const hasInertia = inertia.dxCss !== 0 || inertia.dyCss !== 0;
+        let sf = this._scaleFactor || 1;
+        let tx = pos.x;
+        let ty = pos.y;
+        const edges: string[] = [];
         if (this._settings.snapEdges) {
           const [mon, size] = await Promise.all([m.currentMonitor(), win.outerSize()]);
           if (!current()) return;
           if (mon) {
+            sf = mon.scaleFactor || sf;
+            tx += Math.round(inertia.dxCss * sf);
+            ty += Math.round(inertia.dyCss * sf);
             // 贴边按可见舞台算，透明外窗可以越出工作区。
             const r = this._physStageRect(size);
-            const zone = Math.round(PetApp._snapZonePx * mon.scaleFactor);
+            const zone = Math.round(PetApp._snapZonePx * sf);
             const left = mon.workArea.position.x - Math.round(r.left);
             const top = mon.workArea.position.y - Math.round(r.top);
             const right = mon.workArea.position.x + mon.workArea.size.width - Math.round(r.left + r.width);
             const bottom = mon.workArea.position.y + mon.workArea.size.height - Math.round(r.top + r.height);
-            const sx = PetApp._snapAxis(pos.x, left, right, zone);
-            const sy = PetApp._snapAxis(pos.y, top, bottom, zone);
-            const edges: string[] = [];
+            const sx = PetApp._snapAxis(tx, left, right, zone);
+            const sy = PetApp._snapAxis(ty, top, bottom, zone);
+            tx = sx.v;
+            ty = sy.v;
             if (sx.edge) edges.push(sx.edge === 'min' ? 'left' : 'right');
             if (sy.edge) edges.push(sy.edge === 'min' ? 'top' : 'bottom');
-            if (sx.v !== pos.x || sy.v !== pos.y) {
-              await this._animateWindowToPhys(sx.v, sy.v);
-              if (token !== this._snapAnimToken) return;
-            }
-            this._showSnapHint(edges);
+          } else {
+            tx += Math.round(inertia.dxCss * sf);
+            ty += Math.round(inertia.dyCss * sf);
           }
+        } else {
+          tx += Math.round(inertia.dxCss * sf);
+          ty += Math.round(inertia.dyCss * sf);
         }
+        if (tx !== pos.x || ty !== pos.y) {
+          await this._animateWindowToPhys(tx, ty, hasInertia ? Math.max(220, inertia.durMs) : 220);
+          if (token !== this._snapAnimToken) return;
+        }
+        this._showSnapHint(edges);
         if (token !== this._snapAnimToken || this._windowGeometryPending) return;
         this._persistDesktopPos();
         // 拖到另一块显示器后按新显示器重新开足容量（唯一一次需要隐藏交接的场景）。
@@ -1623,14 +1823,329 @@ export class PetApp {
     return this._stageRect(this._settings.scale, W, H, this._scaleFactor);
   }
 
+  /** 桌面弹球碰撞边界：扣除舞台四周透明渲染余量，让角色脚底与轮廓贴齐工作区四壁。 */
+  private _physPinballContentRect(size: { width: number; height: number }): { left: number; top: number; width: number; height: number } {
+    const r = this._physStageRect(size);
+    const b = this._model?.isReady() ? this._model.getStaticBounds?.() : null;
+    const boundsH = this._model?.boundsH ?? 0;
+    if (!b || !(boundsH > 0) || !(r.height > 0)) return r;
+    const aspect = this._model?.boundsAspect ?? 0;
+    const fitH = this._chatView?.isOpen && aspect > 0
+      ? Math.min(r.height, r.width / aspect)
+      : r.height;
+    const s = fitH / PetApp._renderMarginRatio / boundsH;
+    const mirror = !!this._settings?.mirror;
+    const left = r.left + r.width / 2 + (mirror ? -b.maxX : b.minX) * s;
+    const right = r.left + r.width / 2 + (mirror ? -b.minX : b.maxX) * s;
+    const top = r.top + r.height / 2 - b.maxY * s;
+    const bottom = r.top + r.height / 2 - b.minY * s;
+    if (!(right > left) || !(bottom > top)) return r;
+    return { left, top, width: right - left, height: bottom - top };
+  }
+
   /** 入口按钮：聊天打开或设置关闭时隐藏（hidden 同时让命中区与穿透放行区一并撤掉）。 */
   private _syncChatLauncherVisible(): void {
     if (!this._chatLauncher) return;
     this._chatLauncher.hidden = this._remoteChat.open || !this._settings.showChatButton;
   }
 
+  private _stopAndroidPinballSync(): void {
+    if (!this._androidPinballActive) return;
+    this._androidPinballActive = false;
+    const r = !this._nativeDragging && this._wrapWindow && this._rectInited
+      ? this._fixedWindowRect()
+      : null;
+    const x = r ? Math.round(r.x) : this._appliedRectX;
+    const y = r ? Math.round(r.y) : this._appliedRectY;
+    const w = this._nativeDragging ? 0 : (r ? Math.max(8, Math.round(r.w)) : Math.max(8, this._appliedRectW));
+    const h = this._nativeDragging ? 0 : (r ? Math.max(8, Math.round(r.h)) : Math.max(8, this._appliedRectH));
+    androidShell()?.syncPinballFrame?.(false, x, y, w, h, 0, 0, x, x, y, y);
+  }
+
+  private _cancelPinball(): void {
+    this._pinball?.cancel();
+    this._pinballBoundsCss = null;
+    this._stopAndroidPinballSync();
+    this._pinballSyncing = false;
+    this._pinballNeedsSync = false;
+    this._pinballSubmittedX = Number.NaN;
+    this._pinballSubmittedY = Number.NaN;
+    this._pinballSimMs = 0;
+    this._pinballLastBounceFeedbackMs = -Infinity;
+  }
+
+  private _pinballCatchSizeScale(): number {
+    const fallback = this._settings?.scale ?? 1;
+    if (!this._model?.isReady?.()) return fallback;
+    const shown = this._shownSizeFactor();
+    if (!this._deskScale && !this._scaleTween && Number.isFinite(this._settings?.scale)
+      && Math.abs(shown - this._settings.scale) < 0.003) {
+      return this._settings.scale;
+    }
+    return shown;
+  }
+
+  private _capturePinballCatch(): PinballCatchScore | null {
+    const pb = this._pinball;
+    if (!pb?.bouncing) return null;
+    const sizeScale = this._pinballCatchSizeScale();
+    const { minS, maxS } = this._currentScaleRange();
+    const displayPercent = typeof scaleToPercent === 'function'
+      ? scaleToPercent(sizeScale, minS, maxS)
+      : sizeScale * 100;
+    const result = computePinballCatchScore(pb.speed, sizeScale, pb.bounceCount, displayPercent);
+    this._lastPinballCatch = result;
+    this._showPinballCatchHud(result);
+    return result;
+  }
+
+  private _hidePinballCatchHud(immediate = false): void {
+    if (this._pinballCatchHideTimer) { clearTimeout(this._pinballCatchHideTimer); this._pinballCatchHideTimer = null; }
+    if (this._pinballCatchCloseTimer) { clearTimeout(this._pinballCatchCloseTimer); this._pinballCatchCloseTimer = null; }
+    if (immediate && this._wrapWindow && platform === 'android') {
+      androidShell()?.setPinballCatchHud?.('');
+    }
+    const el = this._pinballCatchHud;
+    if (!el) return;
+    if (immediate) {
+      el.hidden = true;
+      el.classList?.remove?.('show', 'closing');
+      return;
+    }
+    el.classList?.remove?.('show');
+    el.classList?.add?.('closing');
+    this._pinballCatchCloseTimer = setTimeout(() => {
+      this._pinballCatchCloseTimer = null;
+      if (this._pinballCatchHud) {
+        this._pinballCatchHud.hidden = true;
+        this._pinballCatchHud.classList?.remove?.('closing');
+      }
+    }, 220);
+  }
+
+  private _showPinballCatchHud(result: PinballCatchScore): void {
+    const shell = this._wrapWindow && platform === 'android' ? androidShell() : null;
+    if (shell?.setPinballCatchHud) {
+      const rect = this._canvas?.getBoundingClientRect?.();
+      const b = this._model?.isReady?.() ? this._model.getDynamicBounds?.() : null;
+      let centerX = (rect?.width ?? this._appliedRectW) / 2;
+      let headY = (rect?.height ?? this._appliedRectH) * 0.18;
+      if (rect && b) {
+        const t = this._modelViewportTransform();
+        const dpr = this._dpr || 1;
+        centerX = (t.originX + ((b.minX + b.maxX) / 2) * t.scale) / dpr;
+        headY = (t.originY - b.maxY * t.scale) / dpr;
+      }
+      shell.setPinballCatchHud(JSON.stringify({
+        score: result.score,
+        speedPxPerSec: result.speedPxPerSec,
+        sizePercent: result.sizePercent,
+        centerX,
+        headY,
+      }));
+      return;
+    }
+    if (this._androidBubble) {
+      const text = `抓到啦 +${result.score} 分\n速度 ${result.speedPxPerSec} px/s · 大小 ${result.sizePercent}%`;
+      void this._bubble?.play({
+        entryId: 'pinball.catch',
+        finalText: text,
+        pages: [{ index: 0, text }],
+      });
+      return;
+    }
+    if (typeof document === 'undefined' || !document.body || typeof document.createElement !== 'function') return;
+    if (this._pinballCatchHideTimer) { clearTimeout(this._pinballCatchHideTimer); this._pinballCatchHideTimer = null; }
+    if (this._pinballCatchCloseTimer) { clearTimeout(this._pinballCatchCloseTimer); this._pinballCatchCloseTimer = null; }
+
+    let el = this._pinballCatchHud;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'pinball-catch-hud';
+      el.className = 'pinball-catch-hud';
+      el.setAttribute?.('role', 'status');
+      el.setAttribute?.('aria-live', 'polite');
+      const scoreEl = document.createElement('div');
+      scoreEl.className = 'pinball-catch-score';
+      const metaEl = document.createElement('div');
+      metaEl.className = 'pinball-catch-meta';
+      el.appendChild(scoreEl);
+      el.appendChild(metaEl);
+      document.body.appendChild(el);
+      this._pinballCatchHud = el;
+    }
+    const scoreEl = el.children[0] as HTMLElement | undefined;
+    const metaEl = el.children[1] as HTMLElement | undefined;
+    if (scoreEl) scoreEl.textContent = `抓到啦 +${result.score} 分`;
+    if (metaEl) metaEl.textContent = `速度 ${result.speedPxPerSec} px/s · 大小 ${result.sizePercent}%`;
+
+    const vw = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 400;
+    const vh = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 400;
+    let anchorX = vw / 2;
+    let anchorY = Math.round(vh * 0.22);
+    const rect = this._canvas?.getBoundingClientRect?.();
+    const b = this._model?.isReady?.() ? this._model.getStaticBounds?.() : null;
+    if (rect && b) {
+      const t = this._modelViewportTransform();
+      const dpr = this._dpr || 1;
+      anchorX = rect.left + (t.originX + ((b.minX + b.maxX) / 2) * t.scale) / dpr;
+      anchorY = rect.top + (t.originY - b.maxY * t.scale) / dpr;
+    } else if (rect && rect.width > 0) {
+      anchorX = rect.left + rect.width / 2;
+      anchorY = rect.top + rect.height * 0.18;
+    }
+    el.style.visibility = 'hidden';
+    el.hidden = false;
+    el.classList?.remove?.('show', 'closing');
+    const w = el.offsetWidth || 180;
+    const h = el.offsetHeight || 44;
+    const left = Math.min(Math.max(8, Math.round(anchorX - w / 2)), Math.max(8, vw - w - 8));
+    const top = Math.min(Math.max(8, Math.round(anchorY - h - 10)), Math.max(8, vh - h - 8));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.visibility = '';
+    void el.offsetWidth;
+    el.classList?.add?.('show');
+
+    if (typeof setTimeout === 'function') {
+      this._pinballCatchHideTimer = setTimeout(() => {
+        this._pinballCatchHideTimer = null;
+        this._hidePinballCatchHud(false);
+      }, 2200);
+    }
+  }
+
+  private _onPinballBounce(event: PinballBounceEvent): void {
+    if (event.impactSpeed < 150) return;
+    const now = this._pinballSimMs;
+    if (now - this._pinballLastBounceFeedbackMs < 240) return;
+    this._pinballLastBounceFeedbackMs = now;
+    this._coordination.activity();
+
+    const k = Math.min(1, Math.max(0.3, event.impactSpeed / 1100));
+    const trigger = this._model?.triggerPartImpulse;
+    if (trigger) {
+      if (event.wall === 'bottom') {
+        // 轻快俏皮弹起感：不用沉重下压，给向上与侧向弹性晃动。
+        trigger.call(this._model, 'hair_bounce', 0.55 * k);
+        trigger.call(this._model, 'ponytail', 0.65 * k);
+        trigger.call(this._model, 'tie', 0.45 * k);
+      } else if (event.wall === 'top') {
+        trigger.call(this._model, 'hair_bounce', 0.65 * k);
+      } else {
+        const dir = event.wall === 'left' ? -1 : 1;
+        trigger.call(this._model, 'ponytail', dir * 0.75 * k);
+        trigger.call(this._model, 'tie', dir * 0.55 * k);
+      }
+    }
+
+    if (event.wall === 'bottom' || event.count % 2 === 0) {
+      this._expressForReaction('happy', null);
+    } else {
+      this._expressForReaction('surprised', null);
+    }
+  }
+
+  private _flushPinballWindowPos(): void {
+    const pb = this._pinball;
+    if (!pb?.active) return;
+    const rx = Math.round(this._winPhysX);
+    const ry = Math.round(this._winPhysY);
+    if (rx === this._pinballSubmittedX && ry === this._pinballSubmittedY) return;
+    if (this._pinballSyncing) {
+      this._pinballNeedsSync = true;
+      return;
+    }
+    this._pinballSyncing = true;
+    this._pinballNeedsSync = false;
+    this._pinballSubmittedX = rx;
+    this._pinballSubmittedY = ry;
+    void this._submitWindowPos()
+      .catch(() => {})
+      .finally(() => {
+        this._pinballSyncing = false;
+        if (this._pinballNeedsSync && this._pinball?.active) {
+          this._pinballNeedsSync = false;
+          this._flushPinballWindowPos();
+        }
+      });
+  }
+
+  private _startPinballDesktop(
+    xCss: number,
+    yCss: number,
+    vxCss: number,
+    vyCss: number,
+    sf: number,
+    bounds: PinballBounds,
+  ): void {
+    if (!this._pinball) return;
+    this._pinballScaleFactor = sf;
+    this._pinballSyncing = false;
+    this._pinballNeedsSync = false;
+    this._pinballSubmittedX = Math.round(xCss * sf);
+    this._pinballSubmittedY = Math.round(yCss * sf);
+    this._pinballSimMs = 0;
+    this._pinballLastBounceFeedbackMs = -Infinity;
+    const launched = this._pinball.launch({
+      x: xCss,
+      y: yCss,
+      vx: vxCss,
+      vy: vyCss,
+      bounds,
+      onBounce: (ev) => this._onPinballBounce(ev),
+      onSettled: (sx, sy) => {
+        this._winPhysX = Math.round(sx * this._pinballScaleFactor);
+        this._winPhysY = Math.round(sy * this._pinballScaleFactor);
+        this._pinballSyncing = false;
+        this._pinballNeedsSync = false;
+        void this._submitWindowPos()
+          .then(() => {
+            if (this._pinball?.active || this._dragging) return;
+            this._persistDesktopPos();
+            this._syncChatAnchor();
+            this._refreshDesktopCapacity();
+          })
+          .catch(() => {});
+      },
+    });
+    if (launched) {
+      this._winPhysX = Math.round(this._pinball.x * sf);
+      this._winPhysY = Math.round(this._pinball.y * sf);
+      this._boostUntil = performance.now() + 400;
+      this._kickImmediateFrame();
+    }
+  }
+
+  private _stepPinball(dt: number): void {
+    const pb = this._pinball;
+    if (!pb) return;
+    if (!pb.active) {
+      pb.stepSquash(dt);
+      return;
+    }
+    this._pinballSimMs = (this._pinballSimMs || 0) + Math.max(0, dt * 1000);
+    const prevX = pb.x;
+    const prevY = pb.y;
+    pb.step(dt);
+    if (!pb.active) return;
+    if (pb.bouncing || pb.x !== prevX || pb.y !== prevY) {
+      if (this._wrapWindow) {
+        this._originCssX = pb.x;
+        this._originCssY = pb.y;
+        this._rectDirty = true;
+      } else {
+        const sf = this._pinballScaleFactor || this._scaleFactor || 1;
+        this._winPhysX = pb.x * sf;
+        this._winPhysY = pb.y * sf;
+        this._flushPinballWindowPos();
+      }
+    }
+  }
+
   private _cancelSnapAnimation(): void {
     this._snapAnimToken++;
+    this._cancelPinball();
     if (this._nativeSnapping) {
       // 原点已是终点：下一帧把窗口矩形下发到终点（壳收到 setWindowRect 即停掉原生动画）。
       this._nativeSnapping = false;
@@ -1640,8 +2155,10 @@ export class PetApp {
     this._snapAnimation = null;
     if (this._snapHintTimer) clearTimeout(this._snapHintTimer);
     this._snapHintTimer = null;
-    document.body.classList.remove('snap-confirm');
-    delete document.body.dataset.snapEdge;
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.remove('snap-confirm');
+      delete document.body.dataset.snapEdge;
+    }
   }
 
   /** 原生动画引擎负责时间线和缓动；窗口不是 DOM 元素，逐帧仅桥接位置。 */
@@ -1678,28 +2195,76 @@ export class PetApp {
     }
   }
 
-  private async _animateWindowToPhys(tx: number, ty: number): Promise<void> {
+  private async _animateWindowToPhys(tx: number, ty: number, durMs = 220): Promise<void> {
     const sx = this._winPhysX;
     const sy = this._winPhysY;
     const completed = await this._animateSnap(async progress => {
       this._winPhysX = Math.round(sx + (tx - sx) * progress);
       this._winPhysY = Math.round(sy + (ty - sy) * progress);
       await this._submitWindowPos();
-    });
+    }, durMs);
     if (completed) this._syncChatAnchor();
   }
 
   /**
-   * Android 拖动结束：贴边吸附（缓动归位）+ 位置持久化。
+   * Android 拖动结束：惯性滑行 + 贴边吸附（缓动归位）+ 位置持久化。
    * 开启贴边时越界必归位（越界即近边的延伸）；关闭时可整个拖出屏幕
    * （找不回时走设置页「重置位置」）。
    */
-  private _onDragFinishedAndroid(forceNearestEdge = false): void {
+  private _onDragFinishedAndroid(
+    forceNearestEdge = false,
+    inertia?: { dxCss: number; dyCss: number; durMs: number },
+    pinballVel?: { vx: number; vy: number },
+  ): void {
     const shell = androidShell();
     if (!shell) return;
     // App 内全屏模式没有可移动的窗口：不吸附、不持久化
     // （曾在此把 winX/winY(=0,0) 当窗口坐标写进 posX/posY，污染悬浮窗原点）
     if (!this._wrapWindow) return;
+    if (pinballVel && this._pinball && this._pinball.canLaunch(pinballVel.vx, pinballVel.vy)) {
+      this._cancelSnapAnimation();
+      this._refreshShellMetrics();
+      const m = { screenW: this._screenW, screenH: this._screenH };
+      const b = this._model?.getStaticBounds() ?? null;
+      const s = this._contentScaleCss;
+      const bounds: PinballBounds = b && m.screenW > 0 && s > 0
+        ? {
+            minX: -b.minX * s,
+            maxX: m.screenW - b.maxX * s,
+            minY: b.maxY * s,
+            maxY: m.screenH + b.minY * s,
+          }
+        : { minX: 0, maxX: Math.max(0, m.screenW), minY: 0, maxY: Math.max(0, m.screenH) };
+      this._pinballSimMs = 0;
+      this._pinballLastBounceFeedbackMs = -Infinity;
+      const launched = this._pinball.launch({
+        x: this._originCssX,
+        y: this._originCssY,
+        vx: pinballVel.vx,
+        vy: pinballVel.vy,
+        bounds,
+        onBounce: (ev) => this._onPinballBounce(ev),
+        onSettled: (sx, sy) => {
+          this._pinballBoundsCss = null;
+          this._originCssX = sx;
+          this._originCssY = sy;
+          this._rectDirty = true;
+          this._persistWrapOrigin(sx, sy);
+        },
+      });
+      if (launched) {
+        this._pinballBoundsCss = bounds;
+        this._originCssX = this._pinball.x;
+        this._originCssY = this._pinball.y;
+        this._rectDirty = true;
+        this._boostUntil = performance.now() + 400;
+        this._syncWrapWindow();
+        this._kickImmediateFrame();
+        return;
+      }
+    }
+    let tx = this._originCssX + (inertia?.dxCss ?? 0);
+    let ty = this._originCssY + (inertia?.dyCss ?? 0);
     if (this._settings.snapEdges) {
       this._refreshShellMetrics();
       const m = { screenW: this._screenW, screenH: this._screenH };
@@ -1707,8 +2272,6 @@ export class PetApp {
       if (b && m.screenW > 0) {
         const s = this._contentScaleCss;
         const zone = forceNearestEdge ? 0 : PetApp._snapZonePx;
-        let tx = this._originCssX;
-        let ty = this._originCssY;
         const charL = tx + b.minX * s;
         const charR = tx + b.maxX * s;
         const charT = ty - b.maxY * s;
@@ -1720,13 +2283,15 @@ export class PetApp {
         else if (charR >= m.screenW - zone || nearest === 1) tx += m.screenW - charR;
         if (charT <= zone || nearest === 2) ty -= charT;
         else if (charB >= m.screenH - zone || nearest === 3) ty += m.screenH - charB;
-        if (tx !== this._originCssX || ty !== this._originCssY) {
-          // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
-          this._persistWrapOrigin(tx, ty);
-          this._animateOriginTo(tx, ty);
-          return;
-        }
       }
+    }
+    if (tx !== this._originCssX || ty !== this._originCssY) {
+      const hasInertia = !!inertia && (inertia.dxCss !== 0 || inertia.dyCss !== 0);
+      const durMs = hasInertia ? inertia.durMs : 220;
+      // 松手即保存终点：紧接着双击进入 App 会销毁悬浮窗，动画末帧回调可能不再交付。
+      this._persistWrapOrigin(tx, ty);
+      this._animateOriginTo(tx, ty, durMs);
+      return;
     }
     this._persistWrapOrigin();
   }
@@ -1925,7 +2490,9 @@ export class PetApp {
       // 只认角色本体：命中椭圆是语义分区（头/脸/耳…），轮廓外的透明区（头顶、发梢间隙）
       // 不能接管点击/抚摸/拖动。按渲染画布的真实 alpha 判定，跟随任意缩放、镜像与动作姿态。
       if (!this._isOnCharacter(e)) return;
+      const caughtPinball = !!this._capturePinballCatch();
       this._cancelSnapAnimation();
+      this._pinballCaughtPointerId = caughtPinball ? e.pointerId : null;
       this._activePointerId = e.pointerId;
       // 立即锁住已接受的指针流，不能等下一次渲染采样才通知原生壳。
       this._publishHitMask();
@@ -2029,10 +2596,14 @@ export class PetApp {
             const alpha = 1 - Math.exp(-moveDt / 0.035);
             this._dragVelX += (dx / moveDt - this._dragVelX) * alpha;
             this._dragVelY += (dy / moveDt - this._dragVelY) * alpha;
-            const shake = this._interaction?.dragReaction.onDragMotion?.(this._dragVelX, this._dragVelY, moveDt);
-            if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
-            this._interaction?.updateHoldVelocity(this._dragVelX);
-            this._lift?.setVelocity(this._dragVelX);
+            if (this._settings?.pinballMode) {
+              this._interaction?.dragReaction.onDragMove?.(Math.hypot(this._dragVelX, this._dragVelY));
+            } else {
+              const shake = this._interaction?.dragReaction.onDragMotion?.(this._dragVelX, this._dragVelY, moveDt);
+              if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
+            }
+            this._interaction?.updateHoldVelocity(this._dragVelX, this._dragVelY);
+            this._lift?.setVelocity(this._dragVelX, this._dragVelY);
           }
           if (!this._wrapWindow) {
             // 贴合模式：拖动由壳侧原生接管（OnTouchListener 直移窗口）
@@ -2051,23 +2622,27 @@ export class PetApp {
       if (e.pointerType === 'touch' && !this._dragging && !this._nativeDragging) this._updatePointerLook(e);
       const viaPetting = e.button === 2 || this._touchPetting;
       const touchTap = this._touchPetting && this._touchTapCandidate && this._interaction?.petting.state === 'pressed';
+      const suppressSpeak = this._pinballCaughtPointerId === e.pointerId;
+      this._pinballCaughtPointerId = null;
       const ctx = this._ctx(e, viaPetting);
       const handled = this._interaction?.onPointerUp(ctx) ?? false;
       if (this._wrapWindow) androidShell()?.setInteracting(false);
       this._touchPetting = false;
       if (touchTap) {
         this._interaction?.petting.exitPettingMode('modeChanged');
-        this._interaction?.onClick(ctx, false);
+        this._interaction?.onClick(ctx, false, suppressSpeak ? { suppressSpeak: true } : undefined);
       }
 
       if (e.button === 0 && !viaPetting) {
         if (this._dragging) {
-          // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）
-          this._interaction?.onClick(ctx, true);
-          this._onDragFinished();
+          // 拖动结束：快速拖动反应链（endDrag + 睁大眼 + 台词）+ 松手惯性滑行/弹球发射
+          const vel = this._sampleReleaseVelocity(this._dragVelX, this._dragVelY, this._dragLastMoveMs);
+          const wantsPinball = this._willLaunchPinball(vel.vx, vel.vy);
+          this._interaction?.onClick(ctx, true, wantsPinball ? { pinballLaunch: true } : undefined);
+          this._onDragFinished(true, undefined, vel);
         } else if (this._dragCandidate && !handled && (!this._touchClickCandidateActive || this._touchClickCandidate)) {
           // 普通单击（Android 触摸：位移在轻点容差内才算）
-          this._interaction?.onClick(ctx, false);
+          this._interaction?.onClick(ctx, false, suppressSpeak ? { suppressSpeak: true } : undefined);
         }
         this._resetDragState();
       }
@@ -2078,6 +2653,8 @@ export class PetApp {
 
     canvas.addEventListener('pointercancel', (e) => {
       if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      // 原生壳已接管拖动：beginNativeDrag 补发的 ACTION_CANCEL 若晚于 onNativeDragStart 到达，不能冲掉拎起状态。
+      if (this._nativeDragging) return;
       // 触摸流被系统/下层窗口截断：按拖动结束处理（保存位置 + 吸附）
       // （贴合模式拖动由壳接管，壳在 UP/CANCEL 回传总位移，这里不重复收尾）
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2088,6 +2665,7 @@ export class PetApp {
     });
     canvas.addEventListener('lostpointercapture', (e) => {
       if (e?.pointerId != null && this._activePointerId != null && e.pointerId !== this._activePointerId) return;
+      if (this._nativeDragging) return;
       if (this._activePointerId == null && !this._leftDown && !this._touchPetting &&
           !['pressed', 'petting'].includes(this._interaction?.petting.state ?? '')) return;
       if (this._dragging && !this._wrapWindow) this._onDragFinished();
@@ -2118,6 +2696,14 @@ export class PetApp {
         this._resetDragState();
         if (this._wrapWindow) androidShell()?.setInteracting(false);
         this._bubble?.cancel();
+        return;
+      }
+      // 桌面壳由 RegisterHotKey 处理全局热键；非桌面壳或预览环境由页面捕获快捷键切换弹球模式。
+      if (platform !== 'tauri' && !e.repeat && !e.isComposing && this._settings.pinballModeHotkey) {
+        if (hotkeyFromEvent(e) === this._settings.pinballModeHotkey) {
+          e.preventDefault();
+          this._setPinballMode(!this._settings.pinballMode);
+        }
       }
     });
   }
@@ -2127,6 +2713,7 @@ export class PetApp {
     this._dragCandidate = false;
     this._touchClickCandidateActive = false;
     this._touchClickCandidate = false;
+    this._pinballCaughtPointerId = null;
     this._dragVelX = 0;
     this._dragVelY = 0;
     this._dragLastMoveMs = 0;
@@ -2149,6 +2736,7 @@ export class PetApp {
     }
     this._touchPetting = false;
     this._touchTapCandidate = false;
+    this._pinballCaughtPointerId = null;
     this._hoverCursor = '';
     if (!this._dragging && this._canvas?.style) this._canvas.style.cursor = '';
     this._interaction?.cancel();
@@ -2169,7 +2757,8 @@ export class PetApp {
         if (geometryRevision !== this._windowGeometryRevision || this._windowGeometryPending > 0) return;
         this._scaleFactor = sf;
         this._metricsSynced = true;
-        if (token === this._snapAnimToken && !this._dragging && !this._windowMoveTask && !this._snapAnimation) {
+        if (token === this._snapAnimToken && !this._dragging && !this._windowMoveTask &&
+            !this._snapAnimation && !this._pinball?.active) {
           this._winPhysX = pos.x;
           this._winPhysY = pos.y;
           this._syncChatAnchor();
@@ -2235,7 +2824,7 @@ export class PetApp {
     const revision = this._windowPositionRevision = (this._windowPositionRevision ?? 0) + 1;
     this._windowPositionKind = 'move';
     const task = this._queueWindowGeometry(async () => {
-      const m = await import('@tauri-apps/api/window');
+      const m = this._tauriWindowMod ??= await import('@tauri-apps/api/window');
       if (revision !== this._windowPositionRevision) return;
       const x = Math.round(this._winPhysX), y = Math.round(this._winPhysY);
       await this._setWindowPositionVerified(new m.PhysicalPosition(x, y));
@@ -2328,7 +2917,18 @@ export class PetApp {
     else this._behavior?.start();
     this._syncBackgroundMotion();
     if (paused) {
+      if (this._frameTimerId != null) {
+        clearTimeout(this._frameTimerId);
+        this._frameTimerId = null;
+        this._frameQueued = false;
+      }
       this._chat?.stop();
+      if (this._pinball?.active) {
+        if (this._wrapWindow) this._persistWrapOrigin();
+        else this._persistDesktopPos();
+      }
+      this._cancelPinball();
+      this._hidePinballCatchHud(true);
       this._cancelInteraction();
       this._resetDragState();
       this._bubble?.cancel();
@@ -2393,11 +2993,16 @@ export class PetApp {
    */
   public onNativeDragStart(downCssX?: number, downCssY?: number): void {
     this._nativeDragging = true;
+    this._nativeDragVelX = 0;
+    this._nativeDragVelY = 0;
+    this._nativeDragMoveMs = 0;
     const rect = this._canvas?.getBoundingClientRect?.();
     this._liftPivot = rect && Number.isFinite(downCssX) && Number.isFinite(downCssY)
       ? this._modelPointAt(rect.left + downCssX!, rect.top + downCssY!)
       : null;
+    this._capturePinballCatch();
     this._cancelSnapAnimation();
+    this._pinballCaughtPointerId = null;
     this._leftDown = false;
     this._dragCandidate = false;
     if (this._dragging) this._canvas.style.cursor = '';
@@ -2416,10 +3021,18 @@ export class PetApp {
   public onNativeDragMove(vxCss: number, vyCss: number, dtSec = 0.033): void {
     if (!this._nativeDragging || !Number.isFinite(vxCss)) return;
     this._coordination.activity();
-    const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, Number.isFinite(vyCss) ? vyCss : 0, dtSec);
-    if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
-    this._interaction?.updateHoldVelocity(vxCss);
-    this._lift?.setVelocity(vxCss);
+    const vy = Number.isFinite(vyCss) ? vyCss : 0;
+    this._nativeDragVelX = vxCss;
+    this._nativeDragVelY = vy;
+    this._nativeDragMoveMs = performance.now();
+    if (this._settings?.pinballMode) {
+      this._interaction?.dragReaction.onDragMove?.(Math.hypot(vxCss, vy));
+    } else {
+      const shake = this._interaction?.dragReaction.onDragMotion?.(vxCss, vy, dtSec);
+      if (shake?.shakeTriggered) this._interaction?.onDragShake?.();
+    }
+    this._interaction?.updateHoldVelocity(vxCss, vy);
+    this._lift?.setVelocity(vxCss, vy);
   }
 
   /**
@@ -2452,6 +3065,8 @@ export class PetApp {
     cancelled: boolean,
     upCssX?: number,
     upCssY?: number,
+    releaseVxCss?: number,
+    releaseVyCss?: number,
   ): void {
     this._coordination.activity();
     this._nativeDragging = false;
@@ -2461,17 +3076,38 @@ export class PetApp {
     this._appliedRectX += dxCss;
     this._appliedRectY += dyCss;
     if (this._behavior) this._behavior.isDragging = false;
+    let inertia: { dxCss: number; dyCss: number; durMs: number } | undefined;
+    let releaseVel: { vx: number; vy: number } | undefined;
     if (cancelled) {
       this._interaction?.dragReaction.cancel();
       this._interaction?.procedural.cancelAll();
     } else {
+      const hasReleaseVel = Number.isFinite(releaseVxCss) && Number.isFinite(releaseVyCss);
+      const vx = hasReleaseVel ? releaseVxCss! : this._nativeDragVelX;
+      const vy = hasReleaseVel ? releaseVyCss! : this._nativeDragVelY;
+      const lastMoveMs = hasReleaseVel ? 0 : this._nativeDragMoveMs;
+      const sampled = this._sampleReleaseVelocity(vx, vy, lastMoveMs);
+      releaseVel = { vx: sampled.vx, vy: sampled.vy };
+      const wantsPinball = this._willLaunchPinball(sampled.vx, sampled.vy);
+      if (!wantsPinball) {
+        inertia = this._computeReleaseInertia(vx, vy, lastMoveMs);
+      }
       const hasUp = Number.isFinite(upCssX) && Number.isFinite(upCssY) && this._model?.isReady?.();
       const norm = hasUp ? this._wrapToRefNorm(upCssX!, upCssY!) : { nx: 0.5, ny: 0.5 };
       this._interaction?.dragReaction.onDragMove(maxSpeedPxPerSec);
-      this._interaction?.onClick({ normX: norm.nx, normY: norm.ny, pxX: upCssX ?? 0, pxY: upCssY ?? 0,
-        dtSeconds: 0.016, leftPressed: false, isSecondary: false, pointerType: 'touch' }, true);
+      this._interaction?.onClick(
+        {
+          normX: norm.nx, normY: norm.ny, pxX: upCssX ?? 0, pxY: upCssY ?? 0,
+          dtSeconds: 0.016, leftPressed: false, isSecondary: false, pointerType: 'touch',
+        },
+        true,
+        wantsPinball ? { pinballLaunch: true } : undefined,
+      );
     }
-    this._onDragFinished();
+    this._nativeDragVelX = 0;
+    this._nativeDragVelY = 0;
+    this._nativeDragMoveMs = 0;
+    this._onDragFinished(!cancelled, inertia, releaseVel);
   }
 
   /** 调整帧率上限（省电模式 15fps）。 */
@@ -2510,8 +3146,9 @@ export class PetApp {
     });
   }
 
-  /** 当前帧间隔（ms）：画内缩放与互动期间 60fps，其余按帧率上限。 */
+  /** 当前帧间隔（ms）：弹球弹跳中不限帧跑满显示器原生刷新率；其余按交互 60fps 或帧率上限。 */
   private _frameIntervalMs(now: number): number {
+    if (this._pinball?.bouncing) return 0;
     return 1000 / (this._deskScale || this._interactionBoost(now) ? 60 : this._fpsCap);
   }
 
@@ -2524,12 +3161,28 @@ export class PetApp {
     if (this._frameQueued) return;
     this._frameQueued = true;
     const now = performance.now();
-    const wait = this._lastFrameTime + this._frameIntervalMs(now) - now - PetApp._frameWakeLeadMs;
-    // 定时器已睡满本帧间隔：醒来后的首个 vsync 直接渲染（rAF 时间戳是帧起点，比当前时刻
-    // 早几毫秒，按它再判一次会多空转一个 vsync）。
-    const due = wait > 1;
-    const run = () => requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t, due); });
-    if (due) setTimeout(run, wait); else run();
+    const interval = this._frameIntervalMs(now);
+    const wait = interval > 0 ? this._lastFrameTime + interval - now - PetApp._frameWakeLeadMs : 0;
+    // 弹球弹跳中直连 rAF 对齐原生刷新率，不经 setTimeout 避免定时器抖动掉帧。
+    const due = interval <= 0 || wait > 1;
+    const run = () => {
+      this._frameTimerId = null;
+      requestAnimationFrame((t) => { this._frameQueued = false; this._frame(t, due); });
+    };
+    if (interval > 0 && wait > 1) this._frameTimerId = setTimeout(run, wait); else run();
+  }
+
+  /** 取消低帧率等待定时器，立刻切到下一帧 rAF（弹球起步零首帧延迟）。 */
+  private _kickImmediateFrame(): void {
+    if (!this._running || this._paused || this._covered) return;
+    if (this._frameTimerId != null) {
+      clearTimeout(this._frameTimerId);
+      this._frameTimerId = null;
+      this._frameQueued = false;
+      this._scheduleFrame();
+    } else if (!this._frameQueued) {
+      this._scheduleFrame();
+    }
   }
   /** 定时器提前醒来的余量（ms）：覆盖定时器抖动与一个高刷屏的 vsync 间隔。 */
   private static readonly _frameWakeLeadMs = 6;
@@ -2537,21 +3190,30 @@ export class PetApp {
   private _frame(t: number, due = false): void {
     if (!this._running || this._paused || this._covered) return;
 
-    // 画内缩放与互动（拖动/抚摸/点击反应）期间临时升到 60fps，跟手更顺；
-    // 结束后回到常规上限。省电模式下互动也不升帧。
-    const minInterval = this._frameIntervalMs(t);
-    // 节奏由下方 _lastFrameTime 累加维持，定时器提前醒来接收也不会抬高平均帧率。
-    if (!due && t - this._lastFrameTime < minInterval - 1) {
-      this._scheduleFrame();
-      return;
-    }
-    // 帧间隔累积推进；长时间欠采样（切后台回来）时重置锚点
-    this._lastFrameTime += minInterval;
-    if (t - this._lastFrameTime > minInterval * 2) {
+    let dt: number;
+    if (this._pinball?.bouncing) {
+      const rawDt = this._lastFrameTime > 0 && t > this._lastFrameTime
+        ? (t - this._lastFrameTime) / 1000
+        : (1 / 60);
+      dt = Math.min(0.05, Math.max(1 / 240, rawDt));
       this._lastFrameTime = t;
+      this._boostUntil = t + 400;
+    } else {
+      // 画内缩放与互动（拖动/抚摸/点击反应）期间临时升到 60fps，跟手更顺；
+      // 结束后回到常规上限。省电模式下互动也不升帧。
+      const minInterval = this._frameIntervalMs(t);
+      // 节奏由下方 _lastFrameTime 累加维持，定时器提前醒来接收也不会抬高平均帧率。
+      if (!due && t - this._lastFrameTime < minInterval - 1) {
+        this._scheduleFrame();
+        return;
+      }
+      // 帧间隔累积推进；长时间欠采样（切后台回来）时重置锚点
+      this._lastFrameTime += minInterval;
+      if (t - this._lastFrameTime > minInterval * 2) {
+        this._lastFrameTime = t;
+      }
+      dt = minInterval / 1000;
     }
-
-    const dt = minInterval / 1000;
     // 舞台矩形与画布尺寸在渲染帧内同步：重置缓冲后立即重绘，合成器永远拿不到空帧
     if (platform === 'tauri') { this._stepDesktopScale(t); this._layoutStage(); }
     this._resizeCanvas();
@@ -2585,7 +3247,8 @@ export class PetApp {
     // 与画布帧率无关；拖动错位的真因已在别处修掉（见 _maybeSendHitMask、LiftPose 子步长）。
     if (this._settings?.batterySaver) return false;
     const active = this._dragging || this._nativeDragging || this._leftDown || this._touchPetting ||
-      (this._lift?.active ?? false) || (this._interaction?.isBusy ?? false);
+      (this._lift?.active ?? false) || (this._pinball?.active ?? false) ||
+      (this._pinball?.squashActive ?? false) || (this._interaction?.isBusy ?? false);
     if (active) this._boostUntil = now + 400;
     return now < this._boostUntil;
   }
@@ -2712,9 +3375,30 @@ export class PetApp {
     // 互动层先算平滑值并写入模型通道，模型 update 时统一应用
     this._chatPerformance?.tick();
     this._interaction?.tick(dt * 1000);
+    this._stepPinball(dt);
     this._lift?.setHolding(this._dragging || this._nativeDragging);
     this._reduceMotionQuery ??= window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
-    this._lift?.update(dt, this._reduceMotionQuery?.matches ?? false);
+    const reduceMotion = this._reduceMotionQuery?.matches ?? false;
+    this._lift?.update(dt, reduceMotion);
+    const pinballMoving = !reduceMotion && !!(this._pinball?.bouncing);
+    const windSourceActive = !reduceMotion && ((this._lift?.active ?? false) || this._dragging || this._nativeDragging || pinballMoving);
+    if (windSourceActive || this._dragWindActive) {
+      const dir = this._settings?.mirror ? -1 : 1;
+      const wxTarget = pinballMoving
+        ? Math.max(-0.7, Math.min(0.7, (-this._pinball!.vx / 1500) * 0.65 * dir))
+        : (windSourceActive ? Math.max(-0.7, Math.min(0.7, ((this._lift?.angle ?? 0) / 9) * 0.65 * dir)) : 0);
+      const wyTarget = pinballMoving
+        ? Math.max(-0.8, Math.min(0.8, (-this._pinball!.vy / 1500) * 0.65))
+        : (windSourceActive ? Math.max(-0.8, Math.min(0.8, (this._lift?.bounce ?? 0) * 0.8)) : 0);
+      const wk = dt > 0 ? 1 - Math.exp(-dt / 0.035) : 1;
+      this._dragWindX += (wxTarget - this._dragWindX) * wk;
+      this._dragWindY += (wyTarget - this._dragWindY) * wk;
+      if (Math.abs(this._dragWindX) < 0.001) this._dragWindX = 0;
+      if (Math.abs(this._dragWindY) < 0.001) this._dragWindY = 0;
+      const nonZero = this._dragWindX !== 0 || this._dragWindY !== 0;
+      this._model?.setPhysicsWind?.(this._dragWindX, this._dragWindY);
+      this._dragWindActive = nonZero;
+    }
     this._model?.update(dt);
   }
 
@@ -2782,6 +3466,7 @@ export class PetApp {
       pivotY: originY - pivot.y * scale,
       angleDeg: this._settings.mirror ? -this._lift.angle : this._lift.angle,
       lift: this._lift.lift,
+      bounce: this._lift.bounce,
       bounds: b,
       width: this._canvas.width,
       height: this._canvas.height,
@@ -2807,6 +3492,29 @@ export class PetApp {
     return fitH / PetApp._renderMarginRatio / this._model.boundsH;
   }
 
+  /** 以静态脚底为支点的弹球触底压扁参数（保持脚底贴地不浮空）。 */
+  private _pinballSquashTransform(
+    scale: number,
+    originX: number,
+    originY: number,
+  ): { sx: number; sy: number; footX: number; footY: number; originX: number; originY: number } | null {
+    const pb = this._pinball;
+    if (!pb?.squashActive || this._isReduceMotion()) return null;
+    const { sx, sy } = pb.squashScale;
+    if (sx === 1 && sy === 1) return null;
+    const b = this._model?.isReady() ? this._model.getStaticBounds?.() : null;
+    const footX = b ? originX + ((b.minX + b.maxX) / 2) * scale : originX;
+    const footY = b ? originY - b.minY * scale : originY;
+    return {
+      sx,
+      sy,
+      footX,
+      footY,
+      originX: footX + sx * (originX - footX),
+      originY: footY + sy * (originY - footY),
+    };
+  }
+
   private _render(): void {
     const gl = this._gl;
     if (gl.isContextLost()) return;
@@ -2825,9 +3533,25 @@ export class PetApp {
     const modelMatrix = this._model.getModelMatrix();
     modelMatrix.loadIdentity();
     const { scale, originX, originY } = this._modelViewportTransform();
-    modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
-    modelMatrix.translate(originX, originY);
-    if (this._lift?.active) modelMatrix.setMatrix(this._liftModelMatrix(scale, originX, originY));
+    const squash = this._pinballSquashTransform(scale, originX, originY);
+    if (this._lift?.active) {
+      const m = this._liftModelMatrix(scale, originX, originY);
+      if (squash) {
+        m[0] *= squash.sx;
+        m[4] *= squash.sx;
+        m[12] = squash.footX + squash.sx * (m[12] - squash.footX);
+        m[1] *= squash.sy;
+        m[5] *= squash.sy;
+        m[13] = squash.footY + squash.sy * (m[13] - squash.footY);
+      }
+      modelMatrix.setMatrix(m);
+    } else if (squash) {
+      modelMatrix.scale(scale * squash.sx, -scale * squash.sy);
+      modelMatrix.translate(squash.originX, squash.originY);
+    } else {
+      modelMatrix.scale(scale, -scale); // 模型 Y 轴朝上，视口 Y 轴朝下
+      modelMatrix.translate(originX, originY);
+    }
 
     // 视口像素 -> NDC（y 翻转）
     const projection = (this._projection ??= new CubismMatrix44());
@@ -2886,14 +3610,49 @@ export class PetApp {
     if (this._nativeDragging) return; // 原生拖动期间窗口由壳独占
     const shell = androidShell();
     if (!shell) return;
-    if (this._rectInited && !this._rectDirty) return;
+    const bouncing = this._pinball?.bouncing === true;
+    const hadNativePinball = this._androidPinballActive;
+    if (this._rectInited && !this._rectDirty && bouncing === hadNativePinball) return;
     this._rectDirty = false;
 
     const r = this._fixedWindowRect();
-    const L = Math.round(r.x);
-    const T = Math.round(r.y);
+    const dpr = bouncing ? (this._dpr || 1) : 1;
+    const L = Math.round(r.x * dpr) / dpr;
+    const T = Math.round(r.y * dpr) / dpr;
     const W = Math.max(8, Math.round(r.w));
     const H = Math.max(8, Math.round(r.h));
+
+    if (typeof shell.syncPinballFrame === 'function') {
+      if (bouncing) {
+        this._androidPinballActive = true;
+        const pb = this._pinball!;
+        const b = this._pinballBoundsCss;
+        const offX = r.x - pb.x;
+        const offY = r.y - pb.y;
+        const minL = b ? b.minX + offX : L;
+        const maxL = b ? b.maxX + offX : L;
+        const minT = b ? b.minY + offY : T;
+        const maxT = b ? b.maxY + offY : T;
+        shell.syncPinballFrame(true, L, T, W, H, pb.vx, pb.vy, minL, maxL, minT, maxT);
+        this._appliedRectX = L;
+        this._appliedRectY = T;
+        this._appliedRectW = W;
+        this._appliedRectH = H;
+        this._rectInited = true;
+        return;
+      }
+      if (hadNativePinball) {
+        this._androidPinballActive = false;
+        shell.syncPinballFrame(false, L, T, W, H, 0, 0, L, L, T, T);
+        this._appliedRectX = L;
+        this._appliedRectY = T;
+        this._appliedRectW = W;
+        this._appliedRectH = H;
+        this._rectInited = true;
+        return;
+      }
+    }
+
     if (
       this._rectInited &&
       L === this._appliedRectX &&
@@ -2903,7 +3662,7 @@ export class PetApp {
     ) {
       return;
     }
-    shell.setWindowRect(L, T, W, H);
+    shell.setWindowRect?.(L, T, W, H);
     this._appliedRectX = L;
     this._appliedRectY = T;
     this._appliedRectW = W;
@@ -2918,8 +3677,8 @@ export class PetApp {
     const androidWrap = platform === 'android' && this._wrapWindow;
     if (!this._hitMaskSend && !androidWrap) return;
     if (!this._model?.isReady()) return;
-    // 拖动中窗口几何每帧变化，且原生层此时整窗接收输入、不读掩码：跳过 GPU→CPU 回读，避免拖动卡顿。
-    if (this._dragging || this._nativeDragging) return;
+    // 拖动或弹球飞行中窗口几何每帧变化，跳过 GPU→CPU 回读，避免卡顿。
+    if (this._dragging || this._nativeDragging || this._pinball?.bouncing) return;
     const interacting = this._isPointerInteracting();
     const geometry = this._hitMaskGeometryKey();
     const now = performance.now();

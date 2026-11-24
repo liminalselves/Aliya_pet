@@ -254,15 +254,4 @@ export function setRowInactive(row: HTMLElement | null, inactive: boolean): void
   });
 }
 
-/** KeyboardEvent → 快捷键文本（与壳侧 parse_hotkey 同格式）；纯修饰键或不支持的键返回 null。 */
-export function hotkeyFromEvent(e: KeyboardEvent): string | null {
-  const m = /^(?:Key([A-Z])|Digit([0-9])|(F(?:[1-9]|1[0-9]|2[0-4])))$/.exec(e.code);
-  if (!m) return null;
-  const mods = [
-    e.ctrlKey && 'Ctrl',
-    e.altKey && 'Alt',
-    e.shiftKey && 'Shift',
-    e.metaKey && 'Win',
-  ].filter(Boolean);
-  return [...mods, m[1] ?? m[2] ?? m[3]].join('+');
-}
+export { hotkeyFromEvent } from '../settings';
