@@ -18,7 +18,13 @@ import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion
 import { applyFaceMouth, applyFaceVariant, expressionEye, EyeVariantTransition, FACE_MOUTH_PARAMETERS, FACE_VARIANT_PARAMETERS } from './face-variant';
 import { FaceCueTrack, parseFaceCues, type FaceCueSpan, type FaceState } from './face-cue';
 import { FX_NAMES, FX_PARAMETERS, FxChannel, parseFxCues, type FxName, type FxSpan } from './fx-cue';
-import { InteractionParamInfo, InteractionTarget } from './interaction/target';
+import {
+  InteractionParamInfo,
+  InteractionTarget,
+  type ArmInteractionValues,
+  type FaceMicroInteractionValues,
+  type PartImpulseKind,
+} from './interaction/target';
 import type { PetBehaviorHost } from './behavior';
 import { MOTION_NAMES } from './catalog';
 import { GazeController } from './gaze';
@@ -27,8 +33,14 @@ import {
   InteractionOffsetChannel,
   EyeOverrideChannel,
   EarChannel,
+  EarDragPhysics,
   CheekChannel,
   HandRaiseChannel,
+  ArmInteractionChannel,
+  FaceMicroChannel,
+  PartImpulseChannel,
+  type PartImpulseSpec,
+  type PartImpulseTarget,
   AngerMarkSplit,
 } from './overlay';
 
@@ -105,8 +117,12 @@ export class PetModel
   private _chInteraction: InteractionOffsetChannel = null;
   private _chEye: EyeOverrideChannel = null;
   private _chEar: EarChannel = null;
+  private _chEarDrag: EarDragPhysics | null = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  private _chArm: ArmInteractionChannel = null;
+  private _chFaceMicro: FaceMicroChannel = null;
+  private _chPartImpulse: PartImpulseChannel = null;
   /** 情绪符号图层（ParamFx*），随动作时间轴与表情联动。 */
   private _chFx: FxChannel = null;
   private _angerSplit: AngerMarkSplit | null = null;
@@ -125,6 +141,8 @@ export class PetModel
   private _idAngleY: CubismIdHandle = null;
   private _idAngleZ: CubismIdHandle = null;
   private _idBodyAngleX: CubismIdHandle = null;
+  private _idBodyAngleY: CubismIdHandle = null;
+  private _idBodyAngleZ: CubismIdHandle = null;
   private _idEarL: CubismIdHandle = null;
   private _idEarR: CubismIdHandle = null;
   private _idCheek: CubismIdHandle = null;
@@ -284,7 +302,8 @@ export class PetModel
       new LookParameterData(id(CubismDefaultParameterId.ParamAngleX), 12, 0, 0),
       new LookParameterData(id(CubismDefaultParameterId.ParamAngleY), 0, 10, 0),
       new LookParameterData(id(CubismDefaultParameterId.ParamAngleZ), 0, 0, -8),
-      new LookParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 4, 0, 0),
+      new LookParameterData(id(CubismDefaultParameterId.ParamBodyAngleX), 7.5, 0, 0),
+      new LookParameterData(id(CubismDefaultParameterId.ParamBodyAngleY), 0, 7.0, 0),
       // 该模型眼球参数值域是 ±30（非官方惯例的 ±1），取 18（60% 行程）
       new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallX), 18, 0, 0),
       new LookParameterData(id(CubismDefaultParameterId.ParamEyeBallY), 0, 18, 0),
@@ -295,17 +314,20 @@ export class PetModel
     this._idAngleY = id(CubismDefaultParameterId.ParamAngleY);
     this._idAngleZ = id(CubismDefaultParameterId.ParamAngleZ);
     this._idBodyAngleX = id(CubismDefaultParameterId.ParamBodyAngleX);
+    this._idBodyAngleY = id(CubismDefaultParameterId.ParamBodyAngleY);
+    this._idBodyAngleZ = id(CubismDefaultParameterId.ParamBodyAngleZ);
     // 猫耳：旧模型的 ParamEarL/R 在新模型上不存在；新模型耳朵由物理输出
-    // Param9/Param13（左/右晃动1，cdi3「猫耳」组）驱动。探测后二选一，
-    // 写入点在物理之后（EarChannel），加写即可生效。
+    // Param8/9/10（左）与 Param12/13/14（右）驱动，写入点在物理之后（EarChannel）。
     const hasParam = (name: string): boolean => {
       for (let i = 0; i < this._model.getParameterCount(); i++) {
         if (this._model.getParameterId(i).getString() === name) return true;
       }
       return false;
     };
-    const idEarL = id(hasParam('ParamEarL') ? 'ParamEarL' : 'Param9');
-    const idEarR = id(hasParam('ParamEarR') ? 'ParamEarR' : 'Param13');
+    const optId = (name: string): CubismIdHandle | undefined => (hasParam(name) ? id(name) : undefined);
+    const hasLegacyEars = hasParam('ParamEarL') && hasParam('ParamEarR');
+    const idEarL = id(hasLegacyEars ? 'ParamEarL' : 'Param9');
+    const idEarR = id(hasLegacyEars ? 'ParamEarR' : 'Param13');
     this._idEarL = idEarL;
     this._idEarR = idEarR;
     this._idCheek = id('ParamCheek');
@@ -338,19 +360,194 @@ export class PetModel
       angleY: this._idAngleY,
       angleZ: this._idAngleZ,
       bodyAngleX: this._idBodyAngleX,
+      bodyAngleY: hasParam(CubismDefaultParameterId.ParamBodyAngleY) ? this._idBodyAngleY : undefined,
+      bodyAngleZ: hasParam(CubismDefaultParameterId.ParamBodyAngleZ) ? this._idBodyAngleZ : undefined,
     });
     this._chEye = new EyeOverrideChannel({
       left: this._eyeBlinkIds[0],
       right: this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0],
     });
-    this._chEar = new EarChannel({ left: idEarL, right: idEarR });
-    this._chEar.scale = hasParam('ParamEarL') ? 1 : 12;
+    const earLeftRot = hasLegacyEars ? undefined : optId('Param8');
+    const earLeftTip = hasLegacyEars ? undefined : optId('Param10');
+    const earRightRot = hasLegacyEars ? undefined : optId('Param12');
+    const earRightTip = hasLegacyEars ? undefined : optId('Param14');
+    this._chEar = new EarChannel(hasLegacyEars
+      ? { left: idEarL, right: idEarR }
+      : {
+          left: idEarL,
+          right: idEarR,
+          leftRot: earLeftRot,
+          leftTip: earLeftTip,
+          rightRot: earRightRot,
+          rightTip: earRightTip,
+        });
+    this._chEar.scale = 1;
+    this._chEarDrag = earLeftRot && earLeftTip && earRightRot && earRightTip
+      ? new EarDragPhysics({
+          leftRot: earLeftRot,
+          leftMid: idEarL,
+          leftTip: earLeftTip,
+          leftPersp: optId('Param7'),
+          rightRot: earRightRot,
+          rightMid: idEarR,
+          rightTip: earRightTip,
+          rightPersp: optId('Param11'),
+        })
+      : null;
     this._chCheek = new CheekChannel(this._idCheek);
     this._chHand = new HandRaiseChannel(idsHandR, nativeWave);
-    this._overlays.add(this._chInteraction);
+    this._chArm = new ArmInteractionChannel(
+      {
+        l01: optId('ParamArmL01'),
+        l02: optId('ParamArmL02'),
+        r01: optId('ParamArmR01'),
+        r02: optId('ParamArmR02'),
+      },
+      () => this._chHand?.raising ?? 0
+    );
+    this._chFaceMicro = new FaceMicroChannel({
+      eyeLSmile: optId('ParamEyeLSmile'),
+      eyeRSmile: optId('ParamEyeRSmile'),
+      mouthForm: optId('ParamMouthForm'),
+      mouthOpen: optId('ParamMouthOpenY'),
+      browLY: optId('ParamBrowLY'),
+      browRY: optId('ParamBrowRY'),
+      browLAngle: optId('ParamBrowLAngle'),
+      browRAngle: optId('ParamBrowRAngle'),
+      browLForm: optId('ParamBrowLForm'),
+      browRForm: optId('ParamBrowRForm'),
+    });
+    const collectChain = (entries: ReadonlyArray<readonly [string, number]>): PartImpulseTarget[] => {
+      const list: PartImpulseTarget[] = [];
+      for (const [name, weight] of entries) {
+        const handle = optId(name);
+        if (handle) list.push({ id: handle, weight });
+      }
+      return list;
+    };
+    const impulseSpecs: Partial<Record<PartImpulseKind, PartImpulseSpec>> = {
+      tie: {
+        targets: collectChain([
+          ['Param_Angle_Rotation_1_ArtMesh42', 0.65],
+          ['Param_Angle_Rotation_2_ArtMesh42', 1.0],
+          ['Param_Angle_Rotation_3_ArtMesh42', 0.85],
+        ]),
+        min: -45, max: 45, omega: 15, zeta: 0.24, maxAmp: 22,
+      },
+      bangs: {
+        targets: collectChain([
+          ['Param_Angle_Rotation_1_ArtMesh8', 0.25],
+          ['Param_Angle_Rotation_2_ArtMesh8', 0.45],
+          ['Param_Angle_Rotation_3_ArtMesh8', 0.65],
+          ['Param_Angle_Rotation_4_ArtMesh8', 0.85],
+          ['Param_Angle_Rotation_5_ArtMesh8', 1.0],
+          ['Param_Angle_Rotation_6_ArtMesh8', 1.0],
+          ['Param_Angle_Rotation_7_ArtMesh8', 0.9],
+          ['Param_Angle_Rotation_1_ArtMesh7', 0.3],
+          ['Param_Angle_Rotation_2_ArtMesh7', 0.55],
+          ['Param_Angle_Rotation_3_ArtMesh7', 0.8],
+          ['Param_Angle_Rotation_4_ArtMesh7', 1.0],
+          ['Param_Angle_Rotation_5_ArtMesh7', 0.9],
+        ]),
+        min: -45, max: 45, omega: 13, zeta: 0.42, maxAmp: 4.2,
+      },
+      side_hair_left: {
+        targets: collectChain([
+          ['Param_Angle_Rotation_1_FrontHair_L', 0.3],
+          ['Param_Angle_Rotation_2_FrontHair_L', 0.5],
+          ['Param_Angle_Rotation_3_FrontHair_L', 0.7],
+          ['Param_Angle_Rotation_4_FrontHair_L', 0.85],
+          ['Param_Angle_Rotation_5_FrontHair_L', 1.0],
+          ['Param_Angle_Rotation_6_FrontHair_L', 1.0],
+          ['Param_Angle_Rotation_7_FrontHair_L', 0.9],
+          ['Param_Angle_Rotation_1_ArtMesh54', 0.35],
+          ['Param_Angle_Rotation_2_ArtMesh54', 0.6],
+          ['Param_Angle_Rotation_3_ArtMesh54', 0.85],
+          ['Param_Angle_Rotation_4_ArtMesh54', 1.0],
+          ['Param_Angle_Rotation_5_ArtMesh54', 0.9],
+        ]),
+        min: -45, max: 45, omega: 14, zeta: 0.26, maxAmp: 9.5,
+      },
+      side_hair_right: {
+        targets: collectChain([
+          ['Param_Angle_Rotation_1_FrontHair_R', 0.3],
+          ['Param_Angle_Rotation_2_FrontHair_R', 0.5],
+          ['Param_Angle_Rotation_3_FrontHair_R', 0.7],
+          ['Param_Angle_Rotation_4_FrontHair_R', 0.85],
+          ['Param_Angle_Rotation_5_FrontHair_R', 1.0],
+          ['Param_Angle_Rotation_6_FrontHair_R', 1.0],
+          ['Param_Angle_Rotation_7_FrontHair_R', 0.9],
+          ['Param_Angle_Rotation_1_ArtMesh55', 0.3],
+          ['Param_Angle_Rotation_2_ArtMesh55', 0.5],
+          ['Param_Angle_Rotation_3_ArtMesh55', 0.7],
+          ['Param_Angle_Rotation_4_ArtMesh55', 0.85],
+          ['Param_Angle_Rotation_5_ArtMesh55', 1.0],
+          ['Param_Angle_Rotation_6_ArtMesh55', 1.0],
+          ['Param_Angle_Rotation_7_ArtMesh55', 0.9],
+        ]),
+        min: -45, max: 45, omega: 14, zeta: 0.26, maxAmp: 9.5,
+      },
+      ponytail: {
+        targets: collectChain([
+          ['Param_Angle_Rotation_1_ArtMesh59', 0.15],
+          ['Param_Angle_Rotation_2_ArtMesh59', 0.2],
+          ['Param_Angle_Rotation_3_ArtMesh59', 0.3],
+          ['Param_Angle_Rotation_4_ArtMesh59', 0.4],
+          ['Param_Angle_Rotation_5_ArtMesh59', 0.55],
+          ['Param_Angle_Rotation_6_ArtMesh59', 0.7],
+          ['Param_Angle_Rotation_7_ArtMesh59', 0.85],
+          ['Param_Angle_Rotation_8_ArtMesh59', 0.95],
+          ['Param_Angle_Rotation_9_ArtMesh59', 1.0],
+          ['Param_Angle_Rotation_10_ArtMesh59', 1.0],
+          ['Param_Angle_Rotation_11_ArtMesh59', 0.9],
+          ['Param_Angle_Rotation_12_ArtMesh59', 0.8],
+          ['Param_Angle_Rotation_13_ArtMesh59', 0.7],
+        ]),
+        min: -45, max: 45, omega: 11, zeta: 0.26, maxAmp: 7.5,
+      },
+      hair_bounce: {
+        targets: collectChain([['Param4', 1.0]]),
+        min: -30, max: 30, omega: 17, zeta: 0.32, maxAmp: 18,
+      },
+      hand_left: {
+        targets: collectChain([
+          ['Param_Angle_B_BODY_6', 0.6],
+          ['Param_Angle_B_BODY_7', 0.9],
+          ['Param_Angle_B_BODY_8', 1.0],
+        ]),
+        min: -30, max: 30, omega: 16, zeta: 0.30, maxAmp: 12,
+      },
+      hand_right: {
+        targets: collectChain([
+          ['Param_Angle_B_BODY_9', 0.6],
+          ['Param_Angle_B_BODY_10', 0.9],
+          ['Param_Angle_B_BODY_11', 1.0],
+        ]),
+        min: -30, max: 30, omega: 16, zeta: 0.30, maxAmp: 12,
+      },
+      // 画面左耳 ear_left = 解剖右耳 Param12/13/14；画面右耳 ear_right = 解剖左耳 Param8/9/10
+      ear_left: {
+        targets: collectChain(hasLegacyEars
+          ? [['ParamEarR', 1.0]]
+          : [['Param12', 0.9], ['Param13', 0.7], ['Param14', 0.5]]),
+        min: -1, max: 1, omega: 10.5, zeta: 0.32, maxAmp: 0.85,
+      },
+      ear_right: {
+        targets: collectChain(hasLegacyEars
+          ? [['ParamEarL', 1.0]]
+          : [['Param8', 0.9], ['Param9', 0.7], ['Param10', 0.5]]),
+        min: -1, max: 1, omega: 10.5, zeta: 0.32, maxAmp: 0.85,
+      },
+    };
+    this._chPartImpulse = new PartImpulseChannel(impulseSpecs);
+    // _chInteraction 在物理之前应用，让点击/抚摸/拎起的头身动作自然带动头发、猫耳与领带物理；
+    // 其余通道（猫耳加写/脸红/挥手/四腕/微表情/局部弹性/情绪符号）在物理之后叠加。
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
     this._overlays.add(this._chHand);
+    this._overlays.add(this._chArm);
+    this._overlays.add(this._chFaceMicro);
+    this._overlays.add(this._chPartImpulse);
     const fxIds = new Map<FxName, CubismIdHandle>();
     for (const fx of FX_NAMES) fxIds.set(fx, id(FX_PARAMETERS[fx]));
     this._chFx = new FxChannel(fxIds, [id('Param37'), id('Param40'), id('Param41')]);
@@ -703,7 +900,9 @@ export class PetModel
     const ax = or(rangeOf(this._idAngleX), -30, 30);
     const ay = or(rangeOf(this._idAngleY), -30, 30);
     const az = or(rangeOf(this._idAngleZ), -30, 30);
-    const bx = or(rangeOf(this._idBodyAngleX), -30, 30);
+    const bx = or(rangeOf(this._idBodyAngleX), -10, 10);
+    const by = or(rangeOf(this._idBodyAngleY), -10, 10);
+    const bz = or(rangeOf(this._idBodyAngleZ), -10, 10);
     const el = or(rangeOf(this._eyeBlinkIds[0]), 0, 1);
     const er = or(
       rangeOf(this._eyeBlinkIds[1] ?? this._eyeBlinkIds[0]),
@@ -720,6 +919,10 @@ export class PetModel
       angleZMax: az.max,
       bodyXMin: bx.min,
       bodyXMax: bx.max,
+      bodyYMin: by.min,
+      bodyYMax: by.max,
+      bodyZMin: bz.min,
+      bodyZMax: bz.max,
       eyeLMin: el.min,
       eyeLMax: el.max,
       eyeRMin: er.min,
@@ -739,6 +942,11 @@ export class PetModel
     this._chInteraction.angleY = angleY;
     this._chInteraction.angleZ = angleZ;
     this._chInteraction.bodyX = bodyAngleX;
+  }
+
+  public setBodyTilt(bodyAngleY: number, bodyAngleZ: number): void {
+    this._chInteraction.bodyY = bodyAngleY;
+    this._chInteraction.bodyZ = bodyAngleZ;
   }
 
   public setEyeOverride(
@@ -766,6 +974,36 @@ export class PetModel
   public setFaceCheek(enabled: boolean, value: number): void {
     this._chCheek.enabled = enabled;
     this._chCheek.value = value;
+  }
+
+  public setArmInteraction(
+    enabled: boolean,
+    values?: Partial<ArmInteractionValues>
+  ): void {
+    if (!this._chArm) return;
+    this._chArm.enabled = enabled;
+    this._chArm.armL01 = enabled ? (values?.armL01 ?? 0) : 0;
+    this._chArm.armL02 = enabled ? (values?.armL02 ?? 0) : 0;
+    this._chArm.armR01 = enabled ? (values?.armR01 ?? 0) : 0;
+    this._chArm.armR02 = enabled ? (values?.armR02 ?? 0) : 0;
+  }
+
+  public setFaceMicroInteraction(
+    enabled: boolean,
+    values?: FaceMicroInteractionValues
+  ): void {
+    if (!this._chFaceMicro) return;
+    this._chFaceMicro.enabled = enabled;
+    this._chFaceMicro.eyeSmile = enabled ? (values?.eyeSmile ?? 0) : 0;
+    this._chFaceMicro.mouthForm = enabled ? (values?.mouthForm ?? 0) : 0;
+    this._chFaceMicro.mouthOpen = enabled ? (values?.mouthOpen ?? 0) : 0;
+    this._chFaceMicro.browY = enabled ? (values?.browY ?? 0) : 0;
+    this._chFaceMicro.browAngle = enabled ? (values?.browAngle ?? 0) : 0;
+    this._chFaceMicro.browForm = enabled ? (values?.browForm ?? 0) : 0;
+  }
+
+  public triggerPartImpulse(part: PartImpulseKind, strength: number): void {
+    this._chPartImpulse?.trigger(part, strength);
   }
 
   /** 模型是否有可隐藏的猫耳部件。 */
@@ -814,13 +1052,14 @@ export class PetModel
 
   /**
    * 物理「风力」（Cubism 粒子坐标，y 向下，量纲约为重力的倍数）。
-   * 鼠标吊坠用它把整体摆动的惯性力传给头发、裙摆等物理链；主桌宠不调用，保持 0。
+   * 鼠标吊坠和主桌宠拎起拖动时用它把整体摆动的惯性力传给头发、裙摆等物理链。
    */
   public setPhysicsWind(x: number, y: number): void {
     const options = this._physics?.getOption();
     if (!options || !Number.isFinite(x) || !Number.isFinite(y)) return;
     options.wind.x = x;
     options.wind.y = y;
+    this._chEarDrag?.setWind(x, y);
   }
 
   public setPettingLookAtReduction(enabled: boolean): void {
@@ -896,10 +1135,25 @@ export class PetModel
       eyeOpenness: Math.max(eyeL, eyeR),
       blinking,
     });
+    // 互动头身偏移放在物理之前，使点击/抚摸/拎起动作能自然带出头发、猫耳与领带物理。
+    this._chInteraction?.apply(model, deltaTimeSeconds);
     if (this._physics) this._physics.evaluate(model, deltaTimeSeconds);
 
-    if (this._chFx) this._chFx.reducedMotion = this._reducedMotion();
-    // 5. 程序化覆盖通道（互动偏移/眼覆盖/猫耳/脸红/抬手；
+    const reducedMotion = this._reducedMotion();
+    // 拖拽期间用 3 段耦合弹簧链模拟猫耳惯性（耳根→中段→耳尖滞后、加减速冲击、软限幅回弹），
+    // 并接管原物理中左耳水平风力反偏的输出，叠加点在 EarChannel/PartImpulse 之前。
+    if (this._chEarDrag) {
+      this._chEarDrag.visible = this._earsVisible;
+      this._chEarDrag.reducedMotion = reducedMotion;
+      if (this._physics) this._chEarDrag.apply(model, deltaTimeSeconds);
+    }
+    if (this._chFx) this._chFx.reducedMotion = reducedMotion;
+    if (this._chEar) this._chEar.visible = this._earsVisible;
+    if (this._chPartImpulse) {
+      this._chPartImpulse.reducedMotion = reducedMotion;
+      this._chPartImpulse.earsVisible = this._earsVisible;
+    }
+    // 5. 程序化覆盖通道（猫耳加写/脸红/抬手/四腕/微表情/局部弹性/情绪符号；
     //    晚于物理，可直接加写物理输出参数）→ 应用到顶点
     this._overlays.apply(model, deltaTimeSeconds);
 

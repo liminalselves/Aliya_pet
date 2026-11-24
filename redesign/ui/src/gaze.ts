@@ -70,6 +70,7 @@ export class GazeController {
   private _headY = 0;
   private _weight = 1;
   private _eyeWeight = 1;
+  private _reduction = 1;
   private _stableOpenness = 1;
   private _blinkHoldSeconds = 0;
 
@@ -85,6 +86,7 @@ export class GazeController {
   private static readonly TAU_SECONDS = 0.12; // 眼球指针平滑（眼先动）
   private static readonly HEAD_TAU_SECONDS = 0.20; // 头部/身体跟随平滑（头随后）
   private static readonly WEIGHT_TAU_SECONDS = 0.22; // 动作交挖淡化
+  private static readonly REDUCTION_TAU_SECONDS = 0.28; // 抚摸降权平滑，避免身体俯仰断崖下沉
   private static readonly EXPRESSION_TAU_SECONDS = 0.45; // 表情偏移淡化
   private static readonly BLINK_HOLD_MAX_SECONDS = 0.45; // 眨眼开度保持上限
 
@@ -140,6 +142,12 @@ export class GazeController {
     this._eyeWeight +=
       ((opts.motionActive ? 0 : 1) - this._eyeWeight) *
       (1 - Math.exp(-dt / GazeController.WEIGHT_TAU_SECONDS));
+    const reductionTarget = Number.isFinite(opts.reduction)
+      ? Math.min(1, Math.max(0, opts.reduction))
+      : 1;
+    this._reduction +=
+      (reductionTarget - this._reduction) *
+      (1 - Math.exp(-dt / GazeController.REDUCTION_TAU_SECONDS));
 
     // 2) 指针目标平滑（无目标时回中；眼球先行、头部略滞后）
     const tx = this._active ? this._targetX : 0;
@@ -156,10 +164,10 @@ export class GazeController {
     this._exprX += (this._exprTargetX - this._exprX) * ke;
     this._exprY += (this._exprTargetY - this._exprY) * ke;
 
-    // 4) 写入：头部跟随（CubismLook 增益：AngleX 12 / AngleY 10 /
-    //    AngleZ 角落 -8 / BodyAngleX 4 / 眼球 18）——输入已含权重
-    const followHeadX = this._headX * this._weight * opts.reduction;
-    const followHeadY = this._headY * this._weight * opts.reduction;
+    // 4) 写入：头部与身体跟随（CubismLook 增益：AngleX 12 / AngleY 10 /
+    //    AngleZ 角落 -8 / BodyAngleX 7.5 / BodyAngleY 7 / 眼球 18）——输入已含权重
+    const followHeadX = this._headX * this._weight * this._reduction;
+    const followHeadY = this._headY * this._weight * this._reduction;
     const motionX = model.getParameterValueById(this._idEyeBallX);
     const motionY = model.getParameterValueById(this._idEyeBallY);
     this._look.updateParameters(model, followHeadX, followHeadY);
@@ -167,12 +175,12 @@ export class GazeController {
     model.setParameterValueById(
       this._idEyeBallX,
       motionX * (1 - this._eyeWeight) +
-        18 * this._x * this._eyeWeight * opts.reduction
+        18 * this._x * this._eyeWeight * this._reduction
     );
     model.setParameterValueById(
       this._idEyeBallY,
       motionY * (1 - this._eyeWeight) +
-        18 * this._y * this._eyeWeight * opts.reduction
+        18 * this._y * this._eyeWeight * this._reduction
     );
 
     // 5) 眼球：叠加表情偏移（仅眼，同样随动作交挖让位，动作眼球不被推偏）→ 总钳制

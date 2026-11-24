@@ -62,7 +62,7 @@
 | ---- | ---- | ---- | ---- |
 | 符号（问号/感叹号） | AngleX/Y | Param37 | PhysicsSetting16；头部摆动带出小幅漂浮，符号自身动效由 `fx-cue.ts` 在物理后叠加，动作文件勿写 |
 | 符号（动效） | AngleX/Y | Param40 / Param41 | PhysicsSetting17；动效 X/Y，同上由 `fx-cue.ts` 叠加，动作文件勿写 |
-| 猫耳（左/右） | AngleX/Y/Z + EyeLOpen/ROpen | Param7~10 / Param11~14 | 耳朵随头摆；**加写 Param9/Param13 可直接拨耳**（×12 缩放） |
+| 猫耳（左/右） | AngleX/Y/Z + EyeLOpen/ROpen | Param7~10 / Param11~14 | 耳朵随头摆；`EarChannel` 在物理后加写 `Param8~10` / `Param12~14`，拖动时由 `EarDragPhysics` 3 段耦合弹簧接管甩动，点击触发 `PartImpulseChannel` 抖动 |
 | 手部（左/右） | BodyAngleX/Y/Z + Breath | Param_Angle_B_BODY_6..8 / 9..11 | 左右各三段，±30；自然摆动由物理控制 |
 | 挥手 | BodyAngleX/Y | Param31 / Param36 | PhysicsSetting15；挥手通道在物理后控制，避免覆盖 |
 | 头发×多组/刘海/马尾/侧发 | AngleX/Y/Z 等 | Param_Angle_Rotation_* | 摆动自然，勿手动写 |
@@ -94,21 +94,21 @@
    高光输出仍有回弹残留。特殊眼型期间必须在物理后把这些普通眼部变形及
    眼球视线归零；详见 `FACE_VARIANT_PARAMETERS`，普通表情仍保留物理与视线。
 
-## 表情库（12 个，exp3.json）
+## 表情库（14 个，exp3.json）
 
 `expressions/` 下由 `tools/gen-expressions.py` 生成，model3.json
 `FileReferences.Expressions` 引用：
 
-neutral / happy / angry / sad / surprised / shy / sleepy / smug /
-speechless / worried / serious / hit
+neutral / happy / angry / annoyed / gloomy / sad / surprised / shy /
+sleepy / smug / speechless / worried / serious / hit
 
 眼睑开合使用 Multiply 混合以保留完整眨眼，其余参数使用 Add；生成器头部
 有每个表情的参数配方。
 表情=持续的脸（默认值由状态决定，见 PERFORMANCE.md），动作=瞬时行为，两者自动叠加。
 
 辨识重点：开心闭眼弯月笑、得意单眼眨眼、害羞泛红偏头、困倦窄眼低头、
-生气阴影怒眉、认真低头抿嘴、惊讶张嘴、担忧歪头忧眉；难过使用原生流泪，
-受击使用挤眼，无语使用半垂方眼。
+生气阴影怒眉（`annoyed` 仅保留怒气符号、`gloomy` 仅保留黑脸，见 `ACTIONS.md`）、
+认真低头抿嘴、惊讶张嘴、担忧歪头忧眉；难过使用原生流泪，受击使用挤眼，无语使用半垂方眼。
 
 ## 动作库（17 个，motion3.json）
 
