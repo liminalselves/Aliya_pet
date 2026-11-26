@@ -26,7 +26,7 @@ function load(name, globals = {}) {
 
 const plain = v => JSON.parse(JSON.stringify(v));
 const catalog = load('catalog');
-const model = json('assets/live2d/aliya/16.model3.json').FileReferences;
+const model = json('assets/live2d/aliya/aliya.model3.json').FileReferences;
 
 test('目录是唯一来源：动作、表情与模型、资源、上报清单一致', () => {
   const sorted = xs => [...xs].sort();

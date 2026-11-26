@@ -152,7 +152,7 @@ function updatePhysicsWind(dt: number, reduce = false): void {
   const bDown = -fx * sin + fy * cos;
   // Cubism 粒子空间 y 向下，粒子受力 = 重力方向(静止时 (0,1)) × 加速度 + 风力；
   // 风力只补与静止竖直悬挂的差值，静止时为 0。
-  // 实测（16.physics3.json）：风力 +x 让发丝偏向模型 −x，所以 x 取反。
+  // 实测（aliya.physics3.json）：风力 +x 让发丝偏向模型 −x，所以 x 取反。
   let wx = -bx, wy = bDown - 1;
   const mag = Math.hypot(wx, wy);
   if (mag > MAX_WIND) { wx *= MAX_WIND / mag; wy *= MAX_WIND / mag; }
@@ -311,7 +311,7 @@ function stop(): void {
 let loading: Promise<void> | null = null;
 function ensureModel(): Promise<void> {
   loading ??= (async () => {
-    const url = '/live2d/aliya/16.model3.json';
+    const url = '/live2d/aliya/aliya.model3.json';
     const buffer = await (await fetch(url)).arrayBuffer();
     const m = new PetModel();
     await m.loadFromSetting(buffer, buffer.byteLength, url.substring(0, url.lastIndexOf('/') + 1), {

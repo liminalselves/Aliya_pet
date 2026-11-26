@@ -41,7 +41,7 @@ function startWhenCoreReady(): void {
     (window as unknown as Record<string, unknown>).__applySettingsFromAndroid = (s: unknown) => {
       if (s && typeof s === 'object') app.applySettings(s as never, false);
     };
-    await app.loadModel(assetUrl('/live2d/aliya/16.model3.json'));
+    await app.loadModel(assetUrl('/live2d/aliya/aliya.model3.json'));
     // 模型就绪后延迟静默检查更新（失败不打扰；展示分叉见 update/startup.ts）。
     // 网页嵌入没有可更新的安装，不检查。
     if (!isEmbed) scheduleStartupUpdateCheck();

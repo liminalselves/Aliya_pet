@@ -17,7 +17,7 @@ async function loadModel() {
   await new Promise(resolve => setImmediate(resolve));
   const core = context.Live2DCubismCore;
   assert.ok(core?.Moc && core?.Model, 'bundled Cubism Core must initialize');
-  const bytes = readFileSync(new URL('assets/live2d/aliya/16.moc3', root));
+  const bytes = readFileSync(new URL('assets/live2d/aliya/aliya.moc3', root));
   const moc = core.Moc.fromArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   assert.ok(moc, 'real Aliya moc must load');
   const model = core.Model.fromMoc(moc);

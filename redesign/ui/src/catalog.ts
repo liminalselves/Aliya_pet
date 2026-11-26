@@ -1,6 +1,6 @@
 /**
  * 表演目录：表情、动作、状态三个概念的唯一权威来源（docs/PERFORMANCE.md）。
- *   - 表情：exp3.json 的持续脸，name 与 16.model3.json Expressions 一致
+ *   - 表情：exp3.json 的持续脸，name 与 aliya.model3.json Expressions 一致
  *   - 动作：播一次就结束。motion = Live2D 动作（与 Motions 一致，上报 MSK）；
  *     procedural = 互动层参数微动（interaction/procedural.ts，不上报）
  *   - 状态：默认表情 + 待机动作池，桌宠自己切换，MSK 不干预
@@ -126,7 +126,7 @@ export const EXPRESSION_BY_NAME = byName(EXPRESSIONS);
 export const ACTION_BY_NAME = byName(ACTIONS);
 export const STATE_BY_NAME = byName(STATES);
 
-/** Live2D 动作名（= 16.model3.json Motions 组名）。 */
+/** Live2D 动作名（= aliya.model3.json Motions 组名）。 */
 export const MOTION_NAMES: readonly string[] = ACTIONS.filter(a => a.kind === 'motion').map(a => a.name);
 export const PROCEDURAL_NAMES: readonly string[] = ACTIONS.filter(a => a.kind === 'procedural').map(a => a.name);
 

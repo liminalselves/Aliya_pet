@@ -306,7 +306,7 @@ async function createRealPettingHarness() {
   p.createRenderer = () => {};
   p.getRenderer = () => ({ setIsPremultipliedAlpha() {}, startUp() {}, bindTexture() {} });
   p._loadTexture = async () => null;
-  const setting = bytes('16.model3.json');
+  const setting = bytes('aliya.model3.json');
   await p.loadFromSetting(setting, setting.byteLength, '', {
     gl: { drawingBufferWidth: 800, drawingBufferHeight: 800 },
     frameBuffer: null,

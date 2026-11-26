@@ -3,7 +3,7 @@
 ## 当前资源与接入
 
 正式资源为带情绪符号图层的新版 Aliya 模型（参数/物理/网格详情见 [MODEL.md](MODEL.md)），
-入口保留 `16.model3.json`、`16.moc3`、`16.physics3.json`、`16.cdi3.json`，
+入口为 `aliya.model3.json`、`aliya.moc3`、`aliya.physics3.json`、`aliya.cdi3.json`，
 纹理为 `aliya.2048/texture_00.png`。
 当前 **17 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
 不是官方示例占位文件。LipSync 不启用。
@@ -19,7 +19,7 @@ npm --prefix redesign/ui run build
 
 生成器同时更新 assets 与 dist；生产构建会重新复制正式 assets。动作资源位于
 `redesign/ui/assets/live2d/aliya/motions/`。新增动作要改三处：生成器 `GENERATORS`、
-`16.model3.json` 的 `Motions`、`src/catalog.ts` 的 `ACTIONS`（名字、中文 label、给 AI 的 hint），
+`aliya.model3.json` 的 `Motions`、`src/catalog.ts` 的 `ACTIONS`（名字、中文 label、给 AI 的 hint），
 再按需加进 `STATES` 各状态的待机池。上报清单、设置页按钮都从目录派生（见 `PERFORMANCE.md`）。
 
 ## 动作清单

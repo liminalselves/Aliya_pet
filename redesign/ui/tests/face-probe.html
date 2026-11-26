@@ -7,7 +7,7 @@
 import {PetApp} from '/src/pet-app.ts';
 import {CubismFramework} from '@framework/live2dcubismframework';
 while(true){try{Live2DCubismCore.Version.csmGetLatestMocVersion();break}catch{await new Promise(r=>setTimeout(r,50))}}
-const app=new PetApp();app.initialize();await app.loadModel('/live2d/aliya/16.model3.json');app.setPaused(true);app._behavior.stop();
+const app=new PetApp();app.initialize();await app.loadModel('/live2d/aliya/aliya.model3.json');app.setPaused(true);app._behavior.stop();
 const pet=app._model, model=pet._model,canvas=app.getCanvas();canvas.width=360;canvas.height=500;
 const options=new URLSearchParams(location.search);
 if(options.has('legacy')) pet._faceVariantIds=pet._faceVariantIds.slice(0,7);

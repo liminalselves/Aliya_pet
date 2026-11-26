@@ -204,8 +204,8 @@ test('rapid SDK expression retriggers reclaim expired entries before the latest 
 const { CubismMotion } = sdk('motion/cubismmotion');
 const { CubismMotionManager } = sdk('motion/cubismmotionmanager');
 const motionRoot = resolve(uiRoot, 'assets/live2d/aliya');
-const motionSetting = JSON.parse(readFileSync(resolve(motionRoot, '16.model3.json'), 'utf8'));
-const parameterIds = JSON.parse(readFileSync(resolve(motionRoot, '16.cdi3.json'), 'utf8'))
+const motionSetting = JSON.parse(readFileSync(resolve(motionRoot, 'aliya.model3.json'), 'utf8'));
+const parameterIds = JSON.parse(readFileSync(resolve(motionRoot, 'aliya.cdi3.json'), 'utf8'))
   .Parameters.map(parameter => parameter.Id);
 const motionAssets = new Map(Object.entries(motionSetting.FileReferences.Motions).map(([name, entries]) => {
   assert.equal(entries.length, 1, `${name}: select every registered motion explicitly if variants are added`);

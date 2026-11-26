@@ -1,7 +1,7 @@
 # Aliya（重置版）模型能力图谱
 
-模型：`redesign/ui/assets/live2d/aliya/`（moc3 格式版本 6，136 参数、40 Parts、
-132 Drawables、17 组物理，2048 纹理一张）。入口文件名沿用 16.model3.json，
+模型：`redesign/ui/assets/live2d/aliya/`（moc3 格式版本 6，138 参数、40 Parts、
+135 Drawables、18 组物理，2048 纹理一张）。入口文件为 `aliya.model3.json`，
 保留原有动作、表情和互动接口。
 
 ## 参数总表（按 cdi3 分组）
@@ -27,12 +27,14 @@
 | 表情 | Param33 | 0..1 | 特殊受击眼睛选择器；禁止渐变使用 |
 | 表情 | Param34 | 0..1 | 特殊哭脸眼睛选择器；只在两眼全闭时由运行时 0↔1 渐变 |
 | 表情 | Param35 | 0..1 | 特殊无语眼睛选择器；只在两眼全闭时由运行时 0↔1 渐变 |
-| 左右腕 | ParamArmL01/02、R01/02 | ±10 | PET 版已绑定变形器，可驱动双臂 |
+| 左臂 / 右臂 | ParamArmL01/02、R01/02 | ±10 | PET 版已绑定变形器，可驱动双臂 |
 | 挥手 | Param30 | 0..1 | 手臂图层开关，运行时只写 0 或 1 |
 | 挥手 | Param31 / Param36 | ±1 | 小臂 / 手部挥手，物理后写入 |
+| 表情 | Param42 | 0..1 | 数一姿态切换开关（新版模型新增，待接入互动场景，当前保持默认 0） |
+| 饰品 | Param43 | 0..1 | 黑框眼镜显隐开关（新版模型新增，待接入互动场景，当前保持默认 0） |
 | 表情 | Param38 / Param39 | 0..1 | 鼓嘴 / 嘟嘴替换网格，只能 0/1；由动作脸部时间轴驱动（见 `ACTIONS.md`） |
 | 表情 | Param37 / Param40 / Param41 | ±10 | 新版「question动效」及动效 X/Y。物理输出头部摆动带来的小幅漂浮（实测待机 <0.4）；`fx-cue.ts` 在物理后按当前符号叠加 `FX_MOTION`，动作文件勿写。Param37 只形变问号/惊叹，Param40/41 平移其余符号。旧版 Param37 是鼓嘴，已迁到 Param38 |
-| 特效 | ParamFxHeart / Question / Surprise / Gloom / Sleep / Sparkle / Music | 0..1 | 情绪符号图层（值即不透明度，可渐变），由 `fx-cue.ts` 随动作 `fx` 时间轴与表情联动；每个符号自带循环动效（心上浮、问号摇摆、惊叹一抖、乌云飘、zzz 画圈、闪光闪烁、音符跳），系统「减少动态效果」时只渐入渐出 |
+| 状态 | ParamFxHeart / Question / Surprise / Gloom / Sleep / Sparkle / Music | 0..1 | 情绪符号图层（值即不透明度，可渐变），由 `fx-cue.ts` 随动作 `fx` 时间轴与表情联动；每个符号自带循环动效（心上浮、问号摇摆、惊叹一抖、乌云飘、zzz 画圈、闪光闪烁、音符跳），系统「减少动态效果」时只渐入渐出 |
 | 呼吸 | ParamBreath | 0..1 | 呼吸系统占用 |
 
 ## 腿脚能力边界
@@ -60,11 +62,12 @@
 
 | 物理 | 输入 | 输出 | 说明 |
 | ---- | ---- | ---- | ---- |
-| 符号（问号/感叹号） | AngleX/Y | Param37 | PhysicsSetting16；头部摆动带出小幅漂浮，符号自身动效由 `fx-cue.ts` 在物理后叠加，动作文件勿写 |
-| 符号（动效） | AngleX/Y | Param40 / Param41 | PhysicsSetting17；动效 X/Y，同上由 `fx-cue.ts` 叠加，动作文件勿写 |
+| 符号（问号/感叹号） | AngleX/Y | Param37 | PhysicsSetting17；头部摆动带出小幅漂浮，符号自身动效由 `fx-cue.ts` 在物理后叠加，动作文件勿写 |
+| 符号（动效） | AngleX/Y | Param40 / Param41 | PhysicsSetting18；动效 X/Y，同上由 `fx-cue.ts` 叠加，动作文件勿写 |
 | 猫耳（左/右） | AngleX/Y/Z + EyeLOpen/ROpen | Param7~10 / Param11~14 | 耳朵随头摆；`EarChannel` 在物理后加写 `Param8~10` / `Param12~14`，拖动时由 `EarDragPhysics` 3 段耦合弹簧接管甩动，点击触发 `PartImpulseChannel` 抖动 |
 | 手部（左/右） | BodyAngleX/Y/Z + Breath | Param_Angle_B_BODY_6..8 / 9..11 | 左右各三段，±30；自然摆动由物理控制 |
 | 挥手 | BodyAngleX/Y | Param31 / Param36 | PhysicsSetting15；挥手通道在物理后控制，避免覆盖 |
+| 数一 | BodyAngleX/Y | Param31 / Param36 | PhysicsSetting16；同属左臂物理组（待接入互动场景） |
 | 头发×多组/刘海/马尾/侧发 | AngleX/Y/Z 等 | Param_Angle_Rotation_* | 摆动自然，勿手动写 |
 | 眼睑跟随（左/右） | EyeLOpen/ROpen | 眼珠W1/W2/N、高光X/Y/Z1、眼眶X/Y | 闭眼时瞳孔高光跟随；自动 |
 | 领带 | BodyAngle | Param_Angle_Rotation_*_ArtMesh42 | 自动 |

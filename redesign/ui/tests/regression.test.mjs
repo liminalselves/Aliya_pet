@@ -9,7 +9,7 @@ const root=new URL('../',import.meta.url);
 test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const base=new URL('assets/live2d/aliya/',root);
  const json=file=>JSON.parse(readFileSync(new URL(file,base)));
- const refs=json('16.model3.json').FileReferences;
+ const refs=json('aliya.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
  assert.equal(Object.keys(refs.Motions).length,17);assert.equal(refs.Expressions.length,14);
@@ -17,7 +17,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
  for(const group of json(refs.Physics).PhysicsSettings){for(const p of group.Input)assert.ok(ids.has(p.Source.Id),p.Source.Id);for(const p of group.Output)assert.ok(ids.has(p.Destination.Id),p.Destination.Id)}
- for(const id of ['Param30','Param31','Param36'])assert.ok(ids.has(id));
+ for(const id of ['Param30','Param31','Param36','Param42','Param43'])assert.ok(ids.has(id));
 });
 const EMBED={isEmbed:false,assetUrl:p=>'/'+String(p).replace(/^\/+/,''),postToHost(){}};
 let catalogCache=null;
@@ -33,7 +33,7 @@ const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
 test('新动作已注册且在平静待机池里低频出现，walk 已删除',()=>{
  const {MOTION_NAMES,STATE_BY_NAME,ACTION_BY_NAME}=CATALOG();
- const refs=asset('16.model3.json').FileReferences;
+ const refs=asset('aliya.model3.json').FileReferences;
  assert.ok(!MOTION_NAMES.includes('walk'),'walk 不应出现在动作库');
  assert.ok(!readdirSync(new URL('motions/',modelBase)).includes('walk.motion3.json'),'walk 资源应已删除');
  const neutral=STATE_BY_NAME.get('neutral').idle;
@@ -48,7 +48,7 @@ test('新动作已注册且在平静待机池里低频出现，walk 已删除',(
 });
 
 test('全部动作遵守参数所有权、完整默认复位和淡出尾垫；新曲线无退时与越界',()=>{
- const refs=asset('16.model3.json').FileReferences;
+ const refs=asset('aliya.model3.json').FileReferences;
  const resetIds=['ParamMouthForm','ParamMouthOpenY','ParamEyeLSmile','ParamEyeRSmile',
   'ParamBrowLY','ParamBrowRY','ParamBrowLX','ParamBrowRX','ParamBrowLAngle','ParamBrowRAngle','ParamBrowLForm','ParamBrowRForm',
   'Param32','Param33','Param34','Param35','ParamAngleX','ParamAngleY','ParamAngleZ',
@@ -127,7 +127,7 @@ test('shy_sway 的害羞表情联动走既有 cue，取消和互动不补播动�
  assert.ok(!CATALOG().ACTION_BY_NAME.has('sajiao'),'不注册第二个调用名');
  const pools=CATALOG().STATE_BY_NAME;
  assert.ok(pools.get('shy').idle.shy_sway>pools.get('neutral').idle.shy_sway&&pools.get('happy').idle.shy_sway>pools.get('neutral').idle.shy_sway);
- const physicsOutputs=new Set(asset('16.physics3.json').PhysicsSettings.flatMap(s=>s.Output.map(o=>o.Destination.Id)));
+ const physicsOutputs=new Set(asset('aliya.physics3.json').PhysicsSettings.flatMap(s=>s.Output.map(o=>o.Destination.Id)));
  for(const c of asset('motions/shy_sway.motion3.json').Curves)assert.ok(!physicsOutputs.has(c.Id),`${c.Id} 是物理输出，不能由动作接管`);
 });
 
@@ -842,7 +842,7 @@ test('跨窗口tray-action在模型fetch、moc与台词加载期间均排队，�
   applySettings(settings,initial){this._settings=settings;applied.push(initial)},
   _playRandom(source){assert.ok(this._bubble&&this._interaction&&this._running);assert.equal(source,'manual');calls.push('random-speech')},
  });
- const loading=app.loadModel('/model/16.model3.json');await listening.promise;
+ const loading=app.loadModel('/model/aliya.model3.json');await listening.promise;
  assert.equal(app._model,undefined,'IPC注册未完成时不能进入资源加载');
  ipc.resolve();await fetchStarted.promise;
  await events.emitTo('pet','tray-action',{action:'random-speech'});

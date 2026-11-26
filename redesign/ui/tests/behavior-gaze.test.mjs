@@ -12,7 +12,7 @@ const behaviorCode = source('behavior');
 const catalogExports = {};
 vm.runInNewContext(source('catalog'), { exports: catalogExports });
 const { STATES } = catalogExports;
-const motions = JSON.parse(readFileSync(new URL('assets/live2d/aliya/16.model3.json', root), 'utf8')).FileReferences.Motions;
+const motions = JSON.parse(readFileSync(new URL('assets/live2d/aliya/aliya.model3.json', root), 'utf8')).FileReferences.Motions;
 const gazeNames = ['look_around', 'daydream'];
 
 function harness(autoActions = false) {

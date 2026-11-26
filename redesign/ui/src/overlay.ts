@@ -236,7 +236,7 @@ export interface EarDragPhysicsIds {
 /**
  * 拖拽期间猫耳 3 段耦合弹簧物理：
  * 分别模拟耳根→中段→耳尖的相位滞后、加速度惯性冲击与停手回弹，
- * 接管并修正原 16.physics3.json PhysicsSetting9 在水平风力下的反偏问题。
+ * 接管并修正原 aliya.physics3.json PhysicsSetting9 在水平风力下的反偏问题。
  */
 export class EarDragPhysics {
   visible = true;

@@ -156,7 +156,7 @@ timeline（原文）→ 记录屏渲染时剥离指令
 动作类型、状态的默认表情与待机池）。上报清单、设置页按钮、待机抽取、PetAI 全部从它派生。
 资源侧只剩两处要对齐，由 `tests/catalog-reactions.test.mjs` 强制检查：
 
-1. `assets/live2d/aliya/16.model3.json` 的 Expressions/Motions 与目录同名
+1. `assets/live2d/aliya/aliya.model3.json` 的 Expressions/Motions 与目录同名
 2. `assets/live2d/aliya/actions.json` 只放动作的 `face` 时间轴（替换脸），条目名必须是目录里的 Live2D 动作
 
 ## 测试与验收
