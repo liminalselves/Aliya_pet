@@ -279,6 +279,26 @@ class LegacyRemakeTests(unittest.TestCase):
                     self.assertLessEqual(max(abs(v) for _, v in keys), 6.5, (name, curve['Id']))
                     self.assertEqual(keys[-1][1], 0)
 
+    def test_sway_rework_has_four_beats_alternating_arms_and_closed_crescent_smile(self):
+        c = {k['Id']: endpoints(k['Segments'])[0] for k in generator.sway()['Curves']}
+        body_z = [v for t, v in c['ParamBodyAngleZ'] if 0.5 <= t <= 3.6 and abs(v) >= 3]
+        head_z = [v for t, v in c['ParamAngleZ'] if 0.5 <= t <= 3.6 and abs(v) >= 8]
+        self.assertEqual(len(body_z), 4, 'sway should have 4 clear body sway beats')
+        self.assertEqual(len(head_z), 4, 'sway should have 4 clear head sway beats')
+        for a, b in zip(body_z, body_z[1:]):
+            self.assertLess(a * b, 0, 'consecutive beats must alternate sides')
+        # Both arms swing out and tuck in alternately during the groove.
+        for pid in ('ParamArmL01', 'ParamArmR01', 'ParamArmL02', 'ParamArmR02'):
+            vals = [v for _, v in c[pid]]
+            self.assertGreaterEqual(max(vals), 3.5, pid)
+            self.assertLessEqual(min(vals), -2.0, pid)
+        # Closed crescent smile eyes with centered gaze.
+        self.assertEqual(dict(c['ParamEyeLOpen'])[0.38], 0)
+        self.assertEqual(dict(c['ParamEyeLOpen'])[3.42], 0)
+        self.assertGreaterEqual(dict(c['ParamEyeLSmile'])[0.38], 0.8)
+        for pid in ('ParamEyeBallX', 'ParamEyeBallY'):
+            self.assertTrue(all(v == 0 for _, v in c[pid]), pid)
+
 
 class CliTests(unittest.TestCase):
     def test_normal_generator_writes_only_registered_motions_and_preserves_other_recipes(self):

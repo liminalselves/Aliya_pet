@@ -52,7 +52,7 @@ export const EXPRESSIONS: readonly ExpressionDef[] = [
 
 export const ACTIONS: readonly ActionDef[] = [
   { name: 'nod', label: '点头', hint: '点头附和', kind: 'motion' },
-  { name: 'sway', label: '摇摆', hint: '摇摆身体', kind: 'motion' },
+  { name: 'sway', label: '摇摆', hint: '惬意哼歌摇摆：闭眼弯月笑随节拍左右大弧度摇晃，双臂交替轻摆并冒出音符', kind: 'motion' },
   { name: 'shake', label: '摇头', hint: '摇头', kind: 'motion' },
   { name: 'stretch', label: '伸展', hint: '伸懒腰', kind: 'motion' },
   { name: 'wave', label: '挥手', hint: '挥手打招呼', kind: 'motion' },
@@ -93,29 +93,29 @@ export const STATES: readonly StateDef[] = [
     kiss: 0.6, look_around: 1.3, daydream: 0.5,
   } },
   { name: 'shy', label: '害羞', expression: 'shy', idle: {
-    nod: 2.5, sway: 1.2, wave: 0.85, shy_sway: 1.6, puff: 0.5, kiss: 0.5,
+    nod: 2.5, sway: 0.6, wave: 0.85, shy_sway: 1.6, puff: 0.5, kiss: 0.5,
     look_around: 1, daydream: 0.9,
   } },
   { name: 'angry', label: '生气', expression: 'angry', idle: {
-    shake: 2, fume: 2.1, puff: 1.05, sway: 1.2, nod: 1, deadpan: 0.35,
+    shake: 2, fume: 2.1, puff: 1.05, nod: 1, deadpan: 0.35,
     look_around: 1, daydream: 0.3,
   } },
   { name: 'sad', label: '难过', expression: 'sad', idle: {
-    sway: 2.4, sob: 0.8, nod: 1, stretch: 0.9, look_around: 1, daydream: 1.6,
+    sob: 0.8, nod: 1, stretch: 0.9, look_around: 1, daydream: 1.6,
   } },
   { name: 'sleepy', label: '困倦', expression: 'sleepy', idle: {
-    yawn: 2.45, stretch: 2.25, sway: 1.2, nod: 1, look_around: 0.4, daydream: 2.25,
+    yawn: 2.45, stretch: 2.25, nod: 1, look_around: 0.4, daydream: 2.25,
   } },
   { name: 'smug', label: '得意', expression: 'smug', idle: {
-    sway: 2.4, nod: 1, cheerful_bounce: 0.7, point_out: 1.0, kiss: 0.5, wave: 0.7, puff: 0.35,
+    sway: 1.8, nod: 1, cheerful_bounce: 0.7, point_out: 1.0, kiss: 0.5, wave: 0.7, puff: 0.35,
     look_around: 1, daydream: 0.9,
   } },
   { name: 'curious', label: '好奇', expression: null, idle: {
-    doubt: 2.4, nod: 1, sway: 1.2, cheerful_bounce: 0.45, point_out: 0.7,
+    doubt: 2.4, nod: 1, sway: 0.8, cheerful_bounce: 0.45, point_out: 0.7,
     look_around: 2.5, daydream: 0.9,
   } },
   { name: 'speechless', label: '无语', expression: 'speechless', idle: {
-    deadpan: 1.2, doubt: 1.6, puff: 0.5, shake: 0.8, sway: 1.2, nod: 1, point_out: 0.35,
+    deadpan: 1.2, doubt: 1.6, puff: 0.5, shake: 0.8, nod: 1, point_out: 0.35,
     look_around: 1, daydream: 0.9,
   } },
 ];

@@ -5,6 +5,7 @@
     { "name": "notice", "fx": [{ "from": 0.05, "to": 1.1, "fx": "surprise" }] },
     { "name": "yawn", "fx": [{ "from": 1.2, "to": 3.6, "fx": "sleep" }] },
     { "name": "daydream", "fx": [{ "from": 1.0, "to": 4.3, "fx": "sleep" }] },
+    { "name": "sway", "fx": [{ "from": 0.35, "to": 3.55, "fx": "music" }] },
     { "name": "cheerful_bounce", "fx": [{ "from": 0.5, "to": 2.3, "fx": "music" }] },
     { "name": "wave", "fx": [{ "from": 0.4, "to": 2.4, "fx": "sparkle" }] },
     { "name": "shy_sway", "fx": [{ "from": 0.6, "to": 3.5, "fx": "heart" }] },
