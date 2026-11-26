@@ -5,7 +5,7 @@
 正式资源为带情绪符号图层的新版 Aliya 模型（参数/物理/网格详情见 [MODEL.md](MODEL.md)），
 入口为 `aliya.model3.json`、`aliya.moc3`、`aliya.physics3.json`、`aliya.cdi3.json`，
 纹理为 `aliya.2048/texture_00.png`。
-当前 **17 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
+当前 **18 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
 不是官方示例占位文件。LipSync 不启用。
 
 修改关键帧后重新生成与验证：
@@ -39,6 +39,7 @@ npm --prefix redesign/ui run build
 | 打哈欠 | `yawn` | 吸气抬头，后仰张大嘴、双臂微展，呼气时前倾并晃一下脑袋，眼皮仍沉 |
 | 开心雀跃 | `cheerful_bounce` | 蓄势、两次递减的上半身弹动、小幅协同摆臂 |
 | 撒娇 | `shy_sway` | 贴身收肘藏手、三次柔和轻晃、低头偷看，自动脸红 |
+| 划重点 | `point_out` | 推黑框眼镜蓄势 → 竖食指自信比一、扬嘴（`ParamMouthForm=1`）微仰讲解；左臂切换（`Param42`）与临时佩戴黑框眼镜（`Param43`）由通道联动 |
 | 鼓腮 | `puff` | 先反向一带吸口气 → 猛扭头鼓嘴过冲回落、身体一胀一胀，双手攥在身前跟着一收 → 偷瞄 → 泄气吐气 |
 | 飞吻 | `kiss` | 后仰预备 → 前倾闭眼嘟嘴「啾」，双手往身前收 → 弹回过冲放松、单眼 wink |
 | 委屈 | `sob` | 先微抬像要开口 → 嘴角下撇眼湿、头一点点垮下去 → 哭眼抽泣两下（肩耸，双手捂胸前一收一放）→ 吸鼻子抬头、眨眼忍住 |
@@ -64,7 +65,7 @@ npm --prefix redesign/ui run build
 | surprise 惊叹 | notice 回神 | surprised 惊讶 |
 | gloom 乌云 | sob 委屈 | sad 难过、gloomy 阴沉 |
 | sleep zzz | yawn 哈欠、daydream 发呆（回神前撤） | sleepy 困倦 |
-| sparkle 闪光 | wave 挥手 | smug 得意 |
+| sparkle 闪光 | wave 挥手、point_out 划重点 | smug 得意 |
 | music 音符 | cheerful_bounce 开心雀跃 | happy 开心 |
 
 ## 替换脸动作 puff / kiss / sob / deadpan
@@ -209,11 +210,13 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
    只在方向反转、保持平台和首尾处减速；控制点不越过相邻关键帧取值，不过冲。关键帧时间与数值未改。
    配方中与末关键帧重复的 `(dur, v)` 会合并，同一时刻出现不同取值时生成器直接报错。
 
-## 挥手与猫耳兼容通道
+## 挥手、划重点、眼镜与猫耳兼容通道
 
 包含 `Param30/31/36` 的当前模型使用新版挥手图层开关、小臂及手部控制，在物理之后应用；
 旧模型回退到 `Param_Angle_Rotation_1..5_ArtMesh61` 五段手链。挥手包络约 0.45s 举起，
 2.55s 起用 0.6s 放下，重复和打断均平滑释放；不让 motion 直接写这些独占参数。
+
+`point_out`（划重点）同样由 `HandRaiseChannel` 在物理之后驱动 `Param42`（模型原名「数一」）与 `Param31/36`，与 `Param30` 严格互斥（切换时先放下旧左臂再举起新左臂，避免双左臂同时出现），并在动作主体期间通过平滑混合将 `ParamMouthForm` 推至 `1`（不改持久基线、兼容各类背景表情）。`GlassesChannel` 管理 `Param43`（黑框眼镜），同步外观常驻开关 `showGlasses`（默认关闭）与 `point_out` 的临时佩戴（仅当常驻关闭时在收尾或被打断时平滑摘下）。
 
 当前模型没有旧 `ParamEarL/R`；`EarChannel` 映射到物理输出 `Param8/9/10`（左）与 `Param12/13/14`（右），
 有原生参数的旧模型仍使用 0～1 原生耳动；拖动期间另由 `EarDragPhysics` 模拟 3 段耦合弹簧甩动，点击由 `PartImpulseChannel` 触发对应侧局部抖动。覆盖在物理之后、生效于当帧，不保存进动作基线。

@@ -180,6 +180,53 @@ test('程序化反应与拎起驱动 BodyY/Z、四腕、猫耳、微表情，并
     for (let i = 0; i < 12; i++) h.step(16);
     assert.ok(Math.abs(paramOf(h.petModel, 'ParamArmL01')) < 0.5, 'wave 期间左臂互动必须让位');
     assert.ok(paramOf(h.petModel, 'ParamArmR01') > 0.8, 'wave 期间右臂仍可正常响应');
+
+    // 3) 黑框眼镜默认关闭；开启饰品平滑淡入，关闭淡出，播 point_out 期间临时戴镜、抬 Param42、让位左臂并联动 ParamMouthForm=1
+    assert.equal(h.petModel.hasGlasses, true);
+    assert.equal(paramOf(h.petModel, 'Param43'), 0, '默认不佩戴黑框眼镜');
+    h.petModel.setGlassesVisible(true);
+    h.step(0);
+    assert.equal(paramOf(h.petModel, 'Param43'), 0, 'dt=0 非 immediate 不应跳变');
+    for (let i = 0; i < 30; i++) h.step(16);
+    assert.ok(paramOf(h.petModel, 'Param43') > 0.99, '开启饰品后 Param43 应平滑升至 1');
+    h.petModel.setGlassesVisible(false);
+    for (let i = 0; i < 40; i++) h.step(16);
+    assert.equal(paramOf(h.petModel, 'Param43'), 0, '关闭饰品后 Param43 应平滑淡回 0');
+
+    h.petModel.startExpression('serious');
+    assert.ok(h.petModel.playAction('point_out'));
+    for (let i = 0; i < 45; i++) {
+      h.step(16);
+      assert.ok(!(paramOf(h.petModel, 'Param30') > 0 && paramOf(h.petModel, 'Param42') > 0), 'point_out 启动期间不得出现双左臂重叠');
+    }
+    assert.ok(paramOf(h.petModel, 'Param42') > 0.5, 'point_out 期间 Param42 应开启');
+    assert.ok(paramOf(h.petModel, 'Param43') > 0.95, 'point_out 期间应自动临时佩戴黑框眼镜');
+    assert.ok(paramOf(h.petModel, 'ParamMouthForm') > 0.95, 'serious 表情下 point_out 仍应将 ParamMouthForm 推至近 1');
+    const baseArmR01 = paramOf(h.petModel, 'ParamArmR01');
+    h.service.procedural.apply({ type: 'eyes_widen', strength: 1 });
+    for (let i = 0; i < 12; i++) h.step(16);
+    assert.ok(Math.abs(paramOf(h.petModel, 'ParamArmL01')) < 0.5, 'point_out 期间左臂互动必须让位');
+    assert.ok(paramOf(h.petModel, 'ParamArmR01') - baseArmR01 > 0.8, 'point_out 期间右臂仍可正常叠加响应');
+
+    // 打断切到 nod：Param42/31/36/43 平滑归零
+    assert.ok(h.petModel.playAction('nod'));
+    for (let i = 0; i < 65; i++) h.step(16);
+    assert.equal(paramOf(h.petModel, 'Param42'), 0);
+    assert.equal(paramOf(h.petModel, 'Param43'), 0);
+    assert.equal(paramOf(h.petModel, 'Param31'), 0);
+    assert.equal(paramOf(h.petModel, 'Param36'), 0);
+
+    // 常驻黑框眼镜开启时播完 point_out 仍保持佩戴
+    h.petModel.setGlassesVisible(true, true);
+    h.step(0);
+    assert.equal(paramOf(h.petModel, 'Param43'), 1);
+    assert.ok(h.petModel.playAction('point_out'));
+    for (let i = 0; i < 290; i++) h.step(16);
+    assert.equal(paramOf(h.petModel, 'Param42'), 0);
+    assert.equal(paramOf(h.petModel, 'Param43'), 1);
+    h.petModel.setGlassesVisible(false, true);
+    h.step(0);
+    assert.equal(paramOf(h.petModel, 'Param43'), 0);
   } finally {
     h.petModel.release();
   }

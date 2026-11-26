@@ -390,6 +390,7 @@ const refs: {
   speechInc?: HTMLButtonElement;
   mirror?: HTMLInputElement;
   showCatEars?: HTMLInputElement;
+  showGlasses?: HTMLInputElement;
   showChatButton?: HTMLInputElement;
   alwaysOnTop?: HTMLInputElement;
   snapEdges?: HTMLInputElement;
@@ -444,6 +445,7 @@ function refreshControls(): void {
   syncSpeechRow();
   if (refs.mirror) refs.mirror.checked = settings.mirror;
   if (refs.showCatEars) refs.showCatEars.checked = settings.showCatEars;
+  if (refs.showGlasses) refs.showGlasses.checked = settings.showGlasses;
   if (refs.showChatButton) refs.showChatButton.checked = settings.showChatButton;
   if (refs.alwaysOnTop) refs.alwaysOnTop.checked = settings.alwaysOnTop;
   refs.gameModeHotkeyShow?.();
@@ -757,6 +759,13 @@ function refreshStateHighlight(): void {
     '关闭后耳朵不再显示，也不会再被戳到',
     () => settings.showCatEars,
     (v) => update({ showCatEars: v })
+  ).input;
+  refs.showGlasses = createSwitchRow(
+    appearanceCard.body,
+    '显示黑框眼镜',
+    '关闭时不常驻佩戴，播放「划重点」动作时会临时戴上',
+    () => settings.showGlasses,
+    (v) => update({ showGlasses: v })
   ).input;
   refs.showChatButton = createSwitchRow(
     appearanceCard.body,

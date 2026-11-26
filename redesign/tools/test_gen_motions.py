@@ -18,7 +18,7 @@ generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
 
 ALL_ACTIONS = {"nod", "sway", "shake", "stretch", "wave", "doubt", "fume", "yawn",
-               "cheerful_bounce", "shy_sway", "look_around", "daydream", "notice",
+               "cheerful_bounce", "shy_sway", "point_out", "look_around", "daydream", "notice",
                "puff", "kiss", "sob", "deadpan"}
 
 # Exaggerated gaze motions go past the older recipes; these caps are the

@@ -113,7 +113,7 @@ test('吊坠视图：节拍调度、后台暂停、少动态、风力低通滤�
   const vm = (await import('node:vm')).default;
   let now = 1000, nextId = 1, hidden = false, reduceMotion = false;
   const timers = new Map(), rafs = new Map(), listeners = new Map(), docListeners = new Map();
-  const winds = [], looks = [], modelUpdates = [];
+  const winds = [], looks = [], modelUpdates = [], glasses = [];
   const ctx2d = { clearRect() {}, beginPath() {}, moveTo() {}, quadraticCurveTo() {}, lineTo() {}, stroke() {} };
   const gl = {
     FRAMEBUFFER_BINDING: 0, COLOR_BUFFER_BIT: 1, DEPTH_BUFFER_BIT: 2, DEPTH_TEST: 3, LEQUAL: 4,
@@ -127,6 +127,7 @@ test('吊坠视图：节拍调度、后台暂停、少动态、风力低通滤�
   class FakePetModel {
     async loadFromSetting() {}
     setCatEarsVisible() {}
+    setGlassesVisible(v, immediate) { glasses.push([v, Boolean(immediate)]); }
     update(dt) { modelUpdates.push(dt); }
     isReady() { return true; }
     getStaticBounds() { return { minX: -0.5, maxX: 0.5, minY: -0.5, maxY: 0.5 }; }
@@ -186,6 +187,9 @@ test('吊坠视图：节拍调度、后台暂停、少动态、风力低通滤�
   // 通过 settings-changed 显式开启吊坠（不依赖模块外 ESM global localStorage），并等待模型与节拍器就绪。
   await listeners.get('settings-changed')({ payload: { pendantEnabled: true, pendantScale: 1, pendantRopeLength: 100 } });
   for (let i = 0; i < 12; i++) await new Promise(setImmediate);
+  assert.ok(glasses.some(([v, imm]) => v === false && imm === true), '启动恢复黑框眼镜默认为关闭');
+  await listeners.get('settings-changed')({ payload: { pendantEnabled: true, pendantScale: 1, pendantRopeLength: 100, showGlasses: true } });
+  assert.deepEqual(glasses.at(-1), [true, false], '设置切换黑框眼镜需实时同步至吊坠');
 
   // 1) 首次 cursor 到达：静止时用 setTimeout 预睡眠等待 30fps 间隔，而非每 vsync 空转 rAF。
   listeners.get('pendant-cursor')({ payload: { x: 400, y: 200, wx: 0, wy: 0 } });

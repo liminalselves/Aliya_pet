@@ -21,6 +21,8 @@ export interface PetSettings {
   mirror: boolean;
   /** 显示猫耳；关闭时隐藏猫耳部件，耳朵互动与提到猫耳的台词一并停用。 */
   showCatEars: boolean;
+  /** 佩戴黑框眼镜；关闭时不常驻显示（播放「划重点」动作期间仍会临时戴上）。 */
+  showGlasses: boolean;
   /** 桌面端人物脚下的「聊天」入口按钮；关闭后仍可从托盘打开聊天。 */
   showChatButton: boolean;
   randomSpeech: boolean;
@@ -90,6 +92,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   autoActions: true,
   mirror: false,
   showCatEars: true,
+  showGlasses: false,
   showChatButton: true,
   randomSpeech: false,
   randomSpeechMinutes: 5,
@@ -229,6 +232,7 @@ export function loadSettings(): PetSettings {
       pinballMode: parsed.pinballMode === true,
       pinballModeHotkey,
       showCatEars: parsed.showCatEars !== false,
+      showGlasses: parsed.showGlasses === true,
       showChatButton: parsed.showChatButton !== false,
       chatBackground: typeof parsed.chatBackground === 'string' ? parsed.chatBackground : DEFAULT_SETTINGS.chatBackground,
       chatBackgroundDim: Number.isFinite(Number(parsed.chatBackgroundDim))

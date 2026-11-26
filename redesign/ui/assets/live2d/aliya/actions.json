@@ -11,6 +11,7 @@
     { "name": "kiss", "face": [{ "from": 0.42, "to": 1.45, "mouth": "pucker" }], "fx": [{ "from": 1.4, "to": 2.5, "fx": "heart" }] },
     { "name": "puff", "face": [{ "from": 0.32, "to": 2.55, "mouth": "puff" }] },
     { "name": "sob", "face": [{ "from": 0.62, "to": 2.75, "eye": "sad" }], "fx": [{ "from": 0.8, "to": 2.7, "fx": "gloom" }] },
-    { "name": "deadpan", "face": [{ "from": 0.38, "to": 2.6, "eye": "speechless" }] }
+    { "name": "deadpan", "face": [{ "from": 0.38, "to": 2.6, "eye": "speechless" }] },
+    { "name": "point_out", "fx": [{ "from": 0.45, "to": 2.45, "fx": "sparkle" }] }
   ]
 }

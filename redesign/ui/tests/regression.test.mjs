@@ -12,7 +12,7 @@ test('正式模型的纹理、动作、表情及物理参数引用完整',()=>{
  const refs=json('aliya.model3.json').FileReferences;
  const ids=new Set(json(refs.DisplayInfo).Parameters.map(p=>p.Id));
  assert.equal(readFileSync(new URL(refs.Moc,base)).subarray(0,4).toString(),'MOC3');
- assert.equal(Object.keys(refs.Motions).length,17);assert.equal(refs.Expressions.length,14);
+ assert.equal(Object.keys(refs.Motions).length,18);assert.equal(refs.Expressions.length,14);
  for(const name of refs.Textures){const bytes=readFileSync(new URL(name,base));assert.equal(bytes.readUInt32BE(16),2048);assert.equal(bytes.readUInt32BE(20),2048)}
  for(const motions of Object.values(refs.Motions))for(const motion of motions)for(const curve of json(motion.File).Curves){if(curve.Target==='Parameter')assert.ok(ids.has(curve.Id),curve.Id)}
  for(const expression of refs.Expressions)for(const p of json(expression.File).Parameters)assert.ok(ids.has(p.Id),p.Id);
@@ -27,7 +27,7 @@ function load(name,imports={},globals={}){
  const exports={};vm.runInNewContext(code,{exports,require:id=>imports[id]??(['./embed','../embed'].includes(id)?EMBED:['./config','../msk/config'].includes(id)?loadMskConfig():/(^|\/)catalog$/.test(id)?CATALOG():{}),console,setTimeout,clearTimeout,setInterval:()=>0,clearInterval(){},performance,AbortController,DOMException,...globals});return exports;
 }
 const {GazeController}=load('gaze');
-const newActionNames=['cheerful_bounce','shy_sway','puff','kiss','sob','deadpan','look_around','daydream','notice'];
+const newActionNames=['cheerful_bounce','shy_sway','point_out','puff','kiss','sob','deadpan','look_around','daydream','notice'];
 const modelBase=new URL('assets/live2d/aliya/',root);
 const asset=file=>JSON.parse(readFileSync(new URL(file,modelBase)));
 
@@ -209,14 +209,68 @@ test('当前模型继续抬起旧版五段手链，结束后停止覆盖物理',
  assert.equal(h.values.size,5);for(const v of h.values.values())assert.ok(v<-30);
  for(let i=0;i<180;i++)h.step(1/30);assert.equal(h.values.size,0);
 });
-test('按优先级播放及随机播放同样触发挥手，被拒绝的动作不影响当前手势',()=>{
+const {GlassesChannel}=load('overlay');
+test('划重点与黑框眼镜通道联动：互斥防重臂、ParamMouthForm=1、临时戴镜与常驻保持',()=>{
+ const values=new Map([['ParamMouthForm',-0.65]]);
+ let baseMf=-0.65;
+ const model={
+  getParameterValueById:id=>values.get(id)??0,
+  setParameterValueById:(id,v)=>values.set(id,v),
+  addParameterValueById:(id,v)=>values.set(id,(values.get(id)??0)+v),
+ };
+ const hand=new HandRaiseChannel([],{enabled:'Param30',forearm:'Param31',hand:'Param36',pointOut:'Param42',mouthForm:'ParamMouthForm'});
+ const glasses=new GlassesChannel('Param43');
+ const step=(dt=1/30,mf=-0.65)=>{baseMf=mf;values.set('ParamMouthForm',baseMf);hand.apply(model,dt);glasses.apply(model,dt);};
+ // 1) 默认关闭常驻眼镜，触发 point_out：Param42、Param43 与 ParamMouthForm=1 联动激活，Param30 为 0
+ hand.trigger('point_out',4.35);glasses.triggerAction(4.35);
+ for(let i=0;i<24;i++){
+  step(1/30,-0.65);
+  assert.ok(!(values.get('Param30')>0&&values.get('Param42')>0),'Param30 与 Param42 不得同时大于 0');
+ }
+ assert.ok(values.get('Param42')>.95);assert.ok(values.get('Param43')>.99);
+ assert.ok(Math.abs(values.get('ParamMouthForm')-1)<.03,'动作主体期需将 ParamMouthForm 推近 1');
+ assert.ok(Math.abs(values.get('Param31'))>0.01);
+ // 2) 动作中途切 wave：先彻底归零 Param42 再抬 Param30；眼镜随释放淡出
+ hand.trigger('wave',4.2);glasses.releaseAction();
+ for(let i=0;i<35;i++){
+  step(1/30,0);
+  assert.ok(!(values.get('Param30')>0&&values.get('Param42')>0),'切回 wave 时双左臂不得重叠');
+ }
+ assert.ok(values.get('Param30')>.95);assert.equal(values.get('Param42'),0);
+ assert.ok(values.get('Param43')<.02,'未开启常驻饰品时打断后应平滑摘镜');
+ // 3) 打断/播完复位后彻底归零，ParamMouthForm 不被污染
+ hand.release();for(let i=0;i<45;i++)step(1/30,-0.65);
+ assert.equal(values.get('Param42'),0);assert.equal(values.get('Param31'),0);assert.equal(values.get('Param36'),0);
+ assert.equal(values.get('Param43'),0);assert.equal(values.get('ParamMouthForm'),-0.65);
+ // 4) 常驻黑框眼镜开启时，播 point_out 前后与打断都稳稳保持 1
+ glasses.setVisible(true,true);step(0);assert.equal(values.get('Param43'),1);
+ hand.trigger('point_out',4.35);glasses.triggerAction(4.35);for(let i=0;i<20;i++)step(1/30,0);
+ glasses.releaseAction();for(let i=0;i<30;i++)step(1/30,0);
+ assert.equal(values.get('Param43'),1,'常驻眼镜开启时不得随动作结束摘下');
+});
+test('按优先级播放及随机播放同样触发挥手与划重点，被拒绝的动作不影响当前手势',()=>{
  const {PetModel}=load('pet-model',{'@framework/model/cubismusermodel':{CubismUserModel:class{}}});
- const m=Object.create(PetModel.prototype);let triggered=0,released=0;
- Object.assign(m,{_ready:true,_motions:new Map([['wave_0',{}],['nod_0',{}]]),_setting:{getMotionCount:()=>1},_chHand:{trigger(){triggered++},release(){released++}},_chCheek:{releaseAction(){}},_motionManager:{getCurrentPriority:()=>0,stopAllMotions(){},startMotionPriority:()=>1}});
- assert.equal(m.startRandomMotion('wave',2),1);assert.equal(triggered,1);
- assert.equal(m.startMotion('nod',0,2),1);assert.equal(released,1);
- assert.equal(m.startMotion('wave',0,0),-1);assert.equal(triggered,1);
+ const m=Object.create(PetModel.prototype);let triggered=[],released=0,gOn=0,gOff=0;
+ Object.assign(m,{_ready:true,_motions:new Map([['wave_0',{}],['point_out_0',{getDuration:()=>4.35}],['nod_0',{}]]),_setting:{getMotionCount:()=>1},
+  _chHand:{trigger(mode){triggered.push(mode)},release(){released++}},_chCheek:{releaseAction(){}},
+  _chGlasses:{triggerAction(d){gOn++;assert.equal(d,4.35)},releaseAction(){gOff++}},
+  _motionManager:{getCurrentPriority:()=>0,stopAllMotions(){},startMotionPriority:()=>1}});
+ assert.equal(m.startRandomMotion('wave',2),1);assert.deepEqual(triggered,['wave']);assert.equal(gOff,1);
+ assert.equal(m.startRandomMotion('point_out',2),1);assert.deepEqual(triggered,['wave','point_out']);assert.equal(gOn,1);
+ assert.equal(m.startMotion('nod',0,2),1);assert.equal(released,1);assert.equal(gOff,2);
+ assert.equal(m.startMotion('wave',0,0),-1);assert.equal(triggered.length,2);
  assert.equal(m.startMotion('missing',0,2),-1);assert.equal(released,1);
+});
+test('黑框眼镜设置默认关闭，旧存档兼容回退 false 且支持持久化开关',()=>{
+ let raw=null;
+ const localStorage={getItem:()=>raw,setItem:(_,v)=>{raw=v}};
+ const {DEFAULT_SETTINGS,loadSettings,saveSettings}=load('settings',{},{localStorage});
+ assert.equal(DEFAULT_SETTINGS.showGlasses,false);
+ assert.equal(loadSettings().showGlasses,false);
+ raw=JSON.stringify({scale:0.5});
+ assert.equal(loadSettings().showGlasses,false);
+ saveSettings({...DEFAULT_SETTINGS,showGlasses:true});
+ assert.equal(loadSettings().showGlasses,true);
 });
 test('受击和无语恢复专用眼型，切换与清除始终互斥且无中间值',()=>{
  const {applyFaceVariant,expressionEye,FACE_VARIANT_PARAMETERS}=load('face-variant');

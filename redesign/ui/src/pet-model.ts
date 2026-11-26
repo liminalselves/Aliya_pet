@@ -36,6 +36,7 @@ import {
   EarDragPhysics,
   CheekChannel,
   HandRaiseChannel,
+  GlassesChannel,
   ArmInteractionChannel,
   FaceMicroChannel,
   PartImpulseChannel,
@@ -120,6 +121,7 @@ export class PetModel
   private _chEarDrag: EarDragPhysics | null = null;
   private _chCheek: CheekChannel = null;
   private _chHand: HandRaiseChannel = null;
+  private _chGlasses: GlassesChannel | null = null;
   private _chArm: ArmInteractionChannel = null;
   private _chFaceMicro: FaceMicroChannel = null;
   private _chPartImpulse: PartImpulseChannel = null;
@@ -133,6 +135,7 @@ export class PetModel
   private _earsVisible = true;
   private _earBlend = 1;
   private _earOpacity = 1;
+  private _hasGlasses = false;
   private static readonly _earFadeSeconds = 0.18;
   private static readonly _lookReductionScale = 0.25;
 
@@ -342,10 +345,19 @@ export class PetModel
     this._faceVariantIds = FACE_VARIANT_PARAMETERS.map(id);
     this._faceMouthIds = FACE_MOUTH_PARAMETERS.map(id);
 
-    // 按真实参数探测新版挥手能力；缺少参数时保留旧模型的五段链。
+    const glassesId = optId('Param43');
+    this._hasGlasses = Boolean(glassesId);
+
+    // 按真实参数探测新版挥手/划重点能力；缺少参数时保留旧模型的五段链。
     // 不向 SDK 创建的虚拟参数写入，两个版本均在物理后统一控制。
     const nativeWave = ['Param30', 'Param31', 'Param36'].every(hasParam)
-      ? { enabled: id('Param30'), forearm: id('Param31'), hand: id('Param36') }
+      ? {
+          enabled: id('Param30'),
+          forearm: id('Param31'),
+          hand: id('Param36'),
+          pointOut: optId('Param42'),
+          mouthForm: optId('ParamMouthForm'),
+        }
       : null;
     const idsHandR: CubismIdHandle[] = [];
     for (let s = 1; s <= 5; s++) {
@@ -396,6 +408,7 @@ export class PetModel
       : null;
     this._chCheek = new CheekChannel(this._idCheek);
     this._chHand = new HandRaiseChannel(idsHandR, nativeWave);
+    this._chGlasses = new GlassesChannel(glassesId);
     this._chArm = new ArmInteractionChannel(
       {
         l01: optId('ParamArmL01'),
@@ -544,6 +557,7 @@ export class PetModel
     // 其余通道（猫耳加写/脸红/挥手/四腕/微表情/局部弹性/情绪符号）在物理之后叠加。
     this._overlays.add(this._chEar);
     this._overlays.add(this._chCheek);
+    this._overlays.add(this._chGlasses);
     this._overlays.add(this._chHand);
     this._overlays.add(this._chArm);
     this._overlays.add(this._chFaceMicro);
@@ -796,13 +810,22 @@ export class PetModel
     // SDK startMotion 会让旧动作淡出，不提前清空它的参数贡献。
     const handle = this._motionManager.startMotionPriority(motion, false, priority);
     if (handle !== INVALID_MOTION_HANDLE) {
-      if (group === 'wave') this._chHand.trigger();
-      else this._chHand.release();
-      if (group === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
-      else this._chCheek.releaseAction();
-      this._startFaceCue(group);
+      const duration = typeof motion.getDuration === 'function' ? motion.getDuration() : 0;
+      this._onMotionStarted(group, duration);
     }
     return handle;
+  }
+
+  /** 动作成功起播时联动左手/眼镜/脸红/表情符号提示，并平滑收起上一动作通道。 */
+  private _onMotionStarted(name: string, duration: number): void {
+    if (name === 'wave') this._chHand?.trigger('wave', duration);
+    else if (name === 'point_out') this._chHand?.trigger('point_out', duration);
+    else this._chHand?.release();
+    if (name === 'shy_sway') this._chCheek?.triggerAction(duration);
+    else this._chCheek?.releaseAction();
+    if (name === 'point_out') this._chGlasses?.triggerAction(duration);
+    else this._chGlasses?.releaseAction();
+    this._startFaceCue(name);
   }
 
   /** 新动作接管脸部时间轴；没有提示的动作会清掉被打断动作的眼型/嘴型。 */
@@ -845,17 +868,9 @@ export class PetModel
       MotionPriority.Normal
     );
     if (handle === INVALID_MOTION_HANDLE) return false;
-    // 挥手联动抬手包络；其他动作打断时平滑放下
-    if (name === 'wave') {
-      this._chHand.trigger();
-    } else {
-      this._chHand.release();
-    }
-    // 从统一播放入口联动，设置页（Windows/Android）、AI 和自动行为均生效。
-    // 只附加脸红包络，不调用 startExpression，原表情继续按自己的生命周期求值。
-    if (name === 'shy_sway') this._chCheek.triggerAction(motion.getDuration());
-    else this._chCheek.releaseAction();
-    this._startFaceCue(name);
+    // 从统一播放入口联动，设置页（Windows/Android）、AI 和自动行为均生效；不替换原表情。
+    const duration = typeof motion.getDuration === 'function' ? motion.getDuration() : 0;
+    this._onMotionStarted(name, duration);
     return true;
   }
 
@@ -1048,6 +1063,16 @@ export class PetModel
       this._earBlend = visible ? 1 : 0;
       this._earOpacity = this._earBlend;
     }
+  }
+
+  /** 模型是否有可开关的黑框眼镜饰品（Param43）。 */
+  public get hasGlasses(): boolean {
+    return this._hasGlasses;
+  }
+
+  /** 显示/隐藏黑框眼镜饰品；immediate 用于启动恢复，跳过淡变。 */
+  public setGlassesVisible(visible: boolean, immediate = false): void {
+    this._chGlasses?.setVisible(visible, immediate);
   }
 
   /**

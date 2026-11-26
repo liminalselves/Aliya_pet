@@ -258,6 +258,7 @@ export class PetApp {
   private _dragCandidate = false;
   private _dragging = false;
   private _catEarsVisible: boolean | null = null;
+  private _glassesVisible: boolean | null = null;
   private _boostUntil = 0;
   private _projection: CubismMatrix44 | null = null;
   /** 触摸端：本次按下走抚摸通道（头部区域），松开事件需对应回传。 */
@@ -639,6 +640,13 @@ export class PetApp {
     if (changed && !visible) this._interaction?.procedural.cancelAll();
   }
 
+  /** 黑框眼镜显隐：常驻饰品控制；启动恢复一步落定，不播放淡变。 */
+  private _applyGlasses(visible: boolean, immediate: boolean): void {
+    const snap = immediate || this._glassesVisible === null;
+    this._glassesVisible = visible;
+    this._model?.setGlassesVisible?.(visible, snap);
+  }
+
   /** The overlay only runs local interactions; all network conversation lives in the main page. */
   private _initializeChat(): void {
     // 嵌入网页只展示本地互动；聊天需要登录，留在应用里。
@@ -842,6 +850,7 @@ export class PetApp {
     this._hitAreas.mirrored = s.mirror;
     this.setMirrored(s.mirror);
     this._applyCatEars(s.showCatEars, restoreWindow);
+    this._applyGlasses(s.showGlasses, restoreWindow);
     this._syncChatLauncherVisible();
     this._chatView?.setLauncherEnabled(s.showChatButton);
 

@@ -82,7 +82,7 @@ test('新动作×全部表情×极端注视及动作切换的正式Core顶点均
     p = await model();
     try {
       assert.equal(p.getExpressionNames().length, 14);
-      assert.equal(p.getMotionNames().length, 17);
+      assert.equal(p.getMotionNames().length, 18);
       for (const action of p.getMotionNames()) for (const expression of p.getExpressionNames()) for (const gaze of gazes) {
         summary.cases++;
         p.startExpression(expression); p.setLookTarget(...gaze); assert.ok(p.playAction(action));

@@ -126,6 +126,13 @@
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }
+      ],
+      "point_out": [
+        {
+          "File": "motions/point_out.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
       ]
     },
     "Expressions": [

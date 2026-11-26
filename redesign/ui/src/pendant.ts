@@ -319,8 +319,9 @@ function ensureModel(): Promise<void> {
       frameBuffer: gl!.getParameter(gl!.FRAMEBUFFER_BINDING),
       shaderPath: '/shaders/',
     });
-    // 猫耳显隐跟主桌宠一致。
+    // 猫耳与黑框眼镜显隐跟主桌宠一致。
     m.setCatEarsVisible(settings.showCatEars, true);
+    m.setGlassesVisible?.(settings.showGlasses, true);
     m.update(0);
     attach = pickAttachVertex(m);
     model = m;
@@ -344,6 +345,7 @@ async function applySettings(s: PetSettings): Promise<void> {
     return;
   }
   model.setCatEarsVisible(s.showCatEars);
+  model.setGlassesVisible?.(s.showGlasses);
   // 窗口尺寸与位置由 Rust 光标线程管理（铺满光标所在显示器）。
   await tauriWindow.show().catch(() => {});
   start();
