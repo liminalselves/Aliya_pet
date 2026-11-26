@@ -72,7 +72,14 @@ export class HitAreas {
         this._areas.push(def);
         if (def.id === 'head_pet_zone') this._headPetZone = def;
         if (def.id === 'head') this._head = def;
-        if (def.id === 'head_pet_zone' || def.id === 'head' || def.id === 'ear_left' || def.id === 'ear_right') {
+        if (
+          def.id === 'head_pet_zone' ||
+          def.id === 'head' ||
+          def.id === 'crown' ||
+          def.id === 'bangs' ||
+          def.id === 'ear_left' ||
+          def.id === 'ear_right'
+        ) {
           this._headRegion.push(def);
         }
       }

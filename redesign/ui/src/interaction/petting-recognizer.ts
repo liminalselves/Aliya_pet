@@ -1,9 +1,9 @@
 /**
  * 抚摸手势识别（移植自 Flutter PettingGestureRecognizer，逻辑等价）：
  *   - 采样 30~60Hz，固定容量环形缓冲（索引覆盖，不分配），只保留最近约 1 秒
- *   - 有效条件：水平移动占主导（>60%）、起始距离 ≥8px、单次划动 18~80px、
- *     水平速度 40~500px/s、至少一次有效方向反转
- *   - 方向反转：最小反转距离 18px、防抖 120ms、忽略 <4px 抖动
+ *   - 有效条件：单轴占比 ≥35%（兼容水平、垂直、斜向及打圈揉头）、起始距离 ≥8px、
+ *     单次划动 10~480px、平滑速度 15~1000px/s、至少一次有效方向反转
+ *   - 方向反转：最小反转距离 10px、后续反转防抖 60ms（首次反转不受初始确立方向耗时阻塞）、忽略 <4px 抖动
  *   - 方向反转瞬间平滑速度立即换向（绕过 EMA 滞后）
  */
 
@@ -59,7 +59,7 @@ const createAxisTrack = (): AxisTrack => ({
   anchor: 0,
   origin: 0,
   dir: 0,
-  lastReversalTime: 0,
+  lastReversalTime: -Infinity,
   reversals: 0,
   maxStroke: 0,
   smoothedVel: 0,
@@ -69,7 +69,7 @@ const resetAxisTrack = (axis: AxisTrack, pos = 0): void => {
   axis.anchor = pos;
   axis.origin = pos;
   axis.dir = 0;
-  axis.lastReversalTime = 0;
+  axis.lastReversalTime = -Infinity;
   axis.reversals = 0;
   axis.maxStroke = 0;
   axis.smoothedVel = 0;
@@ -89,13 +89,13 @@ export class PettingGestureRecognizer {
   private readonly _capacity: number;
   readonly sampleWindowSeconds = 1.0;
   private readonly _minStartDistancePx = 8;
-  private readonly _minStrokeDistancePx = 18;
-  private readonly _maxStrokeDistanceLimitPx = 80;
-  private readonly _minVelocityPxPerSec = 40;
-  private readonly _maxVelocityPxPerSec = 500;
-  private readonly _axisDominance = 0.6;
-  private readonly _minReversalDistancePx = 18;
-  private readonly _reversalDebounceSeconds = 0.12;
+  private readonly _minStrokeDistancePx = 10;
+  private readonly _maxStrokeDistanceLimitPx = 480;
+  private readonly _minVelocityPxPerSec = 15;
+  private readonly _maxVelocityPxPerSec = 1000;
+  private readonly _axisDominance = 0.35;
+  private readonly _minReversalDistancePx = 10;
+  private readonly _reversalDebounceSeconds = 0.06;
   private readonly _jitterPx = 4;
 
   private readonly _samples: Sample[];
@@ -287,7 +287,6 @@ export class PettingGestureRecognizer {
       const travel = pos - axis.anchor;
       if (Math.abs(travel) >= this._jitterPx) {
         axis.dir = Math.sign(travel);
-        axis.lastReversalTime = this._gestureElapsed;
         axis.anchor = pos;
       }
     } else {

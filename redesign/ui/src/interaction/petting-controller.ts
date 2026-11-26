@@ -385,9 +385,10 @@ export class PettingController {
    * 抚摸仅允许右键触发（Windows 约定）；左键留给拖动桌宠/普通点击。
    */
   onPointerDown(ctx: PointerContext): boolean {
+    const isDesktopSecondary = ctx.pointerType === 'mouse' || ctx.pointerType === 'pen';
     const inZone =
       this._hitAreas.isInHeadPetZone(ctx.normX, ctx.normY) ||
-      (ctx.pointerType === 'mouse' && !ctx.leftPressed && (this._hitAreas.isInHeadRegion?.(ctx.normX, ctx.normY) ?? false));
+      (isDesktopSecondary && !ctx.leftPressed && (this._hitAreas.isInHeadRegion?.(ctx.normX, ctx.normY) ?? false));
     if (!ctx.isSecondary || !inZone) return false;
     if (this.state !== 'inactive' && this.state !== 'finishing') return false;
 
@@ -410,7 +411,7 @@ export class PettingController {
     this._pressPxY = ctx.pxY;
     this.recognizer.startGesture(ctx);
     this.dailyState.beginPetting();
-    if (ctx.pointerType === 'mouse' && !ctx.leftPressed) {
+    if (isDesktopSecondary && !ctx.leftPressed) {
       this._leanEngaged = true;
       this._updateLean(ctx);
     }
