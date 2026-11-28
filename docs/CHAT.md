@@ -142,11 +142,15 @@ Aliya 角色与文风 ID 仍采用 `msk/client.ts` 的固定值，本地数据�
 协议权威来源：`C:/Users/35581/Desktop/misskey/docs/agent-control-embed.md`。
 宿主实现位于 `msk/control.ts`、`control-drawer.ts` 与 `control-bridge.ts`：
 
-- iframe 加载 `/agents/embed/{sessionId}/{panel}`；收到 ready 后通过
-  `postMessage` 注入 token 和紫灰色主题，校验消息的 origin 与 source。
-  token 不进入 URL；已认证时切换面板用 `set-panel` 让 iframe 内部跳转
-  路由，不重载；未完成认证或点击重试时才销毁重建，关闭抽屉或页面
-  卸载时释放 iframe 与监听器。
+- iframe 加载 `/agents/embed/{sessionId}/{panel}`；设置页挂载即对 `MSK_BASE`
+  注入 `dns-prefetch` 与 `preconnect` 提前完成连接握手，并在已登录且已选会话时按平台温和预热
+  （Windows 预创建设置窗延后避开启动资源竞争，Android 打开设置页后短暂延后或直达 `#session-control` 立即加载，
+  进入聊天页签或悬停/聚焦入口按钮也即时预热）。收到 ready 后通过 `postMessage` 注入 token 和暮石暗色主题，
+  校验消息的 origin 与 source，token 不进入 URL。
+- 已认证时切换面板用 `set-panel` 让 iframe 内部跳转路由不重载；连接进行中切换页签保留在途加载，
+  认证完成后立即切到目标面板。关闭抽屉时同账号同会话的正常 iframe 保持挂载保活（`.warm:not([open])`
+  保留布局尺寸但不可见、不可点击也不可聚焦），再次打开免重连秒开；抽屉顶栏提供手动重载按钮按需刷新，
+  后台预热失败则静默清理。登出、切账号、切会话、删除会话或页面卸载时立即释放 iframe 与监听器。
 - 抽屉固定高度，内部页面自己滚动。认证错误或加载超时显示中文提示和重试入口。
 - 登录或选中会话变化会关闭旧面板；同账号令牌变化通过 update-token 更新。
 - 修改成功后刷新会话摘要并通知聊天重新读取上下文；删除当前会话后清理选择。

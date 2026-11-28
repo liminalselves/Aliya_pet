@@ -71,6 +71,7 @@
         "minHeight": 480,
         "resizable": true,
         "alwaysOnTop": true,
+        "backgroundColor": "#141312",
         "visible": false
       },
       {
@@ -82,6 +83,7 @@
         "minWidth": 480,
         "minHeight": 420,
         "resizable": true,
+        "backgroundColor": "#141312",
         "visible": false
       },
       {
@@ -93,6 +95,7 @@
         "center": true,
         "resizable": false,
         "alwaysOnTop": true,
+        "backgroundColor": "#141312",
         "visible": false
       }
     ]

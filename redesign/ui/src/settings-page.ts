@@ -1474,6 +1474,7 @@ let agentControls!: AgentControlHandle;
 
   refs.chatEnter = () => {
     refreshChatInfo();
+    if (!document.hidden) agentControls?.warm();
     void fetchSessions(false);
   };
 
@@ -1973,29 +1974,56 @@ let agentControls!: AgentControlHandle;
 
 // ---------- 外部路由与跨窗口状态同步 ----------
 
+const playWindowEnter = (replayPanel = false) => {
+  if (platform === 'android') return;
+  app.classList.remove('window-enter');
+  void app.offsetWidth;
+  app.classList.add('window-enter');
+  if (!replayPanel) return;
+  const panel = panels.get(activeTab)?.section;
+  if (!panel) return;
+  panel.classList.remove('enter');
+  void panel.offsetWidth;
+  panel.classList.add('enter');
+};
+
 const openTarget = (target: string) => {
   if (!isExplicitOpenTarget(target)) {
     agentControls.close();
+    playWindowEnter(true);
     return;
   }
   const plan = resolveOpenTarget(target);
-  selectTab(plan.tab, { animate: true });
+  // 若目标就是会话配置，先于 selectTab/fetchSessions 启动预热，避免多等一帧或与会话列表抢连接。
+  if (plan.openSessionControl) agentControls.warm();
+  selectTab(plan.tab, { animate: !plan.openSessionControl });
   if (plan.openSessionControl) {
     requestAnimationFrame(() => agentControls.open());
     return;
   }
+  playWindowEnter();
   agentControls.close();
 };
 
-const initialTab = (() => {
-  try {
-    const saved = localStorage.getItem(SETTINGS_LAST_TAB_KEY);
-    return isValidSettingsTab(saved) ? saved : DEFAULT_SETTINGS_TAB;
-  } catch {
-    return DEFAULT_SETTINGS_TAB;
-  }
-})();
-selectTab(initialTab, { animate: platform !== 'tauri', persist: false });
+const initialHashTarget = location.hash ? location.hash.slice(1) : '';
+const initialHashPlan = isExplicitOpenTarget(initialHashTarget)
+  ? resolveOpenTarget(initialHashTarget)
+  : null;
+const initialTab = initialHashPlan
+  ? initialHashPlan.tab
+  : (() => {
+      try {
+        const saved = localStorage.getItem(SETTINGS_LAST_TAB_KEY);
+        return isValidSettingsTab(saved) ? saved : DEFAULT_SETTINGS_TAB;
+      } catch {
+        return DEFAULT_SETTINGS_TAB;
+      }
+    })();
+if (initialHashPlan?.openSessionControl) agentControls.warm();
+selectTab(initialTab, {
+  animate: platform !== 'tauri' && !initialHashPlan?.openSessionControl,
+  persist: false,
+});
 
 if (platform === 'tauri') {
   try {
@@ -2012,12 +2040,14 @@ if (platform === 'tauri') {
   }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !e.isComposing && !hotkeyRecordingActive && !document.querySelector('dialog[open]')) {
-      void import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().hide()).catch(() => {});
+      void import('@tauri-apps/api/core')
+        .then((m) => m.invoke('hide_window'))
+        .catch(() => import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().hide()).catch(() => {}));
     }
   });
 }
 window.addEventListener('hashchange', () => openTarget(location.hash.slice(1)));
-if (location.hash) openTarget(location.hash.slice(1));
+if (initialHashPlan?.openSessionControl) agentControls.open();
 
 // 托盘改动经 pet 窗口广播 → 刷新控件
 onSettingsChanged('settings-changed', () => {

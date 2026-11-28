@@ -141,7 +141,9 @@ class RecordsView {
         event.preventDefault();
         void this.load('manual');
       } else if (event.key === 'Escape' && platform === 'tauri') {
-        void import('@tauri-apps/api/window').then(m => m.getCurrentWindow().hide()).catch(() => {});
+        void import('@tauri-apps/api/core')
+          .then(m => m.invoke('hide_window'))
+          .catch(() => import('@tauri-apps/api/window').then(m => m.getCurrentWindow().hide()).catch(() => {}));
       }
     });
     window.addEventListener('focus', () => {
@@ -536,7 +538,7 @@ if (platform === 'tauri') {
   await listen('records-open', () => {
     syncRecordsBackground();
     recordsBg?.refreshAuto();
-    playEnter();
+    // Windows 桌面端已由壳侧播放整窗淡入上浮，不再叠加壳级 opacity 淡入避免双重发暗。
     void view.load('open');
   });
 } else {

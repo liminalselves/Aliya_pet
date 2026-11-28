@@ -110,7 +110,7 @@ button { font: inherit; }
 @keyframes record-skeleton { from { opacity: .55; } to { opacity: 1; } }
 
 /* ---------- 空态 ---------- */
-.records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--al-text-3); text-align: center; }
+.records-empty { min-height: 64%; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--al-text-3); text-align: center; --al-rise: 6px; animation: al-rise-in var(--al-t-med) var(--al-ease); }
 .records-empty svg { margin-bottom: 8px; color: var(--al-text-4); }
 .records-empty h2 { margin: 0; color: var(--al-text-1); font-size: 15px; font-weight: 600; }
 .records-empty p { margin: 0 0 12px; font-size: 12.5px; }

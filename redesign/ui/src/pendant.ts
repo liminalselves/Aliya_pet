@@ -56,6 +56,8 @@ let windX = 0;
 let windY = 0;
 let reducedMotionQuery: MediaQueryList | null = null;
 let tauriWindow: import('@tauri-apps/api/window').Window | null = null;
+let visibilityEpoch = 0;
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
 function resizeCanvases(): void {
   const next = Math.min(window.devicePixelRatio || 1, 2);
@@ -338,17 +340,40 @@ async function applySettings(s: PetSettings): Promise<void> {
   charHeight = pendantCharHeight(clampPendantScale(s.pendantScale));
   physics.config.ropeLength = clampPendantRope(s.pendantRopeLength);
   if (!tauriWindow) return;
+  const epoch = ++visibilityEpoch;
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
   if (s.pendantEnabled && !model) await ensureModel();
+  if (epoch !== visibilityEpoch) return;
   if (!s.pendantEnabled || !model?.isReady()) {
+    if (stage.classList?.contains('visible') && !isReducedMotion()) {
+      stage.classList.remove('visible');
+      stage.classList.add('hiding');
+      hideTimer = setTimeout(() => {
+        hideTimer = null;
+        if (epoch !== visibilityEpoch) return;
+        stage.classList?.remove('hiding');
+        stop();
+        void tauriWindow?.hide().catch(() => {});
+      }, 160);
+      return;
+    }
+    stage.classList?.remove('visible', 'hiding');
     stop();
     await tauriWindow.hide().catch(() => {});
     return;
   }
   model.setCatEarsVisible(s.showCatEars);
   model.setGlassesVisible?.(s.showGlasses);
+  const wasVisible = stage.classList?.contains('visible') ?? false;
+  stage.classList?.remove('hiding');
   // 窗口尺寸与位置由 Rust 光标线程管理（铺满光标所在显示器）。
   await tauriWindow.show().catch(() => {});
+  if (epoch !== visibilityEpoch) return;
   start();
+  if (!wasVisible) stage.classList?.add('visible');
 }
 
 async function main(): Promise<void> {
