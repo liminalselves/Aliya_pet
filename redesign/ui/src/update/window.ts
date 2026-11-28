@@ -50,10 +50,15 @@ async function installWithUpdater(dialog: UpdateDialog): Promise<void> {
 
 async function hideWindow(): Promise<void> {
   try {
-    const m = await import('@tauri-apps/api/window');
-    await m.getCurrentWindow().hide();
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('hide_window');
   } catch {
-    // 隐藏失败不影响状态（窗口残留可手动关，Rust 侧按非强制处理为隐藏）
+    try {
+      const m = await import('@tauri-apps/api/window');
+      await m.getCurrentWindow().hide();
+    } catch {
+      // 隐藏失败不影响状态（窗口残留可手动关，Rust 侧按非强制处理为隐藏）
+    }
   }
 }
 

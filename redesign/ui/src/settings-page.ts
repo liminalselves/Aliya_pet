@@ -2025,7 +2025,9 @@ if (platform === 'tauri') {
   }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !e.isComposing && !hotkeyRecordingActive && !document.querySelector('dialog[open]')) {
-      void import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().hide()).catch(() => {});
+      void import('@tauri-apps/api/core')
+        .then((m) => m.invoke('hide_window'))
+        .catch(() => import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().hide()).catch(() => {}));
     }
   });
 }

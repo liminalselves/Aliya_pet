@@ -9,6 +9,7 @@
 mod chat_window;
 mod screen_capture;
 mod miauth;
+mod window_anim;
 
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -1019,22 +1020,42 @@ fn apply_pet_bounds(pet: &tauri::WebviewWindow, x: i32, y: i32, w: u32, h: u32) 
     Ok(())
 }
 
-/// 显示预创建的设置窗口，并按需通知页面打开指定区域。
+/// 显示预创建的设置窗口（带原生开窗动效），并按需通知页面打开指定区域。
 fn show_settings_window(app: &tauri::AppHandle, target: Option<&str>) -> Result<(), String> {
     let win = app
         .get_webview_window("settings")
         .ok_or("settings 窗口未预创建")?;
-    let _ = win.unminimize();
-    let _ = win.show();
-    let _ = win.set_focus();
     let target = target.unwrap_or("main");
     let _ = app.emit_to("settings", "settings-open", json!({ "target": target }));
+    window_anim::show_window_animated(app, &win);
     Ok(())
 }
 
 #[tauri::command]
 fn show_settings(app: tauri::AppHandle, target: Option<String>) -> Result<(), String> {
     show_settings_window(&app, target.as_deref())
+}
+
+/// 隐藏当前可复用的装饰窗口（settings / records / 非强制 update），走统一关窗动效。
+#[tauri::command]
+fn hide_window(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    update_state: tauri::State<UpdateWindowState>,
+) -> Result<(), String> {
+    let label = window.label();
+    if !window_anim::is_animated_window(label) {
+        return Err(format!("不支持动效隐藏窗口: {label}"));
+    }
+    if label == "update"
+        && update_state
+            .mandatory
+            .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Ok(());
+    }
+    window_anim::hide_window_animated(&app, &window);
+    Ok(())
 }
 
 /// pet 前端回写用户的「人物完全穿透」开关；0% 的安全兜底不改变勾选。
@@ -1072,10 +1093,8 @@ fn show_records(app: tauri::AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("records")
         .ok_or("records 窗口未预创建")?;
-    let _ = win.unminimize();
-    let _ = win.show();
-    let _ = win.set_focus();
     let _ = app.emit_to("records", "records-open", ());
+    window_anim::show_window_animated(&app, &win);
     Ok(())
 }
 
@@ -1105,10 +1124,8 @@ fn show_update(
     let win = app
         .get_webview_window("update")
         .ok_or("update 窗口未预创建")?;
-    let _ = win.unminimize();
-    let _ = win.show();
-    let _ = win.set_focus();
     let _ = app.emit_to("update", "update-open", payload);
+    window_anim::show_window_animated(&app, &win);
     Ok(())
 }
 
@@ -1214,6 +1231,7 @@ fn main() {
         .manage(chat_window::ChatRuntimeState::default())
         .manage(miauth::MiauthState::default())
         .manage(UpdateWindowState::default())
+        .manage(window_anim::WindowAnimManager::default())
         .invoke_handler(tauri::generate_handler![
             set_auto_start,
             get_auto_start,
@@ -1222,6 +1240,7 @@ fn main() {
             set_pet_click_through,
             set_pet_bounds,
             show_settings,
+            hide_window,
             sync_click_through_menu,
             sync_top_menu,
             sync_pinball_menu,
@@ -1244,16 +1263,20 @@ fn main() {
             miauth::miauth_end,
             screen_capture::capture_screen
         ])
-        // pet 移动/缩放时让已打开的 chat 跟随；settings/records 关闭时隐藏复用。
+        // pet 移动/缩放时让已打开的 chat 跟随；settings/records 关闭时带关窗动效隐藏复用。
         .on_window_event(|window, event| {
             if matches!(window.label(), "settings" | "records") {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if let Some(win) = window.app_handle().get_webview_window(window.label()) {
+                        window_anim::hide_window_animated(window.app_handle(), &win);
+                    } else {
+                        let _ = window.hide();
+                    }
                     return;
                 }
             }
-            // 更新窗口：非强制更新关闭即隐藏（与 settings/records 一致复用）；
+            // 更新窗口：非强制更新关闭即带关窗动效隐藏（与 settings/records 一致复用）；
             // 强制更新不可隐藏，关闭按钮视作退出应用（更新是唯一继续使用的途径）。
             if window.label() == "update" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -1265,7 +1288,11 @@ fn main() {
                         window.app_handle().exit(0);
                     } else {
                         api.prevent_close();
-                        let _ = window.hide();
+                        if let Some(win) = window.app_handle().get_webview_window("update") {
+                            window_anim::hide_window_animated(window.app_handle(), &win);
+                        } else {
+                            let _ = window.hide();
+                        }
                     }
                     return;
                 }
@@ -1274,6 +1301,7 @@ fn main() {
         })
         .setup(move |app| {
             chat_window::setup(app.handle())?;
+            window_anim::setup(app.handle());
             // 吊坠跟着光标走，任何时候都不能挡住点击。
             if let Some(pendant) = app.get_webview_window("pendant") {
                 let _ = pendant.set_ignore_cursor_events(true);
