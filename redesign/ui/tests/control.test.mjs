@@ -150,3 +150,308 @@ test('renameSession 校验非空并调用 agents/sessions/update 返回新名称
   assert.match(calls[0].url, /\/api\/agents\/sessions\/update$/);
   assert.deepEqual(calls[0].body, { i: 'tk', sessionId: 's1', name: '新的星海会话' });
 });
+
+test('preconnectMskOrigin 为同一源只注入一次 dns-prefetch 与双模式 preconnect', () => {
+  const config = loadMskConfig('http://127.0.0.1:3000');
+  const headLinks = [];
+  const { preconnectMskOrigin } = load('control', config, {
+    document: {
+      head: { append: link => headLinks.push(link) },
+      createElement: tag => ({ tag }),
+    },
+  });
+  preconnectMskOrigin();
+  preconnectMskOrigin();
+  assert.equal(headLinks.length, 3);
+  assert.deepEqual(
+    headLinks.map(l => ({ rel: l.rel, href: l.href, crossOrigin: l.crossOrigin ?? '' })),
+    [
+      { rel: 'dns-prefetch', href: 'http://127.0.0.1:3000', crossOrigin: '' },
+      { rel: 'preconnect', href: 'http://127.0.0.1:3000', crossOrigin: '' },
+      { rel: 'preconnect', href: 'http://127.0.0.1:3000', crossOrigin: 'anonymous' },
+    ],
+  );
+});
+
+test('AgentControlFrame 维护连接状态、支持刷新超时并在超时后转入错误态', () => {
+  const config = loadMskConfig('http://127.0.0.1:3000');
+  const timers = [];
+  const cleared = [];
+  const events = [];
+  const iframe = {
+    contentWindow: { postMessage() {} },
+    remove() { this.removed = true; },
+    classList: { add() {} },
+  };
+  const { AgentControlFrame } = load('control', config, {
+    document: { createElement: () => iframe },
+    window: { addEventListener() {}, removeEventListener() {} },
+    setTimeout: (cb, ms) => { const entry = { cb, ms, active: true }; timers.push(entry); return entry; },
+    clearTimeout: entry => { if (entry) { entry.active = false; cleared.push(entry); } },
+  });
+  const frame = new AgentControlFrame({ append() {} }, 's1', 'model', () => 'tk', e => events.push(e));
+  assert.equal(frame.isLoading, true);
+  assert.equal(frame.isAuthenticated, false);
+  assert.equal(frame.currentPanel, 'model');
+  assert.equal(timers.length, 1);
+
+  frame.refreshTimeout(15_000);
+  assert.equal(timers[0].active, false);
+  assert.equal(timers.length, 2);
+  assert.equal(timers[1].ms, 15_000);
+
+  timers[1].cb();
+  assert.equal(frame.hasError, true);
+  assert.equal(frame.isLoading, false);
+  assert.equal(events[0].code, 'LOAD_TIMEOUT');
+  frame.refreshTimeout();
+  assert.equal(timers.length, 2, '已失败的 frame 不再重启超时计时');
+  frame.destroy();
+  assert.equal(frame.status, 'destroyed');
+});
+
+function createDrawerHarness(platformName = 'tauri') {
+  const config = loadMskConfig('http://127.0.0.1:3000');
+  const storageMap = new Map();
+  const localStorage = {
+    getItem: k => (storageMap.has(k) ? storageMap.get(k) : null),
+    setItem: (k, v) => storageMap.set(k, String(v)),
+    removeItem: k => storageMap.delete(k),
+  };
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cs) => cs.forEach(c => set.add(c)),
+      remove: (...cs) => cs.forEach(c => set.delete(c)),
+      toggle: (c, force) => (force === undefined ? (set.has(c) ? set.delete(c) : set.add(c)) : (force ? set.add(c) : set.delete(c))),
+      contains: c => set.has(c),
+    };
+  };
+  const makeEl = (tag = 'div') => {
+    const listeners = new Map();
+    const attrs = new Map();
+    const el = {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      title: '',
+      hidden: false,
+      disabled: false,
+      dataset: {},
+      children: [],
+      offsetLeft: 0,
+      offsetWidth: 40,
+      scrollLeft: 0,
+      scrollWidth: 100,
+      clientWidth: 100,
+      classList: makeClassList(),
+      append(...nodes) { this.children.push(...nodes); },
+      remove() { this.removed = true; },
+      focus() { this.focused = true; },
+      scrollTo() {},
+      setAttribute(k, v) { attrs.set(k, String(v)); },
+      getAttribute(k) { return attrs.get(k) ?? null; },
+      removeAttribute(k) { attrs.delete(k); },
+      addEventListener(type, cb) { (listeners.get(type) ?? listeners.set(type, new Set()).get(type)).add(cb); },
+      removeEventListener(type, cb) { listeners.get(type)?.delete(cb); },
+      dispatch(type, event = {}) { for (const cb of [...(listeners.get(type) ?? [])]) cb({ preventDefault() {}, stopPropagation() {}, ...event }); },
+      querySelectorAll(sel) { return sel === 'button' ? this.children.filter(c => c.tagName === 'BUTTON') : []; },
+      querySelector(sel) { return this._slots?.[sel] ?? null; },
+    };
+    return el;
+  };
+  const winListeners = new Map();
+  const timers = [];
+  const headLinks = [];
+  const createdIframes = [];
+  const windowObj = {
+    addEventListener(type, cb) { (winListeners.get(type) ?? winListeners.set(type, new Set()).get(type)).add(cb); },
+    removeEventListener(type, cb) { winListeners.get(type)?.delete(cb); },
+    dispatch(type, event = {}) { for (const cb of [...(winListeners.get(type) ?? [])]) cb(event); },
+    matchMedia: () => ({ matches: true }),
+    setTimeout: (cb, ms) => { const entry = { cb, ms, active: true }; timers.push(entry); return entry; },
+    clearTimeout: entry => { if (entry) entry.active = false; },
+  };
+  let drawerEl = null;
+  const documentObj = {
+    head: { append: link => headLinks.push(link) },
+    body: { classList: makeClassList(), append: el => { drawerEl = el; } },
+    createElement(tag) {
+      if (tag === 'iframe') {
+        const posts = [];
+        const iframe = {
+          tagName: 'IFRAME',
+          posts,
+          contentWindow: { postMessage: (message, origin) => posts.push({ message, origin }) },
+          classList: makeClassList(),
+          remove() { this.removed = true; },
+        };
+        createdIframes.push(iframe);
+        return iframe;
+      }
+      if (tag === 'dialog') {
+        const d = makeEl('dialog');
+        const statusEl = makeEl('div');
+        const retryEl = makeEl('button'); retryEl.hidden = true;
+        const bodyEl = makeEl('div');
+        const navEl = makeEl('nav');
+        const sessionEl = makeEl('p');
+        const reloadEl = makeEl('button');
+        const closeEl = makeEl('button');
+        d._slots = {
+          '.control-status': statusEl,
+          '.control-retry': retryEl,
+          '.control-body': bodyEl,
+          nav: navEl,
+          '.control-session': sessionEl,
+          '.control-reload': reloadEl,
+          '.control-close': closeEl,
+        };
+        d.open = false;
+        d.showModal = () => { d.open = true; };
+        d.close = () => { if (!d.open) return; d.open = false; d.dispatch('close'); };
+        return d;
+      }
+      return makeEl(tag);
+    },
+  };
+  const controlExports = load('control', config, {
+    document: documentObj,
+    window: windowObj,
+    setTimeout: windowObj.setTimeout,
+    clearTimeout: windowObj.clearTimeout,
+  });
+  const drawerCode = ts.transpileModule(readFileSync(new URL('../src/chat/msk/control-drawer.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
+  }).outputText;
+  const drawerExports = {};
+  const requireShim = spec => {
+    if (spec === './control') return controlExports;
+    if (spec === './config') return config;
+    if (spec === './control-bridge') return { CONTROL_REQUEST_KEY: 'aliya_control_request' };
+    if (spec === './client') return { MskClient: class {} };
+    if (spec === '../../platform') return { openUrl: async () => true, platform: platformName };
+    if (spec === '../../toast') return { showToast() {} };
+    if (spec === './control.css') return {};
+    throw new Error(`unexpected require: ${spec}`);
+  };
+  vm.runInNewContext(drawerCode, {
+    exports: drawerExports,
+    require: requireShim,
+    document: documentObj,
+    window: windowObj,
+    localStorage,
+    navigator: { onLine: true },
+    ResizeObserver: class { observe() {} },
+    setTimeout: windowObj.setTimeout,
+    clearTimeout: windowObj.clearTimeout,
+    console,
+    URL,
+  });
+  const seedSession = (token, userId, sessionId, name = 'Aliya') => {
+    localStorage.setItem(config.MSK_TOKEN_KEY, token);
+    localStorage.setItem(config.MSK_USER_KEY, JSON.stringify({ id: userId, username: 'u' }));
+    localStorage.setItem(config.mskSessionKey(userId), JSON.stringify({ id: sessionId, name }));
+  };
+  const emitFromFrame = (iframe, data) => {
+    windowObj.dispatch('message', { origin: config.MSK_BASE, source: iframe.contentWindow, data });
+  };
+  const container = makeEl('div');
+  const handle = drawerExports.mountAgentControls(container, async () => {}, () => {});
+  return {
+    config, localStorage, seedSession, handle, drawer: drawerEl, slots: drawerEl._slots,
+    createdIframes, emitFromFrame, timers, headLinks, windowObj,
+  };
+}
+
+test('会话配置关闭后保留已认证 iframe，再次打开同会话免重连；手动重载才重建', () => {
+  const h = createDrawerHarness('tauri');
+  h.seedSession('tk1', 'u1', 's1', '星海对话');
+  h.handle.sync();
+
+  // 打开并完成认证
+  h.handle.open();
+  assert.equal(h.createdIframes.length, 1);
+  assert.equal(h.drawer.open, true);
+  assert.equal(h.drawer.getAttribute('aria-hidden'), null);
+  h.emitFromFrame(h.createdIframes[0], { type: 'misskey:agent-control:ready' });
+  h.emitFromFrame(h.createdIframes[0], { type: 'misskey:agent-control:authenticated' });
+  assert.equal(h.slots['.control-status'].textContent, '');
+
+  // 关闭抽屉：iframe 保活且抽屉挂 .warm 与 aria-hidden
+  h.handle.close();
+  assert.equal(h.drawer.open, false);
+  assert.equal(h.createdIframes[0].removed, undefined);
+  assert.equal(h.drawer.classList.contains('warm'), true);
+  assert.equal(h.drawer.getAttribute('aria-hidden'), 'true');
+
+  // 再次打开同会话：直接复用原 iframe，不新建也不显示“正在连接”
+  h.handle.open();
+  assert.equal(h.createdIframes.length, 1);
+  assert.equal(h.slots['.control-status'].textContent, '');
+  assert.equal(h.drawer.getAttribute('aria-hidden'), null);
+
+  // 点击顶部重载按钮才销毁并新建 iframe
+  h.slots['.control-reload'].onclick();
+  assert.equal(h.createdIframes[0].removed, true);
+  assert.equal(h.createdIframes.length, 2);
+});
+
+test('预热中打开抽屉复用在途连接；连接中切换页签不销毁重建，认证后立即切换', () => {
+  const h = createDrawerHarness('tauri');
+  h.seedSession('tk1', 'u1', 's1');
+  h.handle.warm();
+  assert.equal(h.createdIframes.length, 1);
+  assert.equal(h.drawer.open, false);
+  assert.equal(h.drawer.classList.contains('warm'), true);
+
+  // 预热尚未完成时用户打开抽屉：沿用同一 iframe
+  h.handle.open();
+  assert.equal(h.createdIframes.length, 1);
+  assert.equal(h.slots['.control-status'].textContent, '正在连接配置页');
+
+  // 连接进行中点“记忆”页签：不销毁重建
+  const memoryTab = h.slots.nav.children.find(b => b.dataset.panel === 'memory');
+  memoryTab.onclick();
+  assert.equal(h.createdIframes.length, 1);
+  assert.equal(memoryTab.getAttribute('aria-pressed'), 'true');
+
+  // 认证落地后立刻经 set-panel 切至“记忆”
+  h.emitFromFrame(h.createdIframes[0], { type: 'misskey:agent-control:ready' });
+  h.emitFromFrame(h.createdIframes[0], { type: 'misskey:agent-control:authenticated' });
+  const setPanelPost = h.createdIframes[0].posts.find(p => p.message.type === 'misskey:agent-control:set-panel');
+  assert.ok(setPanelPost);
+  assert.equal(setPanelPost.message.panel, 'memory');
+});
+
+test('后台预热失败静默清理；切会话或退出登录立即销毁保活 iframe', () => {
+  const h = createDrawerHarness('tauri');
+  h.seedSession('tk1', 'u1', 's1');
+  h.handle.warm();
+  assert.equal(h.createdIframes.length, 1);
+
+  // 后台预热出错：静默销毁，不显示错误提示
+  h.emitFromFrame(h.createdIframes[0], { type: 'misskey:agent-control:error', code: 'LOAD_TIMEOUT' });
+  assert.equal(h.createdIframes[0].removed, true);
+  assert.equal(h.drawer.classList.contains('warm'), false);
+  assert.equal(h.slots['.control-retry'].hidden, true);
+
+  // 之后打开抽屉会重新创建连接
+  h.handle.open();
+  assert.equal(h.createdIframes.length, 2);
+  h.emitFromFrame(h.createdIframes[1], { type: 'misskey:agent-control:ready' });
+  h.emitFromFrame(h.createdIframes[1], { type: 'misskey:agent-control:authenticated' });
+  h.handle.close();
+
+  // 切换到新会话：旧会话 iframe 立即销毁
+  h.seedSession('tk1', 'u1', 's2', '另一段对话');
+  h.handle.sync();
+  assert.equal(h.createdIframes[1].removed, true);
+
+  // 预热 s2 后退出登录：s2 iframe 立即销毁
+  h.handle.warm();
+  assert.equal(h.createdIframes.length, 3);
+  h.localStorage.removeItem(h.config.MSK_TOKEN_KEY);
+  h.handle.sync();
+  assert.equal(h.createdIframes[2].removed, true);
+});

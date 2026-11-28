@@ -1474,6 +1474,7 @@ let agentControls!: AgentControlHandle;
 
   refs.chatEnter = () => {
     refreshChatInfo();
+    if (!document.hidden) agentControls?.warm();
     void fetchSessions(false);
   };
 
@@ -1979,6 +1980,8 @@ const openTarget = (target: string) => {
     return;
   }
   const plan = resolveOpenTarget(target);
+  // 若目标就是会话配置，先于 selectTab/fetchSessions 启动预热，避免多等一帧或与会话列表抢连接。
+  if (plan.openSessionControl) agentControls.warm();
   selectTab(plan.tab, { animate: true });
   if (plan.openSessionControl) {
     requestAnimationFrame(() => agentControls.open());
@@ -1987,15 +1990,25 @@ const openTarget = (target: string) => {
   agentControls.close();
 };
 
-const initialTab = (() => {
-  try {
-    const saved = localStorage.getItem(SETTINGS_LAST_TAB_KEY);
-    return isValidSettingsTab(saved) ? saved : DEFAULT_SETTINGS_TAB;
-  } catch {
-    return DEFAULT_SETTINGS_TAB;
-  }
-})();
-selectTab(initialTab, { animate: platform !== 'tauri', persist: false });
+const initialHashTarget = location.hash ? location.hash.slice(1) : '';
+const initialHashPlan = isExplicitOpenTarget(initialHashTarget)
+  ? resolveOpenTarget(initialHashTarget)
+  : null;
+const initialTab = initialHashPlan
+  ? initialHashPlan.tab
+  : (() => {
+      try {
+        const saved = localStorage.getItem(SETTINGS_LAST_TAB_KEY);
+        return isValidSettingsTab(saved) ? saved : DEFAULT_SETTINGS_TAB;
+      } catch {
+        return DEFAULT_SETTINGS_TAB;
+      }
+    })();
+if (initialHashPlan?.openSessionControl) agentControls.warm();
+selectTab(initialTab, {
+  animate: platform !== 'tauri' && !initialHashPlan?.openSessionControl,
+  persist: false,
+});
 
 if (platform === 'tauri') {
   try {
@@ -2017,7 +2030,7 @@ if (platform === 'tauri') {
   });
 }
 window.addEventListener('hashchange', () => openTarget(location.hash.slice(1)));
-if (location.hash) openTarget(location.hash.slice(1));
+if (initialHashPlan?.openSessionControl) agentControls.open();
 
 // 托盘改动经 pet 窗口广播 → 刷新控件
 onSettingsChanged('settings-changed', () => {
