@@ -18,8 +18,22 @@
   font-size: 13px;
   line-height: 1.5;
 }
-/* 独立更新窗口（update.html）：对话框占满整页 */
+/* 独立更新窗口（update.html）：对话框占满整页，唤醒时标题/说明/按钮轻微错落上浮淡入 */
 #app > .update-dialog { height: 100%; }
+#app > .update-dialog.update-enter .update-head {
+  --al-rise: 6px;
+  animation: al-rise-in var(--al-t-med) var(--al-ease) both;
+}
+#app > .update-dialog.update-enter .update-notes {
+  --al-rise: 8px;
+  animation: al-rise-in var(--al-t-med) var(--al-ease) both;
+  animation-delay: .04s;
+}
+#app > .update-dialog.update-enter .update-buttons {
+  --al-rise: 6px;
+  animation: al-rise-in var(--al-t-med) var(--al-ease) both;
+  animation-delay: .08s;
+}
 
 .update-head h1 {
   margin: 0;
@@ -79,6 +93,7 @@
 
 /* ---- 下载进度 ---- */
 .update-progress { margin-top: 12px; }
+.update-progress:not([hidden]) { --al-rise: 4px; animation: al-rise-in var(--al-t-fast) var(--al-ease); }
 .update-progress[hidden] { display: none; }
 .update-progress-bar {
   height: 6px;
@@ -115,6 +130,7 @@
   background: var(--al-bg-2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--al-danger) 40%, transparent);
 }
+.update-error:not([hidden]) { --al-rise: 4px; animation: al-rise-in var(--al-t-fast) var(--al-ease); }
 .update-error[hidden] { display: none; }
 .update-error p { margin: 0 0 8px; color: var(--al-danger); font-size: 12.5px; overflow-wrap: anywhere; }
 .update-error button { margin-right: 8px; }
@@ -151,6 +167,12 @@
 .update-secondary:hover:not(:disabled) { background: var(--al-bg-4); }
 
 /* ---- Android 页内模态：居中卡片 + 半透明遮罩 ---- */
+@keyframes update-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+}
+@keyframes update-modal-out {
+  to { opacity: 0; transform: translateY(6px) scale(0.97); }
+}
 dialog.update-modal {
   width: min(340px, calc(100vw - 48px));
   max-width: 100%;
@@ -161,11 +183,26 @@ dialog.update-modal {
   color: var(--al-text-1);
   box-shadow: var(--al-shadow-2);
 }
-dialog.update-modal::backdrop { background: var(--al-backdrop); }
+dialog.update-modal[open] { animation: update-modal-in var(--al-t-med) var(--al-ease); }
+dialog.update-modal.closing { animation: update-modal-out var(--al-t-out) var(--al-ease) forwards; }
+dialog.update-modal::backdrop {
+  background: var(--al-backdrop);
+  animation: al-fade-in var(--al-t-med) var(--al-ease);
+}
+dialog.update-modal.closing::backdrop {
+  opacity: 0;
+  transition: opacity var(--al-t-out) var(--al-ease);
+}
 /* 模态里的说明区固定高度预算，超长滚动；过短的说明也不让按钮跳来跳去 */
 dialog.update-modal .update-dialog { max-height: min(70vh, 520px); }
 dialog.update-modal .update-notes { max-height: 40vh; }
 
 @media (prefers-reduced-motion: reduce) {
-  .update-progress.indeterminate .update-progress-bar i { animation: none; }
+  .update-progress.indeterminate .update-progress-bar i,
+  #app > .update-dialog.update-enter .update-head,
+  #app > .update-dialog.update-enter .update-notes,
+  #app > .update-dialog.update-enter .update-buttons,
+  dialog.update-modal[open],
+  dialog.update-modal.closing,
+  dialog.update-modal::backdrop { animation: none; transition: none; }
 }

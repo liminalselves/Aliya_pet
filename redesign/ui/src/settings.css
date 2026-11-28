@@ -201,15 +201,29 @@ body .al-toast {
   line-height: 1.45;
 }
 
-/* 切换/打开面板时卡片轻微错落上浮淡入 */
+/* 窗口唤醒：桌面设置窗整体平滑淡入（Android 由原生容器整页滑入，不叠播）。 */
+#app.settings-shell.window-enter {
+  animation: al-fade-in var(--al-t-med) var(--al-ease);
+}
+body.platform-android #app.settings-shell.window-enter {
+  animation: none;
+}
+
+/* 切换/打开面板时标题与卡片轻微错落上浮淡入 */
+.settings-panel.enter .panel-head {
+  --al-rise: 6px;
+  animation: al-rise-in var(--al-t-med) var(--al-ease) both;
+}
 .settings-panel.enter .card {
   --al-rise: 8px;
-  animation: al-rise-in var(--al-t-slow) var(--al-ease) both;
+  animation: al-rise-in var(--al-t-med) var(--al-ease) both;
+  animation-delay: .03s;
 }
-.settings-panel.enter .card:nth-child(2) { animation-delay: .035s; }
-.settings-panel.enter .card:nth-child(3) { animation-delay: .07s; }
-.settings-panel.enter .card:nth-child(n+4) { animation-delay: .105s; }
+.settings-panel.enter .card:nth-child(2) { animation-delay: .065s; }
+.settings-panel.enter .card:nth-child(3) { animation-delay: .1s; }
+.settings-panel.enter .card:nth-child(n+4) { animation-delay: .135s; }
 /* Android 子页由原生容器整页滑入，网页级联再叠一层就是双重位移 */
+body.platform-android .settings-panel.enter .panel-head,
 body.platform-android .settings-panel.enter .card { animation: none; }
 
 /* ---------- 桌面宽窗（>= 640px，非 Android）：左侧固定导航 + 右侧居中卡片 ---------- */

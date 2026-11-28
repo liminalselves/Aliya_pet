@@ -77,6 +77,7 @@ function render(data: unknown): void {
       void hideWindow();
     },
   });
+  dialog.root.classList.add('update-enter');
   app.appendChild(dialog.root);
 }
 

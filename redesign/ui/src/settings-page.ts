@@ -1974,19 +1974,34 @@ let agentControls!: AgentControlHandle;
 
 // ---------- 外部路由与跨窗口状态同步 ----------
 
+const playWindowEnter = (replayPanel = false) => {
+  if (platform === 'android') return;
+  app.classList.remove('window-enter');
+  void app.offsetWidth;
+  app.classList.add('window-enter');
+  if (!replayPanel) return;
+  const panel = panels.get(activeTab)?.section;
+  if (!panel) return;
+  panel.classList.remove('enter');
+  void panel.offsetWidth;
+  panel.classList.add('enter');
+};
+
 const openTarget = (target: string) => {
   if (!isExplicitOpenTarget(target)) {
     agentControls.close();
+    playWindowEnter(true);
     return;
   }
   const plan = resolveOpenTarget(target);
   // 若目标就是会话配置，先于 selectTab/fetchSessions 启动预热，避免多等一帧或与会话列表抢连接。
   if (plan.openSessionControl) agentControls.warm();
-  selectTab(plan.tab, { animate: true });
+  selectTab(plan.tab, { animate: !plan.openSessionControl });
   if (plan.openSessionControl) {
     requestAnimationFrame(() => agentControls.open());
     return;
   }
+  playWindowEnter();
   agentControls.close();
 };
 

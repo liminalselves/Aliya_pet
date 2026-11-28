@@ -11,7 +11,21 @@
     -webkit-user-select: none; user-select: none;
     pointer-events: none;
   }
-  #stage { position: fixed; inset: 0; }
+  #stage {
+    position: fixed; inset: 0;
+    opacity: 0;
+  }
+  #stage.visible {
+    opacity: 1;
+    animation: pendant-enter 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  #stage.hiding {
+    opacity: 0;
+    animation: pendant-exit 0.15s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  }
+  @keyframes pendant-enter { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pendant-exit { from { opacity: 1; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #stage.visible, #stage.hiding { animation: none; } }
   canvas { display: block; }
 </style>
 </head>

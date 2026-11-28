@@ -50,6 +50,8 @@ export class UpdateDialog {
   private readonly actions: UpdateDialogActions;
   private readonly result: UpdateCheckResult;
   private closed = false;
+  private closing = false;
+  private closeTimer = 0;
   private pendingReason: UpdateDismissReason = 'later';
 
   constructor(result: UpdateCheckResult, mode: UpdateDialogMode, actions: UpdateDialogActions = {}) {
@@ -137,9 +139,10 @@ export class UpdateDialog {
       const modal = document.createElement('dialog');
       modal.className = 'update-modal';
       modal.appendChild(this.root);
-      // 返回键/ESC：非强制放行（按「稍后」收尾）；强制更新拦截，弹窗不可关。
+      // 返回键/ESC：强制更新拦截不可关；非强制走统一退场动画再关闭。
       modal.addEventListener('cancel', (e) => {
-        if (result.mandatory) e.preventDefault();
+        e.preventDefault();
+        if (!result.mandatory) this.close('later');
       });
       modal.addEventListener('close', () => {
         if (result.mandatory) return;
@@ -205,12 +208,28 @@ export class UpdateDialog {
     }
   }
 
-  /** 收起对话框：modal 形态走原生 close（事件里收尾），window 形态交宿主隐藏窗口。 */
+  /** 收起对话框：modal 形态先播退场动画再原生 close（事件里收尾），window 形态交宿主隐藏窗口。 */
   public close(reason: UpdateDismissReason): void {
-    if (this.closed) return;
+    if (this.closed || this.closing) return;
     this.pendingReason = reason;
     if (this.modal) {
-      this.modal.close();
+      if (!this.modal.open) return;
+      const reducedMotion =
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reducedMotion) {
+        this.modal.close();
+        return;
+      }
+      this.closing = true;
+      this.modal.classList.add('closing');
+      this.closeTimer = setTimeout(() => {
+        this.closeTimer = 0;
+        this.closing = false;
+        this.modal?.classList.remove('closing');
+        this.modal?.close();
+      }, 150) as unknown as number;
       return;
     }
     if (reason === 'later') deferUpdateForLaunch();
@@ -219,7 +238,13 @@ export class UpdateDialog {
   }
 
   public remove(): void {
+    if (this.closeTimer) {
+      clearTimeout(this.closeTimer);
+      this.closeTimer = 0;
+    }
+    this.closing = false;
     this.closed = true;
+    this.modal?.classList.remove('closing');
     this.modal?.close();
     this.modal?.remove();
     this.root.remove();
