@@ -8,8 +8,8 @@ import base from './vite.config';
  * 产物整目录拷到官网 public/pet/。
  */
 
-// publicDir 整体复制后删掉网页用不到的大文件：完整字体（27MB，子集已够用）、未引用的 1024 贴图、应用图标。
-const UNUSED = ['fonts/NotoSerifSC-var.ttf', 'live2d/aliya/16.1024', 'icon.png'];
+// publicDir 整体复制后删掉网页用不到的大文件：完整字体（27MB，子集已够用）、应用图标。
+const UNUSED = ['fonts/NotoSerifSC-var.ttf', 'icon.png'];
 
 function pruneUnused(): Plugin {
   let outDir = '';

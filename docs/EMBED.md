@@ -13,7 +13,7 @@ npm run build:embed          # 产物在 ui/dist-embed/
 - 构建配置在 `ui/vite.embed.config.ts`：
   - 资源根路径默认是 `/pet/`，可以用环境变量 `EMBED_BASE` 改。
   - 只构建嵌入入口。
-  - 去掉完整字体、未使用的 1024 贴图和应用图标。
+  - 去掉完整字体和应用图标。
 - 构建完成后会运行 `scripts/subset-embed-font.py`。它只保留台词里实际用到的字，生成约 150 KB 的衬线字体，并改写产物里的 `@font-face`。
 - 所有资源路径都经过 `ui/src/embed.ts` 的 `assetUrl()`，嵌入产物可以放在任意子目录下。新增资源时，路径也要经过它。
 

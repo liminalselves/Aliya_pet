@@ -204,8 +204,8 @@ test('rapid SDK expression retriggers reclaim expired entries before the latest 
 const { CubismMotion } = sdk('motion/cubismmotion');
 const { CubismMotionManager } = sdk('motion/cubismmotionmanager');
 const motionRoot = resolve(uiRoot, 'assets/live2d/aliya');
-const motionSetting = JSON.parse(readFileSync(resolve(motionRoot, '16.model3.json'), 'utf8'));
-const parameterIds = JSON.parse(readFileSync(resolve(motionRoot, '16.cdi3.json'), 'utf8'))
+const motionSetting = JSON.parse(readFileSync(resolve(motionRoot, 'aliya.model3.json'), 'utf8'));
+const parameterIds = JSON.parse(readFileSync(resolve(motionRoot, 'aliya.cdi3.json'), 'utf8'))
   .Parameters.map(parameter => parameter.Id);
 const motionAssets = new Map(Object.entries(motionSetting.FileReferences.Motions).map(([name, entries]) => {
   assert.equal(entries.length, 1, `${name}: select every registered motion explicitly if variants are added`);
@@ -213,7 +213,7 @@ const motionAssets = new Map(Object.entries(motionSetting.FileReferences.Motions
   const bytes = new TextEncoder().encode(readFileSync(resolve(motionRoot, entry.File), 'utf8'));
   return [name, { entry, bytes, duration: JSON.parse(new TextDecoder().decode(bytes)).Meta.Duration }];
 }));
-const newActions = ['shy_sway', 'cheerful_bounce', 'puff', 'kiss', 'sob', 'deadpan', 'look_around', 'daydream', 'notice'];
+const newActions = ['shy_sway', 'cheerful_bounce', 'point_out', 'puff', 'kiss', 'sob', 'deadpan', 'look_around', 'daydream', 'notice'];
 const oldActions = [...motionAssets.keys()].filter(name => !newActions.includes(name));
 // This is an independent ownership contract, not a list inferred from the motion
 // under test: a missing reset curve must leave a dirty snapshot and fail the test.
@@ -479,7 +479,7 @@ for (const fps of [15, 30, 60]) {
     }
   });
   test(`shy_sway entry / main / exit handoffs retain fades and reset all 30 parameters at ${fps} FPS`, () => {
-    assert.equal(motionAssets.size, 17, 'the handoff matrix must include shy_sway and all 16 other actions');
+    assert.equal(motionAssets.size, 18, 'the handoff matrix must include shy_sway, point_out and all 16 other actions');
     assert.equal(motionAssets.get('shy_sway').duration, 5.4, 'shy_sway must include its 1.2 s neutral tail');
     for (const other of ['nod', 'wave']) {
       for (const interruptAt of [0.35, 1.4, 3.4, 4.05]) checkMotionHandoff('shy_sway', other, fps, interruptAt);

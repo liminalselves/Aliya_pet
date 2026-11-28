@@ -306,7 +306,7 @@ async function createRealPettingHarness() {
   p.createRenderer = () => {};
   p.getRenderer = () => ({ setIsPremultipliedAlpha() {}, startUp() {}, bindTexture() {} });
   p._loadTexture = async () => null;
-  const setting = bytes('16.model3.json');
+  const setting = bytes('aliya.model3.json');
   await p.loadFromSetting(setting, setting.byteLength, '', {
     gl: { drawingBufferWidth: 800, drawingBufferHeight: 800 },
     frameBuffer: null,
@@ -562,4 +562,57 @@ test('真实 Live2D 模型悬停头顶后按住并水平抚摸，全程无单帧
   } finally {
     p.release();
   }
+});
+
+test('右键大行程、快速搓头、慢速轻抚、小幅往返与画圈/斜向揉头均能稳定进入摸头模式', async () => {
+  const scenarios = [
+    {
+      name: '大行程横扫（140px，超旧版 80px 上限）',
+      steps: 40,
+      point: (i, head) => [head.x + (70 / 800) * Math.sin((2 * Math.PI * i) / 28), head.y],
+    },
+    {
+      name: '快速鼠标搓头（~650px/s，超旧版 500px/s 上限且快于 120ms 防抖）',
+      steps: 24,
+      point: (i, head) => [head.x + (32 / 800) * Math.sin((2 * Math.PI * i) / 10), head.y],
+    },
+    {
+      name: '慢速温柔轻抚（~26px/s，低于旧版 40px/s 下限）',
+      steps: 110,
+      point: (i, head) => [head.x + (16 / 800) * Math.sin((2 * Math.PI * i) / 90), head.y],
+    },
+    {
+      name: '小幅往返揉头（14px，小于旧版 18px 下限）',
+      steps: 40,
+      point: (i, head) => [head.x + (7 / 800) * Math.sin((2 * Math.PI * i) / 24), head.y],
+    },
+    {
+      name: '画圈/斜向揉头（X/Y 占比均偏低，旧版 0.6 单轴门槛会误拒）',
+      steps: 45,
+      point: (i, head) => [
+        head.x + (24 / 800) * Math.cos((2 * Math.PI * i) / 30),
+        head.y + (24 / 800) * Math.sin((2 * Math.PI * i) / 30),
+      ],
+    },
+  ];
+
+  for (const s of scenarios) {
+    const h = await createHarness();
+    const [sx, sy] = s.point(0, h.head);
+    assert.equal(h.press(sx, sy), true, `${s.name}: 右键起手应成功`);
+    for (let i = 1; i <= s.steps; i++) {
+      const [mx, my] = s.point(i, h.head);
+      h.c.onPointerMove(h.ctx(mx, my));
+      h.frame();
+    }
+    assert.equal(h.c.state, 'petting', `${s.name}: 应进入 petting 状态`);
+  }
+
+  // 刘海区右键同样可起手，但原地按住或单向划动仍不进入 petting
+  const hBangs = await createHarness();
+  assert.equal(hBangs.press(0.48, 0.34), true, '刘海区域右键应可起手摸头');
+  hBangs.hold(30);
+  assert.equal(hBangs.c.state, 'pressed', '原地按住不应进入 petting');
+  hBangs.moveTo(0.62, 0.34, 24);
+  assert.equal(hBangs.c.state, 'pressed', '单向移动不应进入 petting');
 });

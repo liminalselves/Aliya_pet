@@ -3,9 +3,9 @@
 ## 当前资源与接入
 
 正式资源为带情绪符号图层的新版 Aliya 模型（参数/物理/网格详情见 [MODEL.md](MODEL.md)），
-入口保留 `16.model3.json`、`16.moc3`、`16.physics3.json`、`16.cdi3.json`，
+入口为 `aliya.model3.json`、`aliya.moc3`、`aliya.physics3.json`、`aliya.cdi3.json`，
 纹理为 `aliya.2048/texture_00.png`。
-当前 **17 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
+当前 **18 个动作、14 个表情**；动作均由 `redesign/tools/gen-motions.py` 自编生成，
 不是官方示例占位文件。LipSync 不启用。
 
 修改关键帧后重新生成与验证：
@@ -19,7 +19,7 @@ npm --prefix redesign/ui run build
 
 生成器同时更新 assets 与 dist；生产构建会重新复制正式 assets。动作资源位于
 `redesign/ui/assets/live2d/aliya/motions/`。新增动作要改三处：生成器 `GENERATORS`、
-`16.model3.json` 的 `Motions`、`src/catalog.ts` 的 `ACTIONS`（名字、中文 label、给 AI 的 hint），
+`aliya.model3.json` 的 `Motions`、`src/catalog.ts` 的 `ACTIONS`（名字、中文 label、给 AI 的 hint），
 再按需加进 `STATES` 各状态的待机池。上报清单、设置页按钮都从目录派生（见 `PERFORMANCE.md`）。
 
 ## 动作清单
@@ -29,7 +29,7 @@ npm --prefix redesign/ui run build
 
 | 中文名称 | 内部动作名 | 设计要点 |
 | --- | --- | --- |
-| 摇摆 | `sway` | 先反向一带，身体先倾、头晚 0.12s 跟上，换边时重心轻沉；倾向哪侧，那侧手臂往身上收（≤1.5，不外展） |
+| 摇摆 | `sway` | 先反带蓄势 → 四拍明快左右 S 型律动（身体先倾、头晚 0.12s 跟上、换边重心下沉成弧），双臂交替外展/内收、闭眼弯月笑配合轻哼嘴型，联动 `music` 音符符号；仅放轻松状态待机池 |
 | 点头 | `nod` | 先微抬蓄势，身体先沉、头点到 -14 后回弹，第二次略浅；轻笑眼、低点半闭眼，手臂随点头一收 |
 | 摇头 | `shake` | 先反向一带，每次甩到 ±15 过冲再回落，幅度递减；身体反向配合、眯眼，双手攥着往身上收 |
 | 疑惑 | `doubt` | 「嗯？」一愣（微抬头、双眉一挑、轻张嘴）→ 歪头 10 看着你并眨眼 → 视线飘向上方想一想 → 「嗯～？」前倾凑近、歪到 11、眯眼打量；视线大部分时间对着正前方，身体反向轻倾，手臂不动 |
@@ -39,14 +39,16 @@ npm --prefix redesign/ui run build
 | 打哈欠 | `yawn` | 吸气抬头，后仰张大嘴、双臂微展，呼气时前倾并晃一下脑袋，眼皮仍沉 |
 | 开心雀跃 | `cheerful_bounce` | 蓄势、两次递减的上半身弹动、小幅协同摆臂 |
 | 撒娇 | `shy_sway` | 贴身收肘藏手、三次柔和轻晃、低头偷看，自动脸红 |
+| 划重点 | `point_out` | 推黑框眼镜蓄势 → 竖食指自信比一、扬嘴（`ParamMouthForm=1`）微仰讲解；左臂切换（`Param42`）与临时佩戴黑框眼镜（`Param43`）由通道联动 |
 | 鼓腮 | `puff` | 先反向一带吸口气 → 猛扭头鼓嘴过冲回落、身体一胀一胀，双手攥在身前跟着一收 → 偷瞄 → 泄气吐气 |
 | 飞吻 | `kiss` | 后仰预备 → 前倾闭眼嘟嘴「啾」，双手往身前收 → 弹回过冲放松、单眼 wink |
 | 委屈 | `sob` | 先微抬像要开口 → 嘴角下撇眼湿、头一点点垮下去 → 哭眼抽泣两下（肩耸，双手捂胸前一收一放）→ 吸鼻子抬头、眨眼忍住 |
 | 无语 | `deadpan` | 愣住一拍 → 斜斜瞥你一眼 → 无语方眼、头身慢慢耷拉、双手垂着贴身 → 叹气一松回正 |
 
-摇摆、挥手和疑惑的侧倾受渲染余量约束：试过摇摆头 Z 8/身体 3、挥手头 Z 10/身体 3、疑惑身体同向倾 2，
-叠加 sleepy 后分别需 1.311、1.323、1.302，均超过 1.30。所以摇摆、挥手保持原版量级，
-疑惑改为身体反向轻倾，灵动感改由预备、错峰与手臂表现。
+挥手和疑惑的侧倾受历史 1.30 渲染余量约束（试过挥手头 Z 10/身体 3、疑惑身体同向倾 2，
+叠加 sleepy 后分别需 1.323、1.302），因此挥手保持原版量级、疑惑改为身体反向轻倾。
+新模型因情绪符号将 `_renderMarginRatio` 提高至 1.39 后，`sway` 借此重做为四拍哼歌摇摆
+（身体 Z ±4.6、头 Z ±11.5、双臂交替 -3.5~+4.8 + `music` 符号），全表情实测包络仍低于 1.39。
 
 ## 情绪符号 fx
 
@@ -64,8 +66,8 @@ npm --prefix redesign/ui run build
 | surprise 惊叹 | notice 回神 | surprised 惊讶 |
 | gloom 乌云 | sob 委屈 | sad 难过、gloomy 阴沉 |
 | sleep zzz | yawn 哈欠、daydream 发呆（回神前撤） | sleepy 困倦 |
-| sparkle 闪光 | wave 挥手 | smug 得意 |
-| music 音符 | cheerful_bounce 开心雀跃 | happy 开心 |
+| sparkle 闪光 | wave 挥手、point_out 划重点 | smug 得意 |
+| music 音符 | sway 摇摆、cheerful_bounce 开心雀跃 | happy 开心 |
 
 ## 替换脸动作 puff / kiss / sob / deadpan
 
@@ -209,11 +211,13 @@ motion 文件不写 `ParamCheek`。成功的 `playAction`、`startMotion` 和经
    只在方向反转、保持平台和首尾处减速；控制点不越过相邻关键帧取值，不过冲。关键帧时间与数值未改。
    配方中与末关键帧重复的 `(dur, v)` 会合并，同一时刻出现不同取值时生成器直接报错。
 
-## 挥手与猫耳兼容通道
+## 挥手、划重点、眼镜与猫耳兼容通道
 
 包含 `Param30/31/36` 的当前模型使用新版挥手图层开关、小臂及手部控制，在物理之后应用；
 旧模型回退到 `Param_Angle_Rotation_1..5_ArtMesh61` 五段手链。挥手包络约 0.45s 举起，
 2.55s 起用 0.6s 放下，重复和打断均平滑释放；不让 motion 直接写这些独占参数。
+
+`point_out`（划重点）同样由 `HandRaiseChannel` 在物理之后驱动 `Param42`（模型原名「数一」）与 `Param31/36`，与 `Param30` 严格互斥（切换时先放下旧左臂再举起新左臂，避免双左臂同时出现），并在动作主体期间通过平滑混合将 `ParamMouthForm` 推至 `1`（不改持久基线、兼容各类背景表情）。`GlassesChannel` 管理 `Param43`（黑框眼镜），同步外观常驻开关 `showGlasses`（默认关闭）与 `point_out` 的临时佩戴（仅当常驻关闭时在收尾或被打断时平滑摘下）。
 
 当前模型没有旧 `ParamEarL/R`；`EarChannel` 映射到物理输出 `Param8/9/10`（左）与 `Param12/13/14`（右），
 有原生参数的旧模型仍使用 0～1 原生耳动；拖动期间另由 `EarDragPhysics` 模拟 3 段耦合弹簧甩动，点击由 `PartImpulseChannel` 触发对应侧局部抖动。覆盖在物理之后、生效于当帧，不保存进动作基线。

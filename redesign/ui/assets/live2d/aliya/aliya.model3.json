@@ -1,12 +1,12 @@
 {
   "Version": 3,
   "FileReferences": {
-    "Moc": "16.moc3",
+    "Moc": "aliya.moc3",
     "Textures": [
       "aliya.2048/texture_00.png"
     ],
-    "Physics": "16.physics3.json",
-    "DisplayInfo": "16.cdi3.json",
+    "Physics": "aliya.physics3.json",
+    "DisplayInfo": "aliya.cdi3.json",
     "Motions": {
       "sway": [
         {
@@ -123,6 +123,13 @@
       "deadpan": [
         {
           "File": "motions/deadpan.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 1.0
+        }
+      ],
+      "point_out": [
+        {
+          "File": "motions/point_out.motion3.json",
           "FadeInTime": 0.5,
           "FadeOutTime": 1.0
         }

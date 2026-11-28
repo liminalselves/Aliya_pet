@@ -236,7 +236,7 @@ export interface EarDragPhysicsIds {
 /**
  * 拖拽期间猫耳 3 段耦合弹簧物理：
  * 分别模拟耳根→中段→耳尖的相位滞后、加速度惯性冲击与停手回弹，
- * 接管并修正原 16.physics3.json PhysicsSetting9 在水平风力下的反偏问题。
+ * 接管并修正原 aliya.physics3.json PhysicsSetting9 在水平风力下的反偏问题。
  */
 export class EarDragPhysics {
   visible = true;
@@ -602,14 +602,16 @@ export class CheekChannel implements OverlayChannel {
   }
 }
 
-/** 新版挥手选择器及两段物理输出；旧版继续使用五段右手链。 */
+/** 新版挥手/划重点选择器及两段物理输出；旧版继续使用五段右手链。 */
 export interface NativeWaveIds {
   enabled: CubismIdHandle;
   forearm: CubismIdHandle;
   hand: CubismIdHandle;
+  pointOut?: CubismIdHandle;
+  mouthForm?: CubismIdHandle;
 }
 
-/** 挥手包络；统一在物理之后写入，结束及打断时恢复默认姿态。 */
+/** 挥手/划重点包络；统一在物理之后写入，结束及打断时恢复默认姿态。 */
 export class HandRaiseChannel implements OverlayChannel {
   readonly name = 'hand-raise';
   private static readonly SEGMENTS = 5;
@@ -617,8 +619,13 @@ export class HandRaiseChannel implements OverlayChannel {
   private static readonly SWAY_AMPS = [2, 3, 4, 5.5, 7];
   private static readonly TAU_SECONDS = 0.12;
   private _raise = 0;
+  private _pointOutRaise = 0;
+  private _pointOutForearm = 0;
+  private _pointOutHand = 0;
   private _target = 0;
   private _t = -1;
+  private _contentDur = 3.0;
+  private _mode: 'wave' | 'point_out' = 'wave';
 
   private _phase = 0;
 
@@ -627,53 +634,131 @@ export class HandRaiseChannel implements OverlayChannel {
     private readonly nativeWave: NativeWaveIds | null = null
   ) {}
 
-  /** 触发挥手联动；非 wave 动作播放时调用则以平滑放下收场。 */
-  trigger(): void {
-    if (this._raise <= 0.001) this._phase = 0;
+  /** 触发挥手/划重点联动；其他动作播放时调用 release 以平滑放下收场。 */
+  trigger(mode: 'wave' | 'point_out' = 'wave', duration?: number): void {
+    const activeRaise = mode === 'point_out' ? this._pointOutRaise : this._raise;
+    if (activeRaise <= 0.001) {
+      this._phase = 0;
+      if (mode === 'point_out') {
+        this._pointOutForearm = 0;
+        this._pointOutHand = 0;
+      }
+    }
+    this._mode = mode;
+    this._contentDur = mode === 'point_out'
+      ? Math.max(1.2, (duration ?? 4.35) - 1.2)
+      : 3.0;
     this._t = 0;
   }
   release(): void {
     this._t = -1;
   }
   get raising(): number {
-    return this._raise;
+    return Math.max(this._raise, this._pointOutRaise);
+  }
+  get pointOutRaising(): number {
+    return this._pointOutRaise;
   }
 
   apply(model: CubismModel, dt: number): void {
     if (!Number.isFinite(dt) || dt < 0) dt = 0;
     this._phase += dt;
-    // 包络：0.45s 举起 → 保持摆动 → 2.55s 起 0.6s 放下（对齐 wave 内容 3.0s）
+    const smooth = (x: number) => {
+      const c = clamp(x, 0, 1);
+      return c * c * (3 - 2 * c);
+    };
+    let env = 0;
     if (this._t >= 0) {
       this._t += dt;
       const t = this._t;
-      const up = Math.min(t / 0.45, 1);
-      const down = t < 2.55 ? 1 : Math.max(0, 1 - (t - 2.55) / 0.6);
-      this._target =
-        up * up * (3 - 2 * up) * (down * down * (3 - 2 * down));
-      if (t > 3.2) this._t = -1;
-    } else {
-      this._target = 0;
+      if (this._mode === 'wave') {
+        // 包络：0.45s 举起 → 保持摆动 → 2.55s 起 0.6s 放下（对齐 wave 内容 3.0s）
+        env = smooth(t / 0.45) * smooth(1 - (t - 2.55) / 0.6);
+        if (t > 3.2) this._t = -1;
+      } else {
+        // 划重点：0.08s 随身体蓄势起手，0.44s 举稳；2.45s~2.87s 平滑放下，与头身/眼镜同步归位到 ~3.0s
+        const downStart = Math.max(0.6, this._contentDur - 0.70);
+        env = smooth((t - 0.08) / 0.36) * smooth(1 - (t - downStart) / 0.42);
+        if (t > this._contentDur) this._t = -1;
+      }
     }
-    this._raise +=
-      (this._target - this._raise) *
-      (1 - Math.exp(-dt / HandRaiseChannel.TAU_SECONDS));
-    if (this._raise <= 0.001) this._raise = 0;
 
     if (this.nativeWave) {
-      // Param30 驱动模型内普通手臂与挥手图层的交叉渐变，保留连续包络。
-      // 两段摆动随包络回落；每帧显式复位，防止物理或旧动作残留。
-      const active = this._raise > 0;
+      // Param30 与 Param42 共用普通左臂隐藏与 Param31/36：互斥渐落，绝不同时 > 0 重叠双臂。
+      const wantWave = this._t >= 0 && this._mode === 'wave';
+      const wantPointOut = this._t >= 0 && this._mode === 'point_out' && Boolean(this.nativeWave.pointOut);
+      const waveTarget = wantWave && this._pointOutRaise === 0 ? env : 0;
+      const pointOutTarget = wantPointOut && this._raise === 0 ? env : 0;
+      const kWave = dt > 0
+        ? 1 - Math.exp(-dt / (wantPointOut ? 0.055 : HandRaiseChannel.TAU_SECONDS))
+        : 0;
+      // 划重点主体用紧凑跟随减少半透明拖尾，被打断释放保持平滑。
+      const kPoint = dt > 0
+        ? 1 - Math.exp(-dt / (wantPointOut ? 0.048 : wantWave ? 0.05 : 0.085))
+        : 0;
+      this._raise += (waveTarget - this._raise) * kWave;
+      this._pointOutRaise += (pointOutTarget - this._pointOutRaise) * kPoint;
+      if (this._raise <= (wantPointOut ? 0.02 : 0.001)) this._raise = 0;
+      if (this._pointOutRaise <= (wantWave ? 0.02 : 0.001)) this._pointOutRaise = 0;
+      this._target = Math.max(waveTarget, pointOutTarget);
+
       model.setParameterValueById(this.nativeWave.enabled, this._raise);
-      model.setParameterValueById(
-        this.nativeWave.forearm,
-        active ? Math.sin(this._phase * 10) * 0.65 * this._raise : 0
-      );
-      model.setParameterValueById(
-        this.nativeWave.hand,
-        active ? Math.sin(this._phase * 10 - 0.6) * 0.8 * this._raise : 0
-      );
+      if (this.nativeWave.pointOut) {
+        model.setParameterValueById(this.nativeWave.pointOut, this._pointOutRaise);
+      }
+
+      // 划重点前臂/手腕平滑目标：在收手淡出前先稳回中位，避免淡出时末端乱翘；打断时阻尼回 0。
+      let targetPoForearm = 0;
+      let targetPoHand = 0;
+      if (wantPointOut && this._raise === 0 && this._t >= 0) {
+        const downStart = Math.max(0.6, this._contentDur - 0.70);
+        const swayWin = smooth((this._t - 0.22) / 0.34) * smooth(1 - (this._t - (downStart - 0.30)) / 0.38);
+        const beat = Math.sin(Math.max(0, this._t - 0.28) * 4.6);
+        targetPoForearm = (-0.06 + 0.28 * beat) * swayWin;
+        targetPoHand = (0.12 + 0.34 * beat) * swayWin;
+      }
+      const kSway = dt > 0 ? 1 - Math.exp(-dt / 0.065) : 0;
+      this._pointOutForearm += (targetPoForearm - this._pointOutForearm) * kSway;
+      this._pointOutHand += (targetPoHand - this._pointOutHand) * kSway;
+      if (this._pointOutRaise === 0) {
+        this._pointOutForearm = 0;
+        this._pointOutHand = 0;
+      } else {
+        if (Math.abs(this._pointOutForearm) < 0.001) this._pointOutForearm = 0;
+        if (Math.abs(this._pointOutHand) < 0.001) this._pointOutHand = 0;
+      }
+
+      if (this._raise > 0) {
+        model.setParameterValueById(
+          this.nativeWave.forearm,
+          Math.sin(this._phase * 10) * 0.65 * this._raise
+        );
+        model.setParameterValueById(
+          this.nativeWave.hand,
+          Math.sin(this._phase * 10 - 0.6) * 0.8 * this._raise
+        );
+      } else if (this._pointOutRaise > 0) {
+        model.setParameterValueById(this.nativeWave.forearm, this._pointOutForearm);
+        model.setParameterValueById(this.nativeWave.hand, this._pointOutHand);
+      } else {
+        model.setParameterValueById(this.nativeWave.forearm, 0);
+        model.setParameterValueById(this.nativeWave.hand, 0);
+      }
+      if (this.nativeWave.mouthForm && this._pointOutRaise > 0) {
+        const baseMf = model.getParameterValueById(this.nativeWave.mouthForm);
+        const w = clamp(this._pointOutRaise, 0, 1);
+        model.setParameterValueById(
+          this.nativeWave.mouthForm,
+          clamp(baseMf + (1 - baseMf) * w, -1, 1)
+        );
+      }
       return;
     }
+
+    this._target = this._t >= 0 && this._mode === 'wave' ? env : 0;
+    const k = dt > 0 ? 1 - Math.exp(-dt / HandRaiseChannel.TAU_SECONDS) : 0;
+    this._raise += (this._target - this._raise) * k;
+    if (this._raise <= 0.001) this._raise = 0;
     if (this._raise === 0) return;
 
     const swayT = Math.max(this._t, 0);
@@ -685,6 +770,60 @@ export class HandRaiseChannel implements OverlayChannel {
         this._raise;
       model.addParameterValueById(this.ids[s], lift + sway);
     }
+  }
+}
+
+/** 黑框眼镜（Param43）：常驻饰品开关与「划重点」动作临时佩戴共同驱动，S 曲线平滑渐入渐出。 */
+export class GlassesChannel implements OverlayChannel {
+  readonly name = 'glasses';
+  private static readonly FADE_IN_SECONDS = 0.28;
+  private static readonly FADE_OUT_SECONDS = 0.38;
+  private _visible = false;
+  private _actionRemaining = 0;
+  private _blend = 0;
+  private _value = 0;
+
+  constructor(private readonly id?: CubismIdHandle) {}
+
+  get visible(): boolean {
+    return this._visible;
+  }
+
+  setVisible(visible: boolean, immediate = false): void {
+    this._visible = visible;
+    if (immediate) {
+      this._blend = this._visible || this._actionRemaining > 0 ? 1 : 0;
+      this._value = this._blend;
+    }
+  }
+
+  /** 对齐动作主体收尾：在 ~2.60s 起开始 0.38s 平滑摘下，于 ~2.98s 与手臂/头身同步收完。 */
+  triggerAction(duration: number): void {
+    this._actionRemaining = Math.max(0, duration - 1.75);
+  }
+
+  releaseAction(): void {
+    this._actionRemaining = 0;
+  }
+
+  get value(): number {
+    return this._value;
+  }
+
+  apply(model: CubismModel, dt = 1 / 60): void {
+    if (!this.id) return;
+    const step = Math.max(0, Number.isFinite(dt) ? dt : 0);
+    this._actionRemaining = Math.max(0, this._actionRemaining - step);
+    const target = this._visible || this._actionRemaining > 0 ? 1 : 0;
+    if (this._blend !== target && step > 0) {
+      const fade = target > this._blend ? GlassesChannel.FADE_IN_SECONDS : GlassesChannel.FADE_OUT_SECONDS;
+      const delta = step / fade;
+      this._blend = target > this._blend
+        ? Math.min(target, this._blend + delta)
+        : Math.max(target, this._blend - delta);
+    }
+    this._value = this._blend * this._blend * (3 - 2 * this._blend);
+    model.setParameterValueById(this.id, this._value);
   }
 }
 

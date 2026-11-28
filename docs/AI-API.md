@@ -90,7 +90,7 @@ petAI.gaze(0.3, 0.5);
 ## 扩展指引
 
 - **加表情**：改 `redesign/tools/gen-expressions.py` 配方 → 重新生成 →
-  在 `16.model3.json` 的 Expressions 里登记 → `catalog.ts` 的 `EXPRESSIONS` 补条目。
+  在 `aliya.model3.json` 的 Expressions 里登记 → `catalog.ts` 的 `EXPRESSIONS` 补条目。
 - **加动作**：改 `redesign/tools/gen-motions.py` → 重新生成 → model3.json
   Motions 登记 → `catalog.ts` 的 `ACTIONS` 补条目，并加进需要的状态待机池
   （用替换脸时在 `actions.json` 写 `face` 时间轴，见 ACTIONS.md）。
